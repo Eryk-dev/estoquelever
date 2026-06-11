@@ -46,20 +46,41 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Resolve the first active empresa in the chosen galpão (for backwards compat empresa_id)
-    // Use deterministic ordering to always pick the same empresa
-    const { data: empresaGalpao, error: empresaError } = await supabase
+    // P2-CMP-07: resolve a primeira empresa ativa preferencial no galpão (pra
+    // backwards-compat empresa_id na OC). NÃO usa mais a coluna deprecada
+    // siso_empresas.galpao_id (400 em galpão não-preferencial). Empresa opera
+    // em todos os galpões → preferencial via siso_empresa_galpoes_preferenciais;
+    // se ninguém preferir esse galpão, cai pra qualquer empresa ativa.
+    const { data: prefRows } = await supabase
+      .from("siso_empresa_galpoes_preferenciais")
+      .select("empresa_id")
+      .eq("galpao_id", galpaoId);
+    const empresaIdsPref = [
+      ...new Set(
+        (prefRows ?? [])
+          .map((r) => r.empresa_id as string | null)
+          .filter((v): v is string => v != null),
+      ),
+    ];
+
+    let empresaQuery = supabase
       .from("siso_empresas")
       .select("id")
-      .eq("galpao_id", galpaoId)
       .eq("ativo", true)
       .order("criado_em", { ascending: true })
-      .limit(1)
-      .single();
+      .limit(1);
+    if (empresaIdsPref.length > 0) {
+      empresaQuery = empresaQuery.in("id", empresaIdsPref);
+    } else {
+      logger.info("compras-ordens", "nenhuma empresa preferencial no galpão — fallback p/ qualquer ativa", {
+        galpaoId,
+      });
+    }
+    const { data: empresaGalpao, error: empresaError } = await empresaQuery.maybeSingle();
 
     if (empresaError || !empresaGalpao) {
       return NextResponse.json(
-        { error: "Nenhuma empresa ativa encontrada no galpão selecionado" },
+        { error: "Nenhuma empresa ativa encontrada" },
         { status: 400 },
       );
     }

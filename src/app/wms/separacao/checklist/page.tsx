@@ -403,21 +403,32 @@ export default function WmsChecklistPage() {
       produto: ConsolidatedProduct;
       marcado: boolean;
     }) => {
-      const results = await Promise.all(
-        produto.item_ids.map((id) =>
-          sisoFetch("/api/wms/separacao/marcar-item", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pedido_item_id: id, marcado }),
+      // P3-12a: execução SEQUENCIAL (não Promise.all) com abort no 1º erro —
+      // a linha consolidada (mesmo SKU em N pedidos do wave) disparava N POSTs
+      // paralelos sem transação. Em erro, alguns itens marcavam e outros não,
+      // sem rastro pro operador. Sequencial + abort deixa o estado determinístico
+      // (itens até o erro marcados; o resto intocado) e o handleToggle re-busca
+      // o real no finally (refetch real, não rollback só visual).
+      // P2-SEP-05: idempotency_key por item por clique — protege o ramo
+      // sem-reserva do marcar-item contra double-pick concorrente (P072).
+      for (const id of produto.item_ids) {
+        const r = await sisoFetch("/api/wms/separacao/marcar-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pedido_item_id: id,
+            marcado,
+            idempotency_key: crypto.randomUUID(),
           }),
-        ),
-      );
-      // Propaga o erro completo da API (código + detalhe do sistema) em vez de
-      // engolir tudo num "erro_marcar" mudo.
-      const falhou = results.find((r) => !r.ok);
-      if (falhou) {
-        const body = await falhou.json().catch(() => ({}));
-        throw new Error(erroApiTexto(body, "Erro ao salvar marcação"));
+        });
+        if (!r.ok) {
+          // Propaga o erro completo da API (código + detalhe do sistema) +
+          // o SKU da linha que falhou, em vez de engolir num "erro_marcar" mudo.
+          const body = await r.json().catch(() => ({}));
+          throw new Error(
+            `${produto.sku}: ${erroApiTexto(body, "Erro ao salvar marcação")}`,
+          );
+        }
       }
     },
   });
@@ -442,6 +453,7 @@ export default function WmsChecklistPage() {
         pendentes: string[];
         aguardandoCompra?: string[];
         validacaoOc?: string[];
+        nao_concluidos?: Array<{ pedido_id: string; motivo: string }>;
         cobertura_incompleta?: Array<{
           pedido_id: string;
           sku: string;
@@ -987,6 +999,9 @@ export default function WmsChecklistPage() {
       const valOc = result.validacaoOc?.length ?? 0;
       const incompletos = result.cobertura_incompleta ?? [];
       const pedidosIncompletos = new Set(incompletos.map((c) => c.pedido_id));
+      // P2-SEP-06: pedidos que a API reportou como NÃO concluídos (status mudou
+      // por baixo — outro operador/race). Avisa o operador em vez de mentir.
+      const naoConcluidos = result.nao_concluidos ?? [];
       const partes: string[] = [];
       if (sep > 0) partes.push(`${sep} separado(s)`);
       if (ag > 0) partes.push(`${ag} aguardando compra`);
@@ -996,7 +1011,14 @@ export default function WmsChecklistPage() {
         partes.push(`${pedidosIncompletos.size} pendente(s) de cobertura OC`);
       }
       const msg = partes.length > 0 ? partes.join(" · ") : "Concluído";
-      if (pedidosIncompletos.size > 0) {
+      if (naoConcluidos.length > 0) {
+        toast.warning(
+          `${msg} — ${naoConcluidos.length} pedido(s) não concluído(s) (status mudou): ${naoConcluidos
+            .map((n) => n.pedido_id)
+            .join(", ")}. Atualize a tela.`,
+          { duration: 7000 },
+        );
+      } else if (pedidosIncompletos.size > 0) {
         const primeiraMsg = incompletos[0]?.mensagem ?? "";
         toast.warning(`${msg}${primeiraMsg ? ` — ${primeiraMsg}` : ""}`);
       } else if (valOc > 0) {

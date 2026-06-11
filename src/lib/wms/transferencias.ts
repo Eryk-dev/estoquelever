@@ -358,6 +358,40 @@ export async function receberTransferencia(
       if (!item) throw new Error(`item ${sel.transferencia_item_id} não pertence à transferência`);
       if (item.mov_entrada_id) continue; // já recebido — idempotência
 
+      // P2-EST-09 + P3-27: valida a loc destino ANTES da E. O ledger não
+      // checa galpão da loc → uma loc de outro galpão criaria uma tripla
+      // fantasma. E uma loc de recebimento/quarentena/packing/expedição
+      // geraria saldo órfão sem pendência de guarda. Espelha a regra de
+      // movimentacoes.ts (validarItensRecebimento).
+      const { data: locDest } = await sb
+        .from("siso_localizacoes")
+        .select("galpao_id, ativo, tipo")
+        .eq("id", sel.localizacao_destino_id)
+        .maybeSingle();
+      const ld = locDest as
+        | { galpao_id: string; ativo: boolean; tipo: string }
+        | null;
+      if (!ld) {
+        throw new Error(
+          `loc_invalida: localização destino ${sel.localizacao_destino_id} não encontrada`,
+        );
+      }
+      if (ld.galpao_id !== t.galpao_destino_id || !ld.ativo) {
+        throw new Error(
+          `loc_invalida: localização destino deve ser ativa e pertencer ao galpão de destino da transferência`,
+        );
+      }
+      if (
+        ld.tipo === "recebimento" ||
+        ld.tipo === "quarentena" ||
+        ld.tipo === "packing" ||
+        ld.tipo === "expedicao"
+      ) {
+        throw new Error(
+          `loc_invalida: destino deve ser localização de picking ou overstock (escolha uma loc de picking/overstock)`,
+        );
+      }
+
       const mov = await inserirMovimentacao({
         tripla: {
           produto_id: item.produto_id,

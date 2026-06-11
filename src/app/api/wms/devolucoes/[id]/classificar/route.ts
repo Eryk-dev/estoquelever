@@ -3,6 +3,7 @@ import { classificarDevolucao, type Classificacao } from "@/lib/wms/devolucoes";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
+import { logger } from "@/lib/logger";
 
 /**
  * POST /api/wms/devolucoes/[id]/classificar
@@ -62,6 +63,38 @@ export async function POST(
       observacoes: body.observacoes,
       usuario_id: auth.user.id,
     });
+
+    // [P2-CST-01] A E de devolução íntegra entra numa loc vendável (destino
+    // escolhido pelo operador, tipicamente picking). A RPC wms_classificar_devolucao
+    // NÃO passa pelo gancho de mov E do ledger.ts, então o reconciliador-oc
+    // nunca rodaria — pedidos OC parados por falta ficariam presos mesmo com a
+    // peça de volta na prateleira. Disparamos aqui (espelha guarda/confirmar):
+    // fire-and-forget, não-fatal. 'avariado' vai pra quarentena (não vendável)
+    // e 'garantia' sai pro fornecedor — nesses o reconciliador é no-op
+    // (saldoLivre em picking = 0), mas só disparamos no 'integro' por clareza.
+    if (body.classificacao === "integro") {
+      void (async () => {
+        try {
+          const { reconciliarEntradaEstoque } = await import(
+            "@/lib/wms/reconciliador-oc"
+          );
+          await reconciliarEntradaEstoque({
+            produtoId: body.produto_id,
+            galpaoId: body.galpao_id,
+          });
+        } catch (recErr) {
+          logger.warn(
+            "wms.devolucoes.classificar",
+            "reconciliador pós-classificação falhou (não-fatal)",
+            {
+              devolucao_id: id,
+              err: recErr instanceof Error ? recErr.message : String(recErr),
+            },
+          );
+        }
+      })();
+    }
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     // [P054] concorrência/lock → 409 (não 400). "não encontrada" segue 4xx.

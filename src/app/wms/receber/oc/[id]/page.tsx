@@ -31,6 +31,7 @@ interface ItemOC {
   pendente: number;
   produto_id: number;
   produto_wms_id: string | null;
+  preco_compra: number | null;
 }
 
 interface OCInfo {
@@ -114,7 +115,7 @@ export default function ReceberOCDetalhePage() {
         backendItemId: it.id,
         qty: String(it.pendente),
         qtyEsperada: it.pendente,
-        custo: "",
+        custo: it.preco_compra != null && it.preco_compra > 0 ? String(it.preco_compra) : "",
         locIdOverride: null,
         locCodigoOverride: null,
         imprimir: false,

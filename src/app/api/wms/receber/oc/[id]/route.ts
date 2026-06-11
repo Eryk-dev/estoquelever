@@ -52,7 +52,7 @@ export async function GET(
   const { data: itens } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, imagem_url, compra_quantidade_solicitada, compra_quantidade_recebida, produto_id",
+      "id, sku, descricao, imagem_url, compra_quantidade_solicitada, compra_quantidade_recebida, produto_id, compra_preco_unitario",
     )
     .eq("ordem_compra_id", id);
 
@@ -93,6 +93,7 @@ export async function GET(
       Number(it.compra_quantidade_recebida ?? 0),
     produto_id: it.produto_id,
     produto_wms_id: (it.sku ? skuToWmsId.get(it.sku) : undefined) ?? null,
+    preco_compra: it.compra_preco_unitario != null ? Number(it.compra_preco_unitario) : null,
   }));
 
   return NextResponse.json({

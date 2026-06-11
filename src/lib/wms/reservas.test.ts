@@ -43,6 +43,7 @@ const reservaStub = {
   galpao_id: "00000000-0000-4000-8000-000000000022",
   localizacao_id: "00000000-0000-4000-8000-000000000033",
   quantidade: 3,
+  origem_id: "999111222" as string | null,
 };
 
 /** Constrói deps stub para estornarReservaIndividual. */
@@ -51,8 +52,8 @@ function makeDeps(opts: {
   lExistenteParaId2?: boolean;
   /** IDs de R que existem no stub (default: R_ID_1 existe). */
   reservasExistentes?: string[];
-  /** Guarda o id de L criado pelo inserirMovimentacao stub. */
-  insertedL?: { id?: string };
+  /** Guarda o id de L criado + a reserva recebida pelo inserirL stub. */
+  insertedL?: { id?: string; reserva?: { origem_id: string | null } };
 }): EstornarReservaDeps {
   const {
     lExistenteParaId2 = false,
@@ -73,9 +74,10 @@ function makeDeps(opts: {
       }
       return null;
     },
-    inserirL: async () => {
+    inserirL: async ({ reserva }) => {
       const id = L_NOVO_ID;
       insertedL.id = id;
+      insertedL.reserva = reserva;
       return id;
     },
   };
@@ -83,7 +85,7 @@ function makeDeps(opts: {
 
 describe("estornarReservaIndividual", () => {
   it("insere L com estorno_de = reserva_id e retorna o id do L", async () => {
-    const insertedL: { id?: string } = {};
+    const insertedL: { id?: string; reserva?: { origem_id: string | null } } = {};
     const deps = makeDeps({ insertedL });
 
     const input: EstornarReservaInput = {
@@ -97,6 +99,8 @@ describe("estornarReservaIndividual", () => {
     // O inserirL stub foi chamado (insertedL.id preenchido)
     expect(insertedL.id).toBe(L_NOVO_ID);
     expect(novoLId).toBe(L_NOVO_ID);
+    // EST-03 (b): o origem_id da R original chega no inserirL (vai pro L).
+    expect(insertedL.reserva?.origem_id).toBe("999111222");
   });
 
   it("é idempotente: se já existe L com estorno_de=reserva_id, retorna o id existente sem criar novo", async () => {

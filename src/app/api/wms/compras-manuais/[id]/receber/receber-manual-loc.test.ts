@@ -6,6 +6,7 @@ vi.mock("@/lib/session", () => ({
 }));
 vi.mock("@/lib/permissions", () => ({
   userCan: () => true,
+  userCanAny: () => true,
 }));
 // vi.mock é hoisted; o spy precisa viver em vi.hoisted pra estar inicializado
 // quando a factory roda.

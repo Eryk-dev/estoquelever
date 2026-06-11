@@ -417,7 +417,11 @@ export type InventarioStatus =
 /** Status of an individual inventory item */
 export type InventarioItemStatus = "pendente" | "processando" | "sucesso" | "erro";
 
-/** An inventory session (siso_inventarios) */
+/**
+ * @deprecated Legacy type do inventário v1 (tabela `siso_inventarios` DROPADA).
+ * O inventário atual (v2) vive em `siso_inventario_sessoes` (+ `_localizacoes`,
+ * `_contagens`, `_divergencias`, `_operadores`); ver `src/lib/wms/inventario.ts`.
+ */
 export interface Inventario {
   id: string;
   empresa_id: string;
@@ -442,7 +446,10 @@ export interface Inventario {
   itens_erro?: number;
 }
 
-/** A scanned item in an inventory session (siso_inventario_itens) */
+/**
+ * @deprecated Legacy type do inventário v1 (tabela `siso_inventario_itens`
+ * DROPADA). No v2, os bipes individuais ficam em `siso_inventario_contagens`.
+ */
 export interface InventarioItem {
   id: string;
   inventario_id: string;

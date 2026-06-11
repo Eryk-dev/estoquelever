@@ -17,7 +17,12 @@ import { useGalpoes } from "@/components/wms/ui/modals";
 import type { PendenciaJoined } from "@/lib/wms/guarda";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
-type StatusFiltro = "ativas" | "todas" | "guardada" | "cancelada";
+type StatusFiltro =
+  | "ativas"
+  | "todas"
+  | "guardada"
+  | "cancelada"
+  | "encerrada_sem_saldo";
 
 interface Grupo {
   key: string;
@@ -54,8 +59,10 @@ export default function GuardaListaPage() {
         return "guardada";
       case "cancelada":
         return "cancelada";
+      case "encerrada_sem_saldo":
+        return "encerrada_sem_saldo";
       case "todas":
-        return "pendente,em_guarda,guardada,cancelada";
+        return "pendente,em_guarda,guardada,cancelada,encerrada_sem_saldo";
     }
   }, [statusFiltro]);
 
@@ -91,7 +98,11 @@ export default function GuardaListaPage() {
     const lotes: Grupo[] = Array.from(lotesMap.entries()).map(([lote_id, pendencias]) => {
       const first = pendencias[0];
       const qty_pendente_total = pendencias.reduce(
-        (sum, p) => sum + (p.status === "guardada" || p.status === "cancelada" ? 0 : p.qty_pendente),
+        (sum, p) =>
+          sum +
+          (p.status === "pendente" || p.status === "em_guarda"
+            ? p.qty_pendente
+            : 0),
         0,
       );
       return {
@@ -161,7 +172,15 @@ export default function GuardaListaPage() {
         }}
       >
         <div className="wms-seg">
-          {(["ativas", "guardada", "cancelada", "todas"] as StatusFiltro[]).map((s) => (
+          {(
+            [
+              "ativas",
+              "guardada",
+              "cancelada",
+              "encerrada_sem_saldo",
+              "todas",
+            ] as StatusFiltro[]
+          ).map((s) => (
             <button
               key={s}
               type="button"
@@ -174,7 +193,9 @@ export default function GuardaListaPage() {
                   ? "Guardadas"
                   : s === "cancelada"
                     ? "Canceladas"
-                    : "Todas"}
+                    : s === "encerrada_sem_saldo"
+                      ? "Sem saldo"
+                      : "Todas"}
             </button>
           ))}
         </div>
@@ -376,6 +397,12 @@ function LoteCard({
   );
   const terminadas = grupo.pendencias.length - ativas.length;
   const algumaEmGuarda = grupo.pendencias.some((p) => p.status === "em_guarda");
+  // Lote 100% terminal: se houver alguma encerrada sem saldo (e nenhuma
+  // guardada), reflete esse status no badge em vez de "Guardada".
+  const todasTerminaisStatus =
+    grupo.pendencias.every((p) => p.status === "encerrada_sem_saldo")
+      ? "encerrada_sem_saldo"
+      : "guardada";
 
   return (
     <div
@@ -438,7 +465,7 @@ function LoteCard({
               <StatusBadge status={algumaEmGuarda ? "em_guarda" : "pendente"} />
             )
           ) : (
-            <StatusBadge status="guardada" />
+            <StatusBadge status={todasTerminaisStatus} />
           )}
         </div>
       </div>

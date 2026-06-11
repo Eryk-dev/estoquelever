@@ -193,6 +193,32 @@ export async function reverterCutoverSeRetrocedeu(
     return { reverted: false, motivo: "estoque_nao_lancado" };
   }
 
+  // SEP-07a: cancela jobs lancar_estoque_pos_nf PENDENTES do pedido ANTES da
+  // RPC recriar as R's. Um job stale (enfileirado quando o pedido ainda era
+  // forward) rodando depois da reversão converteria as R recém-recriadas em
+  // L+S de novo — saída fantasma + baixa dupla no re-pick. Mesmo padrão de
+  // cancelamento do pedido-cancel-handler. Se falhar, segue: o gate de status
+  // em executarEstoquePosNfWms é o backstop.
+  const { data: jobsCancelados, error: cancelErr } = await sb
+    .from("siso_fila_execucao")
+    .update({ status: "cancelado", atualizado_em: new Date().toISOString() })
+    .eq("pedido_id", pedidoId)
+    .eq("tipo", "lancar_estoque_pos_nf")
+    .eq("status", "pendente")
+    .select("id");
+  if (cancelErr) {
+    logger.warn("wms.cutover", "Falha ao cancelar jobs pos_nf pendentes (segue com reversão)", {
+      pedidoId,
+      err: cancelErr.message,
+    });
+  } else if ((jobsCancelados ?? []).length > 0) {
+    logger.info("wms.cutover", "Jobs pos_nf pendentes cancelados na reversão", {
+      pedidoId,
+      motivo,
+      jobIds: (jobsCancelados ?? []).map((j) => j.id),
+    });
+  }
+
   const { data: rpcRes, error: rpcErr } = await sb.rpc("wms_reverter_cutover_atomico", {
     p_pedido_id: pedidoId,
     p_motivo: motivo,

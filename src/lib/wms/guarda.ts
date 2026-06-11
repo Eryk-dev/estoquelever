@@ -346,7 +346,12 @@ export async function obterPendencia(id: string): Promise<PendenciaJoined | null
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return normalizarNumeros(data as unknown as PendenciaJoined);
+  const row = normalizarNumeros(data as unknown as PendenciaJoined);
+  // Calcula a_guardar (batch helper com array de 1) pra a tela do tablet
+  // saber o teto físico real — caso um pick tenha consumido a loc de
+  // recebimento antes da guarda.
+  await enriquecerComAGuardar(sb, [row]);
+  return row;
 }
 
 /**
@@ -491,6 +496,12 @@ export interface ConfirmarGuardaResult {
   /** UUID do par S+E do replenishment. NULL na auto-encerra (saldo=0): não há mov. */
   origem_id: string | null;
   totalmente_guardada: boolean;
+  /**
+   * true quando um pick consumiu o saldo da loc de recebimento ANTES da
+   * guarda: a RPC encerra a pendência (status='encerrada_sem_saldo') sem mov
+   * S+E. A UI deve mostrar "pick consumiu o saldo" em vez de "parcial".
+   */
+  auto_encerrada: boolean;
 }
 
 /**
@@ -615,6 +626,7 @@ export async function confirmarGuarda(
     pendencia: refresh,
     origem_id: origemId,
     totalmente_guardada: r.totalmente_guardada,
+    auto_encerrada: r.auto_encerrada ?? false,
   };
 }
 
@@ -682,7 +694,14 @@ export async function desfazerGuarda(input: {
   qty?: number;
   usuario_id: string;
   motivo: string;
-}): Promise<{ pendencia: PendenciaJoined; movsEstornadas: number }> {
+}): Promise<{
+  pendencia: PendenciaJoined;
+  movsEstornadas: number;
+  /** Unidades efetivamente estornadas nesta operação (qty_desfeita da RPC). */
+  qtyEstornada: number;
+  /** Status final da pendência após o estorno (pendente|em_guarda). */
+  statusFinal: StatusPendencia;
+}> {
   const sb = createServiceClient();
 
   // Fix-Final C T17 (Concern A Fix-B audit): delega pro RPC atômico
@@ -718,5 +737,10 @@ export async function desfazerGuarda(input: {
 
   const refresh = await obterPendencia(input.pendencia_id);
   if (!refresh) throw new Error("pendência sumiu após desfazer");
-  return { pendencia: refresh, movsEstornadas: result.movs_estornadas };
+  return {
+    pendencia: refresh,
+    movsEstornadas: result.movs_estornadas,
+    qtyEstornada: Number(result.qty_desfeita),
+    statusFinal: result.novo_status,
+  };
 }

@@ -44,6 +44,18 @@ export async function POST(
     const { retomado } = await entrarParty(id, auth.user.id);
     return NextResponse.json({ ok: true, retomado });
   } catch (e) {
+    // [P2-INV-02] auto-start de sessão planejada pode esbarrar em locs já
+    // travadas por outra sessão — 409 com os códigos pra UI.
+    if ((e as { code?: string }).code === "locs_bloqueadas") {
+      return NextResponse.json(
+        {
+          error: "locs_bloqueadas",
+          message: e instanceof Error ? e.message : String(e),
+          locs: (e as { locs?: string[] }).locs ?? [],
+        },
+        { status: 409 },
+      );
+    }
     return wmsErrorResponse({
       source: "wms.inventario.party.entrar",
       error: e,

@@ -5,11 +5,20 @@
  * webhook receiver e o polling fallback (tiny-polling.ts). Lógica idêntica:
  * libera reservas R per-R, limpa fluxo de compras, cancela fila de execução
  * e marca o pedido como cancelado.
+ *
+ * CST-02 — semântica de picks (espelha o caminho humano D1/P007 de
+ * separacao/cancelar + cancelarVendaManual): a S dos itens já pegos NÃO é
+ * estornada (a peça saiu da prateleira de verdade — estorno automático
+ * mentiria sobre o físico). Os pegos viram pendência de devolução MANUAL:
+ * evento 'cancelado' no histórico com a lista (qty + sku) + tag
+ * 'cancelado_com_picks' em separacao_tags pra rastreio.
  */
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import { estornarReservaIndividual } from "./wms/reservas";
+import { classificarItensParaCancelamento } from "./wms/cancelamento-parcial";
+import { registrarEvento } from "./historico-service";
 
 export interface CancelamentoResult {
   status: "cancelled" | "cancelled_unknown";
@@ -26,7 +35,7 @@ export async function handlePedidoCancelamento(params: {
 
   const { data: existingOrder } = await supabase
     .from("siso_pedidos")
-    .select("id, status, status_separacao")
+    .select("id, status, status_separacao, estoque_lancado, separacao_tags")
     .eq("id", pedidoId)
     .single();
 
@@ -86,74 +95,139 @@ export async function handlePedidoCancelamento(params: {
       cancelUpdate.status_separacao = null;
     }
 
+    // Itens lidos uma vez — servem o tratamento de picks (CST-02) e a
+    // limpeza do fluxo de compras (CST-03).
+    const { data: itensRaw } = await supabase
+      .from("siso_pedido_itens")
+      .select(
+        "id, sku, quantidade_pedida, quantidade_pega, mov_saida_id, ordem_compra_id, compra_status, compra_quantidade_recebida",
+      )
+      .eq("pedido_id", pedidoId);
+    const itens = (itensRaw ?? []) as Array<{
+      id: string;
+      sku: string | null;
+      quantidade_pedida: number | null;
+      quantidade_pega: number | null;
+      mov_saida_id: string | null;
+      ordem_compra_id: string | null;
+      compra_status: string | null;
+      compra_quantidade_recebida: number | null;
+    }>;
+
+    // --- CST-02: picks / estoque lançado → devolução manual ---
+    // Espelha o caminho humano (D1/P007): NÃO estorna a S dos itens pegos
+    // (auditoria — a saída física aconteceu); registra evento + tag pra um
+    // operador resolver a devolução manualmente.
+    const { pegos } = classificarItensParaCancelamento(
+      itens.map((i) => ({
+        id: String(i.id),
+        sku: i.sku ?? null,
+        mov_saida_id: i.mov_saida_id ?? null,
+        quantidade_pega: i.quantidade_pega ?? null,
+      })),
+    );
+    const estoqueLancado = existingOrder.estoque_lancado === true;
+    const pegosIds = new Set(pegos.map((p) => p.id));
+    // estoque_lancado=true sem marker per-item (S veio do cutover/pos-NF, não
+    // do pick — ex.: pedido em separado/embalado): TODOS os itens já saíram
+    // no ledger → todos entram na lista de devolução manual.
+    const baseDevolucao =
+      pegos.length > 0
+        ? itens.filter((i) => pegosIds.has(String(i.id)))
+        : estoqueLancado
+          ? itens
+          : [];
+    const itensDevolucaoManual = baseDevolucao.map((i) => ({
+      id: String(i.id),
+      sku: i.sku ?? null,
+      qty: Number(i.quantidade_pega ?? i.quantidade_pedida ?? 0),
+    }));
+
+    if (itensDevolucaoManual.length > 0) {
+      const currentTags: string[] =
+        (existingOrder.separacao_tags as string[] | null) ?? [];
+      if (!currentTags.includes("cancelado_com_picks")) {
+        cancelUpdate.separacao_tags = [...currentTags, "cancelado_com_picks"];
+      }
+    }
+    // --- End CST-02 ---
+
     // --- Compras cleanup ---
-    const isInComprasFlow =
-      existingOrder.status_separacao === "aguardando_compra" ||
-      existingOrder.status_separacao === "comprado";
+    // CST-03: limpeza baseada nos ITENS, não no status do pedido. O gate
+    // antigo (status_separacao ∈ {aguardando_compra, comprado}) deixava itens
+    // vivos na tela de compras quando o pedido estava em validacao_oc (item
+    // 'oc_pendente') ou em_separacao (pedido misto com item
+    // 'aguardando_compra') → comprador comprava pra pedido morto. Qualquer
+    // item com compra_status ATIVO recebe a limpeza; 'recebido'/'cancelado'
+    // (resolvidos) são preservados como histórico — item 'recebido' mantém o
+    // vínculo com a OC (a entrega aconteceu).
+    const COMPRA_STATUS_ATIVO = [
+      "oc_pendente",
+      "aguardando_compra",
+      "comprado",
+      "indisponivel",
+      "equivalente_pendente",
+      "cancelamento_pendente",
+    ];
+    const compraItems = itens.filter((i) => i.compra_status != null);
+    const itensCompraAtivos = compraItems.filter((i) =>
+      COMPRA_STATUS_ATIVO.includes(i.compra_status as string),
+    );
 
-    if (isInComprasFlow) {
-      // Fetch items with compra data
-      const { data: compraItems } = await supabase
-        .from("siso_pedido_itens")
-        .select("id, sku, ordem_compra_id, compra_status, compra_quantidade_recebida")
-        .eq("pedido_id", pedidoId)
-        .not("compra_status", "is", null);
+    if (itensCompraAtivos.length > 0) {
+      // Check if any item had stock already entered in Tiny
+      const itemsComEstoqueLancado = compraItems.filter(
+        (item) => (item.compra_quantidade_recebida ?? 0) > 0
+      );
 
-      if (compraItems && compraItems.length > 0) {
-        // Check if any item had stock already entered in Tiny
-        const itemsComEstoqueLancado = compraItems.filter(
-          (item) => (item.compra_quantidade_recebida ?? 0) > 0
-        );
+      if (itemsComEstoqueLancado.length > 0) {
+        cancelUpdate.compra_estoque_lancado_alerta = true;
 
-        if (itemsComEstoqueLancado.length > 0) {
-          cancelUpdate.compra_estoque_lancado_alerta = true;
-
-          for (const item of itemsComEstoqueLancado) {
-            logger.warn("webhook", "Cancelled pedido had stock already entered in Tiny", {
-              pedidoId,
-              sku: item.sku,
-              quantidade_ja_lancada: item.compra_quantidade_recebida,
-            });
-          }
+        for (const item of itemsComEstoqueLancado) {
+          logger.warn("webhook", "Cancelled pedido had stock already entered in Tiny", {
+            pedidoId,
+            sku: item.sku,
+            quantidade_ja_lancada: item.compra_quantidade_recebida,
+          });
         }
+      }
 
-        // Collect distinct OC IDs before clearing
-        const affectedOcIds = [
-          ...new Set(
-            compraItems
-              .map((item) => item.ordem_compra_id)
-              .filter((id): id is string => id != null)
-          ),
-        ];
+      // Collect distinct OC IDs before clearing (só dos itens ativos)
+      const affectedOcIds = [
+        ...new Set(
+          itensCompraAtivos
+            .map((item) => item.ordem_compra_id)
+            .filter((id): id is string => id != null)
+        ),
+      ];
 
-        // Clear compra fields on all items
-        await supabase
+      // Clear compra fields nos itens com fluxo de compras ativo
+      await supabase
+        .from("siso_pedido_itens")
+        .update({
+          compra_status: null,
+          ordem_compra_id: null,
+        })
+        .eq("pedido_id", pedidoId)
+        .in("compra_status", COMPRA_STATUS_ATIVO);
+
+      // Check each affected OC — cancel if empty
+      for (const ocId of affectedOcIds) {
+        const { count } = await supabase
           .from("siso_pedido_itens")
-          .update({
-            compra_status: null,
-            ordem_compra_id: null,
-          })
-          .eq("pedido_id", pedidoId)
-          .not("compra_status", "is", null);
+          .select("id", { count: "exact", head: true })
+          .eq("ordem_compra_id", ocId);
 
-        // Check each affected OC — cancel if empty
-        for (const ocId of affectedOcIds) {
-          const { count } = await supabase
-            .from("siso_pedido_itens")
-            .select("id", { count: "exact", head: true })
-            .eq("ordem_compra_id", ocId);
+        if (count === 0) {
+          await supabase
+            .from("siso_ordens_compra")
+            .update({ status: "cancelado" })
+            .eq("id", ocId);
 
-          if (count === 0) {
-            await supabase
-              .from("siso_ordens_compra")
-              .update({ status: "cancelado" })
-              .eq("id", ocId);
-
-            logger.info("webhook", "OC cancelled (no remaining items after pedido cancellation)", {
-              ocId,
-              pedidoId,
-            });
-          }
+          logger.info("webhook", "OC cancelled (no remaining items after pedido cancellation)", {
+            ocId,
+            pedidoId,
+          });
         }
       }
     }
@@ -163,6 +237,27 @@ export async function handlePedidoCancelamento(params: {
       .from("siso_pedidos")
       .update(cancelUpdate)
       .eq("id", pedidoId);
+
+    // CST-02: visibilidade — evento no histórico com a lista de itens pegos.
+    // Guard por status anterior evita evento duplicado em re-entrega do
+    // webhook (handler é idempotente no resto).
+    if (itensDevolucaoManual.length > 0 && existingOrder.status !== "cancelado") {
+      registrarEvento({
+        pedidoId,
+        evento: "cancelado",
+        detalhes: {
+          origem: "webhook_cancelamento",
+          modo: "cancelado_com_picks",
+          estoque_lancado: estoqueLancado,
+          itens_devolucao_manual: itensDevolucaoManual,
+        },
+      }).catch(() => {});
+      logger.warn("webhook", "Pedido cancelado com saída física — devolução manual pendente", {
+        pedidoId,
+        itens_devolucao_manual: itensDevolucaoManual.length,
+        estoque_lancado: estoqueLancado,
+      });
+    }
 
     await supabase
       .from("siso_fila_execucao")
@@ -182,7 +277,8 @@ export async function handlePedidoCancelamento(params: {
       pedidoId,
       empresaId,
       previousStatus: existingOrder.status,
-      hadComprasCleanup: isInComprasFlow,
+      hadComprasCleanup: itensCompraAtivos.length > 0,
+      itensDevolucaoManual: itensDevolucaoManual.length,
     });
 
     return { status: "cancelled", previousStatus: existingOrder.status };

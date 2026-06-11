@@ -6,6 +6,7 @@ import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import {
   buscarReservaPendente,
   liberarReservaPicking,
+  estornarLiberacaoReserva,
 } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
@@ -225,15 +226,25 @@ export async function POST(request: NextRequest) {
         });
       }
       if (movLiberacaoId) {
+        // Recria a R cascade via estornarLiberacaoReserva (o estornarMovimentacao
+        // genérico rejeita L com estorno_de=R.id).
         try {
-          await estornarMovimentacao({
-            mov_id: movLiberacaoId,
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: movLiberacaoId,
+            pedido_id: String(pedido.id),
             usuario_id: session.id,
-            motivo: "Race condition (estorna L par)",
+            motivo: "Race condition — recria R cascade liberada",
           });
         } catch (e: unknown) {
-          logger.warn("separacao-marcar-realocacao", "rollback estorno L falhou", {
-            error: (e as Error).message,
+          // LOUD: a R cascade liberada fica perdida — risco de overselling.
+          logger.logError({
+            error: e,
+            source: "separacao-marcar-realocacao",
+            message: "rollback: falhou recriar R (estorno de L) — reserva perdida",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/marcar-realocacao",
+            requestMethod: "POST",
+            metadata: { realocacao_id: realoc.id, pedido_id: pedido.id, mov_l_id: movLiberacaoId },
           });
         }
       }

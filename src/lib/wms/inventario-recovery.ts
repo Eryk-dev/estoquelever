@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { descartarContagensDeLocsDevolvidas } from "@/lib/wms/inventario";
 
 /**
  * Cleanup órfãos do inventário:
@@ -63,7 +64,40 @@ export async function recoveryInventario(): Promise<{
     bloqueada_em: string;
     bloqueada_por: string;
   };
-  for (const l of (locks ?? []) as LockRow[]) {
+  const lockRows = (locks ?? []) as LockRow[];
+
+  // [P3-15] Última atividade do operador NA SESSÃO (qualquer loc) — não só na
+  // loc travada. Um operador pode ter parado nesta loc mas estar contando
+  // outras na mesma sessão (vivo). Sem isso, roubávamos o lock de quem está
+  // ativo-mas-lento → alimenta o P0-02 (loc devolvida, recontagem soma).
+  // 1 query agregada por (sessao, operador) em vez de N+1.
+  const atividadeOp = new Map<string, string>(); // `${sessao}|${user}` → max criado_em
+  if (lockRows.length > 0) {
+    const sessoesLock = [...new Set(lockRows.map((l) => l.sessao_id))];
+    const opsLock = [...new Set(lockRows.map((l) => l.bloqueada_por))];
+    const { data: contagensOp } = await sb
+      .from("siso_inventario_contagens")
+      .select("sessao_id, contada_por, criado_em")
+      .in("sessao_id", sessoesLock)
+      .in("contada_por", opsLock)
+      .gte("criado_em", cutoff30m);
+    for (const c of (contagensOp ?? []) as Array<{
+      sessao_id: string;
+      contada_por: string;
+      criado_em: string;
+    }>) {
+      const k = `${c.sessao_id}|${c.contada_por}`;
+      const prev = atividadeOp.get(k);
+      if (!prev || c.criado_em > prev) atividadeOp.set(k, c.criado_em);
+    }
+  }
+
+  for (const l of lockRows) {
+    // [P3-15] operador com atividade na sessão < 30min → está vivo, pula a loc dele.
+    const ultimaAtividade = atividadeOp.get(`${l.sessao_id}|${l.bloqueada_por}`);
+    if (ultimaAtividade && ultimaAtividade >= cutoff30m) {
+      continue;
+    }
     const { data: ultimaCont } = await sb
       .from("siso_inventario_contagens")
       .select("criado_em")
@@ -75,6 +109,25 @@ export async function recoveryInventario(): Promise<{
     const ts =
       (ultimaCont as { criado_em: string } | null)?.criado_em ?? l.bloqueada_em;
     if (ts && ts < cutoff30m) {
+      // [P0-02] Descarta as contagens parciais ANTES de devolver a loc ao
+      // pool — sem isso o próximo claimer conta do zero e o computar SOMA as
+      // duas tentativas (estoque fantasma). Falhou o descarte → não libera a
+      // loc neste ciclo (cron tenta de novo em 30min).
+      try {
+        await descartarContagensDeLocsDevolvidas(
+          sb,
+          l.sessao_id,
+          [l.localizacao_id],
+          "recovery_lock_30min",
+        );
+      } catch (e) {
+        logger.warn(
+          "wms.inventario.recovery",
+          "falha ao descartar contagens da loc — liberação adiada pro próximo ciclo",
+          { inv_loc_id: l.id, sessao_id: l.sessao_id, error: String(e) },
+        );
+        continue;
+      }
       await sb
         .from("siso_inventario_localizacoes")
         .update({
@@ -112,11 +165,30 @@ export async function recoveryInventario(): Promise<{
     // Libera locks de loc cuja bloqueada_por é esse operador
     const { data: orphLocs } = await sb
       .from("siso_inventario_localizacoes")
-      .select("id")
+      .select("id, localizacao_id")
       .eq("sessao_id", op.sessao_id)
       .eq("bloqueada_por", op.usuario_id)
       .eq("status", "em_contagem");
-    for (const ol of (orphLocs ?? []) as Array<{ id: string }>) {
+    for (const ol of (orphLocs ?? []) as Array<{
+      id: string;
+      localizacao_id: string;
+    }>) {
+      // [P0-02] mesmo descarte do bloco de locks 30min (loc regride pra pendente).
+      try {
+        await descartarContagensDeLocsDevolvidas(
+          sb,
+          op.sessao_id,
+          [ol.localizacao_id],
+          "recovery_operador_zumbi",
+        );
+      } catch (e) {
+        logger.warn(
+          "wms.inventario.recovery",
+          "falha ao descartar contagens da loc — liberação adiada pro próximo ciclo",
+          { inv_loc_id: ol.id, sessao_id: op.sessao_id, error: String(e) },
+        );
+        continue;
+      }
       await sb
         .from("siso_inventario_localizacoes")
         .update({
@@ -140,8 +212,33 @@ export async function recoveryInventario(): Promise<{
   const { data: locksFinalizados } = await sb.rpc(
     "wms_locks_bloqueada_por_finalizado",
   );
-  if (Array.isArray(locksFinalizados)) {
-    for (const id of locksFinalizados as string[]) {
+  if (Array.isArray(locksFinalizados) && locksFinalizados.length > 0) {
+    // [P0-02] precisa de (sessao_id, localizacao_id) pra descartar as
+    // contagens da tentativa abandonada antes de devolver a loc ao pool.
+    const { data: rowsFinalizados } = await sb
+      .from("siso_inventario_localizacoes")
+      .select("id, sessao_id, localizacao_id")
+      .in("id", locksFinalizados as string[]);
+    for (const r of (rowsFinalizados ?? []) as Array<{
+      id: string;
+      sessao_id: string;
+      localizacao_id: string;
+    }>) {
+      try {
+        await descartarContagensDeLocsDevolvidas(
+          sb,
+          r.sessao_id,
+          [r.localizacao_id],
+          "recovery_lock_finalizado",
+        );
+      } catch (e) {
+        logger.warn(
+          "wms.inventario.recovery",
+          "falha ao descartar contagens da loc — liberação adiada pro próximo ciclo",
+          { inv_loc_id: r.id, sessao_id: r.sessao_id, error: String(e) },
+        );
+        continue;
+      }
       await sb
         .from("siso_inventario_localizacoes")
         .update({
@@ -149,7 +246,7 @@ export async function recoveryInventario(): Promise<{
           bloqueada_em: null,
           status: "pendente",
         })
-        .eq("id", id);
+        .eq("id", r.id);
       locksLiberadosPorFinalizado++;
     }
   }

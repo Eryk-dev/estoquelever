@@ -46,15 +46,10 @@ export async function varrerPedidosAfetadosPorEntrada(args: {
     0,
   );
 
-  // Resolve codigo da loc pra usar no snapshot.localizacao
-  const { data: locInfo } = await supabase
-    .from("siso_localizacoes")
-    .select("codigo")
-    .eq("id", args.localizacao_id)
-    .maybeSingle();
-
   let flagsMarcadas = 0;
-  let locsAtualizadas = 0;
+  // locsAtualizadas: sempre 0 desde a remoção do sync de snapshot (Fase 1.4,
+  // 2026-05-28). Mantido na assinatura de retorno por compat; nunca incrementa.
+  const locsAtualizadas = 0;
 
   // Itera por empresa pra encontrar pedidos afetados via tiny_produto_id
   for (const [empresaId, tinyIds] of tinyByEmpresa) {
@@ -75,11 +70,16 @@ export async function varrerPedidosAfetadosPorEntrada(args: {
       (itensValidacao ?? []).map((i) => String(i.pedido_id)),
     );
     if (pedidoIdsValidacao.size > 0) {
+      // Bidirecional: se ainda há saldo livre no galpão pra esse produto, marca
+      // a flag (banner "Saldo apareceu"); se a cobertura sumiu (ex.: um pick
+      // consumiu antes do operador conferir), ZERA a flag — senão o banner fica
+      // eterno e induz o operador a tentar separar de saldo que não existe mais.
+      const cobertura = dispTotalGalpao > 0;
       const { error } = await supabase
         .from("siso_pedidos")
-        .update({ flag_saldo_apareceu: true })
+        .update({ flag_saldo_apareceu: cobertura })
         .in("id", Array.from(pedidoIdsValidacao));
-      if (!error) flagsMarcadas += pedidoIdsValidacao.size;
+      if (!error && cobertura) flagsMarcadas += pedidoIdsValidacao.size;
     }
 
     // 2. (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot

@@ -27,7 +27,7 @@ export async function POST(
     // Fetch item
     const { data: item, error: itemError } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, sku, ordem_compra_id, compra_status, fornecedor_oc, compra_solicitada_em")
+      .select("id, pedido_id, sku, ordem_compra_id, compra_status, compra_quantidade_recebida, mov_saida_id, fornecedor_oc, compra_solicitada_em")
       .eq("id", itemId)
       .single();
 
@@ -36,6 +36,22 @@ export async function POST(
         return NextResponse.json({ error: "Item não encontrado" }, { status: 404 });
       }
       throw new Error(`Erro ao buscar item: ${itemError?.message ?? "not found"}`);
+    }
+
+    // P2-CMP-06: devolver à fila de compras NÃO pode reabrir item já recebido
+    // ou com pick — o reset zera mov_saida_id sem estorno, abrindo dedução
+    // dupla. Exige estornar o recebimento/pick antes de devolver.
+    if (item.compra_status === "recebido" || Number(item.compra_quantidade_recebida ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "item_ja_recebido", message: "item já recebido — estorne o recebimento antes de devolver" },
+        { status: 409 },
+      );
+    }
+    if (item.mov_saida_id != null) {
+      return NextResponse.json(
+        { error: "item_com_pick", message: "item tem pick registrado — desfaça o pick antes de devolver" },
+        { status: 409 },
+      );
     }
 
     const ordemCompraId = item.ordem_compra_id;

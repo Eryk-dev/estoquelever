@@ -15,6 +15,11 @@ export async function GET(req: NextRequest) {
     .select(
       "*, galpao:siso_galpoes(nome), criada_por_user:siso_usuarios!siso_inventario_sessoes_criada_por_fkey(nome)",
     )
+    // [INV-03] Esconde a sessão contínua "Contagens operacionais" (infra
+    // interna da contagem inline — acertos já aplicados na hora). Listá-la
+    // oferecia "Encerrar contagem", que re-aplicaria o histórico como ganho
+    // falso. computarDivergencias tem hard guard equivalente.
+    .eq("continua", false)
     .order("criado_em", { ascending: false })
     .limit(100);
   const status = sp.get("status");

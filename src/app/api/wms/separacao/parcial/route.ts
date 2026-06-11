@@ -8,6 +8,7 @@ import {
   buscarReservaPendentePorProduto,
   liberarReservaPicking,
   criarReservaCascade,
+  estornarLiberacaoReserva,
   type ReservaPendenteRow,
 } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
@@ -401,6 +402,55 @@ async function processarParcialItem(
             : `Picking parcial pedido #${primeiroPedido.numero}`,
       });
       if (pkErr) {
+        // Compensação: o passo 7a já liberou as R dos pedidos do wave (commits
+        // individuais). Sem re-reservar aqui, a falha do RPC deixaria as
+        // reservas perdidas pra sempre (overselling). Recria cada R via
+        // estorno da L (idempotente; nenhum link de liberação existe ainda —
+        // só são criados no 9c).
+        const compensacoesPendentes: Array<{
+          pedido_id: string;
+          mov_l_id: string;
+          erro: string;
+        }> = [];
+        for (const [pid, info] of liberacoesPorPedido) {
+          try {
+            await estornarLiberacaoReserva({
+              liberacao_mov_id: info.movL_id,
+              pedido_id: String(pid),
+              usuario_id: session.id,
+              motivo: "Compensação — falha no pick parcial atômico (recria reserva)",
+            });
+          } catch (e) {
+            compensacoesPendentes.push({
+              pedido_id: pid,
+              mov_l_id: info.movL_id,
+              erro: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+        if (compensacoesPendentes.length > 0) {
+          logger.logError({
+            error: new Error("compensação de liberações falhou após erro do RPC"),
+            source: "separacao-parcial",
+            message:
+              "Reservas liberadas no 7a não foram recriadas — risco de overselling",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { compensacoesPendentes, rpc_error: pkErr.message },
+          });
+          return NextResponse.json(
+            {
+              error: "falha_pick_parcial",
+              message:
+                `${pkErr.message} — ATENÇÃO: ${compensacoesPendentes.length} reserva(s) ` +
+                "liberada(s) não puderam ser recriadas. Acione o supervisor pra " +
+                "re-reservar manualmente antes de tentar de novo.",
+              reservas_nao_recriadas: compensacoesPendentes,
+            },
+            { status: 409 },
+          );
+        }
         return NextResponse.json(
           { error: "falha_pick_parcial", message: pkErr.message },
           { status: 409 },
@@ -430,6 +480,55 @@ async function processarParcialItem(
     // 9a. Popula tabela ponte siso_pedido_item_mov_links — 1 linha por item com qty>0
     //     pra mov de saída (rateada), e 1 linha pro primeiro beneficiado se houve
     //     mov de ajuste loc_zerou (ajuste é da loc, não rateado).
+    // P3-12b: se o INSERT dos links falhar APÓS a S já ter sido criada (RPC),
+    // a S fica órfã (saldo debitado, nenhum link → desfazer-parcial/reset não
+    // acham a fração). Estorna a S (+ ajuste) e recria as liberações do 7a antes
+    // de 409, em vez de 500 com S órfã. estornarMovimentacao absorve "já estornada".
+    async function compensarLinksItemERetornar409() {
+      for (const movId of [movSaidaId, movAjusteId]) {
+        if (!movId) continue;
+        try {
+          await estornarMovimentacao({
+            mov_id: movId,
+            usuario_id: session.id,
+            motivo: "Compensação — falha persistindo links (parcial item)",
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+            logger.warn("separacao-parcial-item", "compensação: estorno da mov falhou", {
+              mov_id: movId,
+              error: msg,
+            });
+          }
+        }
+      }
+      for (const [pid, info] of liberacoesPorPedido) {
+        try {
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: info.movL_id,
+            pedido_id: String(pid),
+            usuario_id: session.id,
+            motivo: "Compensação — falha persistindo links (recria reserva)",
+          });
+        } catch (e) {
+          logger.logError({
+            error: e,
+            source: "separacao-parcial-item",
+            message: "Compensação de links: falhou recriar reserva — risco de overselling",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { pedido_id: pid, mov_l_id: info.movL_id },
+          });
+        }
+      }
+      return NextResponse.json(
+        { error: "erro_persistindo_links" },
+        { status: 409 },
+      );
+    }
+
     if (movSaidaId) {
       const linksData: Array<{
         pedido_item_id: number;
@@ -465,7 +564,7 @@ async function processarParcialItem(
             requestMethod: "POST",
             metadata: { movSaidaId, linksData },
           });
-          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+          return compensarLinksItemERetornar409();
         }
       }
     }
@@ -493,7 +592,7 @@ async function processarParcialItem(
             requestMethod: "POST",
             metadata: { movAjusteId, delta },
           });
-          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+          return compensarLinksItemERetornar409();
         }
       }
     }
@@ -718,18 +817,26 @@ async function processarParcialItem(
           });
         }
       }
-      // Estorna L's das liberações de R (cria R nova com estorno_de=L)
+      // Estorna L's das liberações de R — recria a R via estornarLiberacaoReserva
+      // (o estornarMovimentacao genérico rejeita L com estorno_de=R.id).
       for (const [pid, info] of liberacoesPorPedido) {
         try {
-          await estornarMovimentacao({
-            mov_id: info.movL_id,
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: info.movL_id,
+            pedido_id: String(pid),
             usuario_id: session.id,
-            motivo: "Race condition (libera L par)",
+            motivo: "Race condition — recria R liberada no 7a",
           });
         } catch (e: unknown) {
-          logger.warn("separacao-parcial", "rollback estorno L falhou", {
-            pedido_id: pid,
-            error: (e as Error).message,
+          // LOUD: reserva liberada no 7a fica perdida — risco de overselling.
+          logger.logError({
+            error: e,
+            source: "separacao-parcial",
+            message: "rollback: falhou recriar R (estorno de L) — reserva perdida",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { pedido_id: pid, mov_l_id: info.movL_id },
           });
         }
       }
@@ -1312,15 +1419,58 @@ async function processarParcialRealocacao(
     void isEmprestimo;
     void empresaDevedoraId;
 
+    // Distribuição FCFS (movida pra ANTES da liberação — espelha o modo item):
+    // define, por realoc, quanto foi pego (qty_para_esta) e quanto sobra
+    // (qty_residual). Agregado por pedido, governa QUAIS R cascade liberar
+    // (só de quem recebeu unidade quando !loc_zerou) e qual residual re-reservar.
+    type RealocUpdate = {
+      realoc: typeof realocs[number];
+      qty_para_esta: number;
+      qty_residual: number;
+    };
+    let qtyRestante = quantidade_pega;
+    const updates: RealocUpdate[] = [];
+    for (const r of realocs) {
+      const qtdSugerida = Number(r.quantidade);
+      const qtyParaEsta = Math.min(qtdSugerida, qtyRestante);
+      qtyRestante -= qtyParaEsta;
+      updates.push({
+        realoc: r,
+        qty_para_esta: qtyParaEsta,
+        qty_residual: qtdSugerida - qtyParaEsta,
+      });
+    }
+    const allocPorPedido = new Map<string, { picked: number; residual: number }>();
+    for (const u of updates) {
+      const itemDoU = itemById.get(u.realoc.pedido_item_id);
+      if (!itemDoU) continue;
+      const cur = allocPorPedido.get(itemDoU.pedido_id) ?? { picked: 0, residual: 0 };
+      cur.picked += u.qty_para_esta;
+      cur.residual += u.qty_residual;
+      allocPorPedido.set(itemDoU.pedido_id, cur);
+    }
+
     // 7a. R↔L↔S pairing: pra cada pedido único do batch de realocs, libera
-    // 100% da R cascade que estava nessa loc. Cada modo-item anterior criou
+    // a R cascade que estava nessa loc. Cada modo-item anterior criou
     // uma R por realoc; aqui consolidamos em 1 L por pedido (idempotente:
     // buscarReservaPendente já filtra L existente).
+    //   - loc_zerou=false: só libera a R de quem pegou unidade (guard abaixo);
+    //     a R de pedido não-atendido fica INTACTA, e o residual do próprio pick
+    //     é re-reservado na mesma loc mais adiante (passo 10, ramo !loc_zerou).
+    //   - loc_zerou=true: libera 100% da R de todos (a loc esvaziou); o cascade
+    //     re-emite R nas locs destino pra qty residual.
     const liberacoesRealocPorPedido = new Map<
       string,
       { reserva: ReservaPendenteRow; movL_id: string }
     >();
     for (const pid of pedidoIds) {
+      const alloc = allocPorPedido.get(pid) ?? { picked: 0, residual: 0 };
+      // !loc_zerou: NÃO liberar a R cascade de pedido que não recebeu unidade
+      // (FCFS deu tudo a outro do batch). Senão ele perde a reserva sem ter
+      // sido separado — mesmo guard do modo item (bug #50144/#50189). Com
+      // loc_zerou=true mantém o comportamento antigo (libera todas; o cascade
+      // recria em outra loc).
+      if (!loc_zerou && alloc.picked === 0) continue;
       try {
         const r = await buscarReservaPendente({
           pedido_id: String(pid),
@@ -1369,34 +1519,108 @@ async function processarParcialRealocacao(
       }
     }
 
+    // P2-SEP-08: compensa as liberações de R do passo 7a quando a S (ou o ajuste)
+    // falha. Sem isso, um throw do inserirMovimentacao caía no catch externo →
+    // 500, deixando as R liberadas no 7a PERDIDAS (overselling) — mesmo bug do
+    // SEP-04 no modo item. Espelha a compensação da race-loss (estornarLiberacaoReserva).
+    // Opcionalmente estorna uma S já criada (caso a falha seja no ajuste).
+    async function compensar7aERetornar409(
+      motivoFalha: string,
+      movSaidaJaCriada: string | null,
+    ) {
+      if (movSaidaJaCriada) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movSaidaJaCriada,
+            usuario_id: session.id,
+            motivo: "Compensação — falha no ajuste pós-S (realocação parcial)",
+          });
+        } catch (e) {
+          logger.warn("separacao-parcial-realoc", "compensação: estorno da S falhou", {
+            mov_id: movSaidaJaCriada,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+      const naoRecriadas: Array<{ pedido_id: string; mov_l_id: string; erro: string }> = [];
+      for (const [pid, info] of liberacoesRealocPorPedido) {
+        try {
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: info.movL_id,
+            pedido_id: String(pid),
+            usuario_id: session.id,
+            motivo: "Compensação — falha na S do parcial realocação (recria R cascade)",
+          });
+        } catch (e) {
+          naoRecriadas.push({
+            pedido_id: pid,
+            mov_l_id: info.movL_id,
+            erro: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+      if (naoRecriadas.length > 0) {
+        logger.logError({
+          error: new Error("compensação de liberações falhou após erro da S (realocação)"),
+          source: "separacao-parcial-realoc",
+          message: "Reservas cascade liberadas no 7a não foram recriadas — risco de overselling",
+          category: "business_logic",
+          requestPath: "/api/wms/separacao/parcial",
+          requestMethod: "POST",
+          metadata: { naoRecriadas, motivoFalha },
+        });
+        return NextResponse.json(
+          {
+            error: "falha_pick_parcial",
+            message:
+              `${motivoFalha} — ATENÇÃO: ${naoRecriadas.length} reserva(s) liberada(s) ` +
+              "não puderam ser recriadas. Acione o supervisor antes de tentar de novo.",
+            reservas_nao_recriadas: naoRecriadas,
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json(
+        { error: "falha_pick_parcial", message: motivoFalha },
+        { status: 409 },
+      );
+    }
+
     let movSaidaId: string | null = null;
     if (quantidade_pega > 0) {
-      const mov = await inserirMovimentacao({
-        tripla: {
-          produto_id: produtoWmsId,
-          galpao_id: galpaoId,
-          localizacao_id: localizacaoId,
-        },
-        tipo: "S",
-        qty: quantidade_pega,
-        origem_tipo: "nf_venda",
-        origem_detalhes: {
-          pedido_id_tiny: primeiroPedido.id,
-          pedido_numero: primeiroPedido.numero,
-          pedido_item_ids: itemIds,
-          realocacao_ids: realocIdsList,
-          sku: primeiroItem.sku,
-          contexto:
-            realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
-        },
-        empresa_vendedora_id: empresaOrigemPrimeiroPedido,
-        motivo:
-          realocs.length > 1
-            ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
-            : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
-        usuario_id: session.id,
-      });
-      movSaidaId = mov.id;
+      try {
+        const mov = await inserirMovimentacao({
+          tripla: {
+            produto_id: produtoWmsId,
+            galpao_id: galpaoId,
+            localizacao_id: localizacaoId,
+          },
+          tipo: "S",
+          qty: quantidade_pega,
+          origem_tipo: "nf_venda",
+          origem_detalhes: {
+            pedido_id_tiny: primeiroPedido.id,
+            pedido_numero: primeiroPedido.numero,
+            pedido_item_ids: itemIds,
+            realocacao_ids: realocIdsList,
+            sku: primeiroItem.sku,
+            contexto:
+              realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
+          },
+          empresa_vendedora_id: empresaOrigemPrimeiroPedido,
+          motivo:
+            realocs.length > 1
+              ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
+              : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
+          usuario_id: session.id,
+        });
+        movSaidaId = mov.id;
+      } catch (sErr) {
+        return compensar7aERetornar409(
+          sErr instanceof Error ? sErr.message : String(sErr),
+          null,
+        );
+      }
     }
 
     let movAjusteId: string | null = null;
@@ -1415,58 +1639,97 @@ async function processarParcialRealocacao(
     if (loc_zerou) {
       const delta = deltaAjuste;
       if (delta > 0) {
-        const movAj = await inserirMovimentacao({
-          tripla: {
-            produto_id: produtoWmsId,
-            galpao_id: galpaoId,
-            localizacao_id: localizacaoId,
-          },
-          tipo: "S",
-          qty: delta,
-          origem_tipo: "ajuste_pick_zerou",
-          origem_detalhes: {
-            pedido_id_tiny: primeiroPedido.id,
-            pedido_numero: primeiroPedido.numero,
-            pedido_item_ids: itemIds,
-            realocacao_ids: realocIdsList,
-            saldo_anterior: saldoWms,
-            qty_pega: quantidade_pega,
-          },
-          motivo: "loc zerou no bipe",
-          usuario_id: session.id,
-        });
-        movAjusteId = movAj.id;
+        try {
+          const movAj = await inserirMovimentacao({
+            tripla: {
+              produto_id: produtoWmsId,
+              galpao_id: galpaoId,
+              localizacao_id: localizacaoId,
+            },
+            tipo: "S",
+            qty: delta,
+            origem_tipo: "ajuste_pick_zerou",
+            origem_detalhes: {
+              pedido_id_tiny: primeiroPedido.id,
+              pedido_numero: primeiroPedido.numero,
+              pedido_item_ids: itemIds,
+              realocacao_ids: realocIdsList,
+              saldo_anterior: saldoWms,
+              qty_pega: quantidade_pega,
+            },
+            motivo: "loc zerou no bipe",
+            usuario_id: session.id,
+          });
+          movAjusteId = movAj.id;
+        } catch (ajErr) {
+          // P2-SEP-08: falha no ajuste pós-S — estorna a S já criada e compensa
+          // as liberações do 7a antes de 409 (senão a S fica órfã + R perdidas).
+          return compensar7aERetornar409(
+            ajErr instanceof Error ? ajErr.message : String(ajErr),
+            movSaidaId,
+          );
+        }
       }
 
       // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
       // siso_pedido_item_estoques pós-loc_zerou (cascade path). Tabela dropada.
     }
 
-    // 8. Distribui qty_pega entre realocs em ordem (FCFS)
-    type RealocUpdate = {
-      realoc: typeof realocs[number];
-      qty_para_esta: number;
-      qty_residual: number;
-    };
-    let qtyRestante = quantidade_pega;
-    const updates: RealocUpdate[] = [];
-    for (const r of realocs) {
-      const qtdSugerida = Number(r.quantidade);
-      const qtyParaEsta = Math.min(qtdSugerida, qtyRestante);
-      qtyRestante -= qtyParaEsta;
-      updates.push({
-        realoc: r,
-        qty_para_esta: qtyParaEsta,
-        qty_residual: qtdSugerida - qtyParaEsta,
-      });
-    }
-
+    // 8. (updates já computado antes da liberação 7a — distribuição FCFS.)
     const indexPrimeiroBeneficiario =
       updates.findIndex((u) => u.qty_para_esta > 0) >= 0
         ? updates.findIndex((u) => u.qty_para_esta > 0)
         : 0;
 
     const nowIso = new Date().toISOString();
+
+    // P3-12b (realocação): se o INSERT dos links falhar APÓS a S já criada, a S
+    // fica órfã. Estorna S (+ ajuste) e recria as liberações do 7a antes de 409
+    // (erro_persistindo_links), em vez de 500 com S órfã. Espelha o modo item.
+    async function compensarLinksRealocERetornar409() {
+      for (const movId of [movSaidaId, movAjusteId]) {
+        if (!movId) continue;
+        try {
+          await estornarMovimentacao({
+            mov_id: movId,
+            usuario_id: session.id,
+            motivo: "Compensação — falha persistindo links (parcial realocação)",
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+            logger.warn("separacao-parcial-realoc", "compensação: estorno da mov falhou", {
+              mov_id: movId,
+              error: msg,
+            });
+          }
+        }
+      }
+      for (const [pid, info] of liberacoesRealocPorPedido) {
+        try {
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: info.movL_id,
+            pedido_id: String(pid),
+            usuario_id: session.id,
+            motivo: "Compensação — falha persistindo links (recria R cascade)",
+          });
+        } catch (e) {
+          logger.logError({
+            error: e,
+            source: "separacao-parcial-realoc",
+            message: "Compensação de links: falhou recriar R cascade — risco de overselling",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { pedido_id: pid, mov_l_id: info.movL_id },
+          });
+        }
+      }
+      return NextResponse.json(
+        { error: "erro_persistindo_links" },
+        { status: 409 },
+      );
+    }
 
     // 8a. Popula tabela ponte siso_pedido_item_mov_links — 1 linha por realoc com qty>0
     //     pra mov de saída (rateada). Ajuste loc_zerou (não rateado) vai no primeiro
@@ -1506,7 +1769,7 @@ async function processarParcialRealocacao(
             requestMethod: "POST",
             metadata: { movSaidaId, linksRealoc },
           });
-          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+          return compensarLinksRealocERetornar409();
         }
       }
     }
@@ -1534,7 +1797,7 @@ async function processarParcialRealocacao(
             requestMethod: "POST",
             metadata: { movAjusteId, delta },
           });
-          return NextResponse.json({ error: "erro persistindo links" }, { status: 500 });
+          return compensarLinksRealocERetornar409();
         }
       }
     }
@@ -1736,18 +1999,27 @@ async function processarParcialRealocacao(
           });
         }
       }
-      // Estorna L's das liberações de R cascade
+      // Estorna L's das liberações de R cascade — recria a R via
+      // estornarLiberacaoReserva (o estornarMovimentacao genérico rejeita
+      // L com estorno_de=R.id).
       for (const [pid, info] of liberacoesRealocPorPedido) {
         try {
-          await estornarMovimentacao({
-            mov_id: info.movL_id,
+          await estornarLiberacaoReserva({
+            liberacao_mov_id: info.movL_id,
+            pedido_id: String(pid),
             usuario_id: session.id,
-            motivo: "Race condition (libera L par)",
+            motivo: "Race condition — recria R cascade liberada no 7a",
           });
         } catch (e: unknown) {
-          logger.warn("separacao-parcial-realoc", "rollback estorno L falhou", {
-            pedido_id: pid,
-            error: (e as Error).message,
+          // LOUD: reserva liberada no 7a fica perdida — risco de overselling.
+          logger.logError({
+            error: e,
+            source: "separacao-parcial-realoc",
+            message: "rollback: falhou recriar R (estorno de L) — reserva perdida",
+            category: "business_logic",
+            requestPath: "/api/wms/separacao/parcial",
+            requestMethod: "POST",
+            metadata: { pedido_id: pid, mov_l_id: info.movL_id },
           });
         }
       }
@@ -1799,7 +2071,46 @@ async function processarParcialRealocacao(
 
     if (!loc_zerou) {
       // Sem loc_zerou, residuais ficam como aguardando_picking (não foram marcados)
-      // — operador continua picando normalmente
+      // — operador continua picando normalmente.
+      //
+      // RE-RESERVA do residual na MESMA loc (espelha o modo item): a R cascade
+      // foi liberada 100% no passo 7a (só de quem pegou unidade). Recriamos uma
+      // R do que falta na própria prateleira pra (a) o saldo continuar protegido
+      // (ninguém rouba) e (b) o próximo pick achar a R viva. Pedido com picked=0
+      // manteve a R original intacta (guard do 7a) → nada a fazer.
+      for (const pid of liberacoesRealocPorPedido.keys()) {
+        const alloc = allocPorPedido.get(pid) ?? { picked: 0, residual: 0 };
+        if (alloc.residual <= 0) continue;
+        const pedidoDoPid = pedidoById.get(pid);
+        try {
+          await criarReservaCascade({
+            tripla: {
+              produto_id: produtoWmsId,
+              galpao_id: galpaoId,
+              localizacao_id: localizacaoId,
+            },
+            qty: alloc.residual,
+            pedido_id: String(pid),
+            usuario_id: session.id,
+            motivo: `Re-reserva residual mesma loc — parcial realoc pedido #${pedidoDoPid?.numero ?? "?"}`,
+            origem_detalhes: {
+              contexto: "residual_mesma_loc",
+              sku: primeiroItem.sku,
+              loc_id: localizacaoId,
+            },
+          });
+        } catch (e) {
+          logger.warn(
+            "separacao-parcial-realoc",
+            "Falhou re-reservar residual mesma loc (continua)",
+            {
+              pedido_id: pid,
+              qty_residual: alloc.residual,
+              error: e instanceof Error ? e.message : String(e),
+            },
+          );
+        }
+      }
       return NextResponse.json({ status: "completo" });
     }
 

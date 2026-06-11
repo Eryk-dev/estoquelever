@@ -59,8 +59,26 @@ export async function GET(req: NextRequest) {
       `,
       { count: "exact" },
     )
+    // Ordem determinística (criado_em desc, id desc) pra suportar keyset.
     .order("criado_em", { ascending: false })
-    .range(offset, offset + limit - 1);
+    .order("id", { ascending: false });
+
+  // Paginação por cursor keyset (`before` = "<criado_em>|<id>" da última linha)
+  // OU por offset clássico. Keyset evita duplicar/pular linhas quando novas movs
+  // entram entre páginas. Quando não há `before`, cai no range por offset.
+  const before = sp.get("before");
+  if (before) {
+    const sep = before.lastIndexOf("|");
+    const beforeTs = sep >= 0 ? before.slice(0, sep) : before;
+    const beforeId = sep >= 0 ? before.slice(sep + 1) : "";
+    // (criado_em < ts) OR (criado_em = ts AND id < id) — tupla estrita.
+    q = q.or(
+      `criado_em.lt.${beforeTs},and(criado_em.eq.${beforeTs},id.lt.${beforeId})`,
+    );
+    q = q.limit(limit);
+  } else {
+    q = q.range(offset, offset + limit - 1);
+  }
 
   const produtoId = sp.get("produto_id");
   const galpaoId = sp.get("galpao_id");

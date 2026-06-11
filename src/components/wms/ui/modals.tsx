@@ -513,6 +513,15 @@ export function AjusteModal({
   const [qty, setQty] = useState("");
   const [direcao, setDirecao] = useState<"entrada" | "saida">("saida");
   const [motivo, setMotivo] = useState("");
+  const [motivoCategoria, setMotivoCategoria] = useState<
+    | ""
+    | "avaria"
+    | "perda"
+    | "achado"
+    | "correcao_inventario"
+    | "devolucao_sem_fluxo"
+    | "outro"
+  >("");
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -563,6 +572,7 @@ export function AjusteModal({
           qty: Number(qty),
           direcao,
           motivo,
+          motivo_categoria: motivoCategoria,
         }),
       });
       if (!r.ok) {
@@ -593,7 +603,8 @@ export function AjusteModal({
     !!galpaoId &&
     !!locId &&
     Number(qty) > 0 &&
-    motivo.trim().length >= 3;
+    motivo.trim().length >= 3 &&
+    !!motivoCategoria;
 
   return (
     <Modal
@@ -743,6 +754,28 @@ export function AjusteModal({
           onChange={(e) => setQty(e.target.value)}
           placeholder="0"
         />
+      </Field>
+
+      <Field
+        label="Categoria"
+        required
+        hint="estruturada para apuração — selecione antes do motivo livre"
+      >
+        <select
+          className="wms-select"
+          value={motivoCategoria}
+          onChange={(e) =>
+            setMotivoCategoria(e.target.value as typeof motivoCategoria)
+          }
+        >
+          <option value="">Selecione…</option>
+          <option value="avaria">Avaria</option>
+          <option value="perda">Perda</option>
+          <option value="achado">Achado</option>
+          <option value="correcao_inventario">Correção de inventário</option>
+          <option value="devolucao_sem_fluxo">Devolução sem fluxo</option>
+          <option value="outro">Outro</option>
+        </select>
       </Field>
 
       <Field label="Motivo" required hint="Mínimo 3 caracteres. Será gravado no ledger.">

@@ -8,6 +8,7 @@ const STATUS_VALIDOS: StatusPendencia[] = [
   "em_guarda",
   "guardada",
   "cancelada",
+  "encerrada_sem_saldo",
 ];
 
 /**

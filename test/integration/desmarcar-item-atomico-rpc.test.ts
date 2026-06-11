@@ -115,4 +115,62 @@ describe("wms_desmarcar_item_atomico", () => {
     expect(Number(est!.reservado)).toBe(5);        // R clampada a 5 (não 8)
     expect(Number(est!.reservado)).toBeLessThanOrEqual(Number(est!.saldo)); // invariante
   });
+
+  // P0-01 (20260611d) — wave consolidada: S única de 5 cobre A(2)+B(3) com
+  // rateio em siso_pedido_item_mov_links. Desmarcar A passa p_qty_link=2 →
+  // E parcial de 2 (não 5), qty_estornada acumulada (interop com
+  // wms_estornar_parcial_movimentacao), retry idempotente por
+  // (S, pedido_item_id), e B(3) ainda estornável (exact-fit).
+  it("p_qty_link: wave A(2)+B(3) → desmarcar A estorna só 2; retry no-op; B fecha exact-fit", async () => {
+    await novoProduto();
+    const pedidoId = "700000003";
+    // Seed E 10 → saldo 10; S consolidada de 5 → saldo 5.
+    await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: prodId, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "E", p_quantidade: 10, p_origem_tipo: "inventario_inicial", p_motivo: "seed",
+    });
+    const { data: sId } = await sb.rpc("wms_inserir_movimentacao", {
+      p_produto_id: prodId, p_galpao_id: galpaoId, p_localizacao_id: locId,
+      p_tipo: "S", p_quantidade: 5, p_origem_tipo: "nf_venda", p_origem_id: pedidoId,
+      p_empresa_vendedora_id: empresaId, p_pedido_id: pedidoId, p_motivo: "S consolidada wave",
+    });
+    const movSId = (sId.data ?? sId) as string;
+
+    // Desmarca item A (fração 2): saldo 5 → 7 (NÃO 10).
+    const { data, error } = await sb.rpc("wms_desmarcar_item_atomico", {
+      p_mov_s_id: movSId, p_mov_l_id: null, p_pedido_id: pedidoId,
+      p_usuario_id: null, p_motivo: "desmarca fração A",
+      p_qty_link: 2, p_pedido_item_id: 999001,
+    });
+    expect(error).toBeNull();
+    expect((data as { estornado: boolean }).estornado).toBe(true);
+    const { data: est1 } = await sb.from("siso_estoque").select("saldo")
+      .eq("produto_id", prodId).eq("galpao_id", galpaoId).eq("localizacao_id", locId).single();
+    expect(Number(est1!.saldo)).toBe(7);
+    const { data: sRow } = await sb.from("siso_movimentacoes").select("qty_estornada")
+      .eq("id", movSId).single();
+    expect(Number(sRow!.qty_estornada)).toBe(2);
+
+    // Retry (mesma fração, mesmo item) → no-op idempotente.
+    const { data: retry, error: retryErr } = await sb.rpc("wms_desmarcar_item_atomico", {
+      p_mov_s_id: movSId, p_mov_l_id: null, p_pedido_id: pedidoId,
+      p_usuario_id: null, p_motivo: "retry", p_qty_link: 2, p_pedido_item_id: 999001,
+    });
+    expect(retryErr).toBeNull();
+    expect((retry as { idempotente?: boolean }).idempotente).toBe(true);
+    const { data: est2 } = await sb.from("siso_estoque").select("saldo")
+      .eq("produto_id", prodId).eq("galpao_id", galpaoId).eq("localizacao_id", locId).single();
+    expect(Number(est2!.saldo)).toBe(7); // inalterado
+
+    // Item B (fração 3) — exact-fit (2+3=5) passa; saldo volta a 10.
+    const { error: bErr } = await sb.rpc("wms_desmarcar_item_atomico", {
+      p_mov_s_id: movSId, p_mov_l_id: null, p_pedido_id: pedidoId,
+      p_usuario_id: null, p_motivo: "desmarca fração B",
+      p_qty_link: 3, p_pedido_item_id: 999002,
+    });
+    expect(bErr).toBeNull();
+    const { data: est3 } = await sb.from("siso_estoque").select("saldo")
+      .eq("produto_id", prodId).eq("galpao_id", galpaoId).eq("localizacao_id", locId).single();
+    expect(Number(est3!.saldo)).toBe(10);
+  });
 });

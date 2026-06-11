@@ -52,6 +52,36 @@ export interface ReceberOCResult {
 }
 
 /**
+ * P2-CMP-01: cancela pendências de guarda como COMPENSAÇÃO num rollback de
+ * recebimento. Libera a reserva forte remanescente via RPC atômico antes de
+ * marcar 'cancelada'. Best-effort: falha de uma não aborta o resto do rollback
+ * (loga via logError business_logic e segue).
+ */
+async function cancelarPendenciasCompensacao(
+  supabase: ReturnType<typeof createServiceClient>,
+  pendenciaIds: string[],
+  usuarioId: string,
+  motivo: string,
+  ctx: { ocId: string },
+): Promise<void> {
+  for (const pendId of pendenciaIds) {
+    const { error } = await supabase.rpc(
+      "wms_cancelar_pendencia_guarda_atomico",
+      { p_pendencia_id: pendId, p_motivo: motivo, p_usuario_id: usuarioId },
+    );
+    if (error) {
+      logger.logError({
+        error,
+        source: "receber-oc",
+        message: "FALHA ao cancelar pendência de guarda na compensação — pendência órfã",
+        category: "business_logic",
+        metadata: { pendencia_id: pendId, oc_id: ctx.ocId, motivo },
+      });
+    }
+  }
+}
+
+/**
  * Recebe itens vinculados a uma OC: gera mov E em RECEBIMENTO com custo da
  * compra (atualiza custo médio), cria pendência de guarda pra tablet,
  * atualiza compra_quantidade_recebida no item, e fecha a OC se todos
@@ -185,6 +215,11 @@ export async function receberItensViaOC(
     // custo da compra) + ajuste_manual 'achado' (excedente — NÃO alimenta o
     // custo médio de compra). Ambas no mesmo lote (cobertas pelo rollback).
     let movEntradaId: string;
+    // P2-CMP-01: rastreia a mov 'achado' (over-receive) e as pendências de
+    // guarda criadas POR ESTE item, pra compensar no caminho perdedor de corrida
+    // (estornar achado + cancelar pendências) — não só a mov de compra.
+    let movAchadoId: string | null = null;
+    const pendsDesteItem: string[] = [];
     try {
       const custoResolvido = await resolverCustoEntrada({
         produto_id: produtoWmsId,
@@ -257,6 +292,7 @@ export async function receberItensViaOC(
           motivo: `over-receive: ${qtyExcedente} acima do solicitado (brinde/conferência)`,
           usuario_id: args.operadorId,
         });
+        movAchadoId = movGanho.id;
         movsCriadasLote.push(movGanho.id);
       }
     } catch (movErr) {
@@ -296,6 +332,7 @@ export async function receberItensViaOC(
           destino_sugerido_id: split.loc_packing_id,
         });
         pendenciasCriadas.push(pendCross);
+        pendsDesteItem.push(pendCross);
         pendsCriadasItem++;
         logger.info(
           "receber-oc.crossdock",
@@ -328,6 +365,7 @@ export async function receberItensViaOC(
           prioridade: "normal",
         });
         pendenciasCriadas.push(pendNormal);
+        pendsDesteItem.push(pendNormal);
         pendsCriadasItem++;
       }
     } catch (pendErr) {
@@ -362,20 +400,45 @@ export async function receberItensViaOC(
     // não casou). Estorna SÓ esta mov, tira do lote e segue — o vencedor já
     // contou (concorrência não é falha do lote → não dispara rollback all-items).
     if (!updRows || updRows.length === 0) {
-      try {
-        await estornarMovimentacao({
-          mov_id: movEntradaId,
-          usuario_id: args.operadorId,
-          motivo: `Recebimento concorrente do item ${item.id}: estorno da mov duplicada`,
-        });
-      } catch (estErr) {
-        logger.error(
-          "receber-oc",
-          "FALHA ao estornar mov de item concorrente — mov órfã",
-          { movId: movEntradaId, itemId: item.id, ocId: args.ocId, err: String(estErr) },
+      // P2-CMP-01: além da mov de compra, estorna a mov 'achado' (over-receive)
+      // e cancela as pendências de guarda criadas POR ESTE item — senão o
+      // perdedor de corrida deixa saldo fantasma + pendências órfãs.
+      // Cancela pendências ANTES dos estornos (libera a R forte antes de o
+      // estorno do E baixar o saldo — senão violaria CHECK(reservado<=saldo)).
+      if (pendsDesteItem.length > 0) {
+        await cancelarPendenciasCompensacao(
+          supabase,
+          pendsDesteItem,
+          args.operadorId,
+          "race recebimento — perdedor",
+          { ocId: args.ocId },
         );
+        // tira do array global pra não reportar como criada
+        for (const pendId of pendsDesteItem) {
+          const pIdx = pendenciasCriadas.indexOf(pendId);
+          if (pIdx >= 0) pendenciasCriadas.splice(pIdx, 1);
+        }
       }
-      movsCriadasLote.splice(movsCriadasLote.indexOf(movEntradaId), 1);
+      const movsCompensar = [movEntradaId, ...(movAchadoId ? [movAchadoId] : [])];
+      for (const movId of movsCompensar) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movId,
+            usuario_id: args.operadorId,
+            motivo: `Recebimento concorrente do item ${item.id}: estorno da mov duplicada`,
+          });
+        } catch (estErr) {
+          logger.logError({
+            error: estErr,
+            source: "receber-oc",
+            message: "FALHA ao estornar mov de item concorrente — mov órfã",
+            category: "business_logic",
+            metadata: { movId, itemId: String(item.id), ocId: args.ocId },
+          });
+        }
+        const idx = movsCriadasLote.indexOf(movId);
+        if (idx >= 0) movsCriadasLote.splice(idx, 1);
+      }
       logger.warn("receber-oc", "recebimento concorrente detectado; pulando item", {
         item_id: item.id,
       });
@@ -415,6 +478,19 @@ export async function receberItensViaOC(
   } catch (loteErr) {
     // P028: rollback all-items — estorna TODAS as movs E criadas no lote e
     // re-lança. Item 1 não pode ficar comitado se item 2 falhou.
+    // P2-CMP-01: cancela ANTES as pendências de guarda criadas pelos itens já
+    // processados (libera a R forte antes de o estorno do E baixar o saldo —
+    // senão o estorno violaria CHECK(reservado<=saldo) na loc de recebimento).
+    if (pendenciasCriadas.length > 0) {
+      await cancelarPendenciasCompensacao(
+        supabase,
+        [...pendenciasCriadas],
+        args.operadorId,
+        `rollback recebimento OC ${args.ocId}`,
+        { ocId: args.ocId },
+      );
+      pendenciasCriadas.length = 0;
+    }
     for (const movId of movsCriadasLote) {
       try {
         await estornarMovimentacao({
@@ -423,11 +499,13 @@ export async function receberItensViaOC(
           motivo: `Rollback all-items recebimento OC ${args.ocId}: ${loteErr instanceof Error ? loteErr.message : String(loteErr)}`,
         });
       } catch (estErr) {
-        logger.error(
-          "receber-oc",
-          "FALHA ao estornar mov no rollback all-items — mov órfã",
-          { movId, ocId: args.ocId, err: String(estErr) },
-        );
+        logger.logError({
+          error: estErr,
+          source: "receber-oc",
+          message: "FALHA ao estornar mov no rollback all-items — mov órfã",
+          category: "business_logic",
+          metadata: { movId, ocId: args.ocId },
+        });
       }
     }
     // Reverte os incrementos de compra_quantidade_recebida/compra_status já
@@ -441,33 +519,46 @@ export async function receberItensViaOC(
         })
         .eq("id", upd.itemId);
       if (revErr) {
-        logger.error(
-          "receber-oc",
-          "FALHA ao reverter compra_quantidade_recebida no rollback all-items",
-          { itemId: upd.itemId, ocId: args.ocId, err: revErr.message },
-        );
+        logger.logError({
+          error: revErr,
+          source: "receber-oc",
+          message: "FALHA ao reverter compra_quantidade_recebida no rollback all-items",
+          category: "business_logic",
+          metadata: { itemId: upd.itemId, ocId: args.ocId },
+        });
       }
     }
     throw loteErr;
   }
 
   // Verifica se OC fechou (todos itens com qty_recebida >= qty_solicitada)
-  const { data: itensRestantes } = await supabase
+  // P2-CMP-02: SELECT falho NÃO pode fechar a OC. `(data ?? []).every()` de
+  // uma lista vazia retorna true → marcaria 'recebido' com itens pendentes.
+  // Em erro: loga e pula o update de status (o recebimento em si foi OK).
+  const { data: itensRestantes, error: itensRestantesErr } = await supabase
     .from("siso_pedido_itens")
     .select("compra_quantidade_solicitada, compra_quantidade_recebida")
     .eq("ordem_compra_id", args.ocId);
 
-  const ocFechada = (itensRestantes ?? []).every(
-    (it) =>
-      Number(it.compra_quantidade_recebida ?? 0) >=
-      Number(it.compra_quantidade_solicitada ?? 0),
-  );
-
-  if (ocFechada) {
-    await supabase
-      .from("siso_ordens_compra")
-      .update({ status: "recebido" })
-      .eq("id", args.ocId);
+  let ocFechada = false;
+  if (itensRestantesErr) {
+    logger.error(
+      "receber-oc",
+      "FALHA ao buscar itens restantes — pulando atualização de status da OC",
+      { ocId: args.ocId, error: itensRestantesErr.message },
+    );
+  } else {
+    ocFechada = (itensRestantes ?? []).every(
+      (it) =>
+        Number(it.compra_quantidade_recebida ?? 0) >=
+        Number(it.compra_quantidade_solicitada ?? 0),
+    );
+    if (ocFechada) {
+      await supabase
+        .from("siso_ordens_compra")
+        .update({ status: "recebido" })
+        .eq("id", args.ocId);
+    }
   }
 
   // Mec. 2: libera os pedidos cujos itens de compra agora estão todos resolvidos.

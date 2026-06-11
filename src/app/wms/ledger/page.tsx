@@ -1,9 +1,17 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
-import { Icon, PageHeader } from "@/components/wms/ui/wms-ui";
+import {
+  Icon,
+  PageHeader,
+  Pagination,
+  Modal,
+  Field,
+} from "@/components/wms/ui/wms-ui";
 import { LedgerRow } from "@/components/wms/produto-drawer";
+import { usePermissoes } from "@/lib/auth-context";
 import type { Movimentacao } from "@/lib/wms/types";
 
 interface LedgerRowData extends Movimentacao {
@@ -42,6 +50,8 @@ export default function LedgerPage() {
   const [referenciaId, setReferenciaId] = useState<string>("all");
   const [fornecedorId, setFornecedorId] = useState<string>("all");
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 300;
 
   const empresasQuery = useQuery({
     queryKey: ["wms-empresas-lite"],
@@ -55,6 +65,15 @@ export default function LedgerPage() {
   const empresas = empresasQuery.data ?? [];
   const fornecedores = fornecedoresQuery.data?.rows ?? [];
 
+  // Reset de página quando um filtro server-side muda (derive-during-render,
+  // sem useEffect). Os filtros client-side (tipo, q) só refinam a página atual.
+  const serverFiltersKey = `${origem}|${compradoraId}|${vendedoraId}|${referenciaId}|${fornecedorId}`;
+  const [pageFor, setPageFor] = useState(serverFiltersKey);
+  if (pageFor !== serverFiltersKey) {
+    setPageFor(serverFiltersKey);
+    setPage(1);
+  }
+
   const ledgerQuery = useQuery({
     queryKey: [
       "wms-ledger",
@@ -64,9 +83,13 @@ export default function LedgerPage() {
       vendedoraId,
       referenciaId,
       fornecedorId,
+      page,
     ],
     queryFn: () => {
-      const sp = new URLSearchParams({ limit: "300" });
+      const sp = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String((page - 1) * PAGE_SIZE),
+      });
       if (origem !== "all") sp.set("origem_tipo", origem);
       if (compradoraId !== "all")
         sp.set("empresa_compradora_id", compradoraId);
@@ -74,10 +97,49 @@ export default function LedgerPage() {
       if (referenciaId !== "all")
         sp.set("empresa_referencia_id", referenciaId);
       if (fornecedorId !== "all") sp.set("fornecedor_id", fornecedorId);
-      return wmsApi<{ rows: LedgerRowData[] }>(`/api/wms/ledger?${sp}`);
+      return wmsApi<{ rows: LedgerRowData[]; total: number }>(
+        `/api/wms/ledger?${sp}`,
+      );
     },
   });
   const all = ledgerQuery.data?.rows ?? [];
+  const total = ledgerQuery.data?.total ?? 0;
+
+  const qc = useQueryClient();
+  const { can } = usePermissoes();
+  const podeEstornar = can("operacoes.ajuste_manual");
+
+  // Mov de ajuste alvo de um estorno: derivado client-side a partir das linhas
+  // carregadas (a rota expõe estorno_de). Cobertura = página atual.
+  const jaEstornadas = useMemo(
+    () =>
+      new Set(
+        all
+          .map((m) => m.estorno_de)
+          .filter((v): v is string => v != null),
+      ),
+    [all],
+  );
+
+  // Modal de confirmação de estorno (motivo obrigatório ≥3 chars).
+  const [estornoAlvo, setEstornoAlvo] = useState<LedgerRowData | null>(null);
+  const [estornoMotivo, setEstornoMotivo] = useState("");
+
+  const estornar = useMutation({
+    mutationFn: (input: { id: string; motivo: string }) =>
+      wmsApi(`/api/wms/ajuste/${input.id}/estornar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: input.motivo }),
+      }),
+    onSuccess: () => {
+      toast.success("Ajuste estornado");
+      setEstornoAlvo(null);
+      setEstornoMotivo("");
+      qc.invalidateQueries({ queryKey: ["wms-ledger", "global"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   const filtered = useMemo(() => {
     let r = all;
@@ -103,7 +165,11 @@ export default function LedgerPage() {
     <>
       <PageHeader
         title="Movimentações"
-        subtitle={`Ledger imutável · ${filtered.length} de ${all.length} registros`}
+        subtitle={`Ledger imutável · ${total} registros${
+          filtered.length !== all.length
+            ? ` · ${filtered.length} nesta página após filtro`
+            : ""
+        }`}
       >
         <button className="wms-btn wms-btn-ghost" disabled>
           <Icon name="download" size={12} />
@@ -220,10 +286,96 @@ export default function LedgerPage() {
             Nenhuma movimentação.
           </div>
         )}
-        {filtered.map((m) => (
-          <LedgerRow key={m.id} m={m} />
-        ))}
+        {filtered.map((m) => {
+          const podeEstornarLinha =
+            podeEstornar &&
+            m.origem_tipo === "ajuste_manual" &&
+            m.estorno_de == null &&
+            !jaEstornadas.has(m.id);
+          return (
+            <LedgerRow
+              key={m.id}
+              m={m}
+              action={
+                podeEstornarLinha ? (
+                  <button
+                    className="wms-btn wms-btn-sm wms-btn-ghost"
+                    onClick={() => {
+                      setEstornoAlvo(m);
+                      setEstornoMotivo("");
+                    }}
+                    title="Estornar este ajuste manual"
+                  >
+                    <Icon name="history" size={11} />
+                    Estornar
+                  </button>
+                ) : undefined
+              }
+            />
+          );
+        })}
       </div>
+
+      <Pagination
+        total={total}
+        pageSize={PAGE_SIZE}
+        page={page}
+        onPageChange={setPage}
+        label="registros"
+      />
+
+      {estornoAlvo && (
+        <Modal
+          title="Estornar ajuste manual"
+          subtitle="Gera uma movimentação inversa no ledger. Não pode ser desfeito."
+          onClose={() => {
+            if (!estornar.isPending) setEstornoAlvo(null);
+          }}
+          footer={
+            <>
+              <button
+                className="wms-btn wms-btn-ghost"
+                onClick={() => setEstornoAlvo(null)}
+                disabled={estornar.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                className="wms-btn wms-btn-danger"
+                onClick={() =>
+                  estornar.mutate({
+                    id: estornoAlvo.id,
+                    motivo: estornoMotivo.trim(),
+                  })
+                }
+                disabled={
+                  estornar.isPending || estornoMotivo.trim().length < 3
+                }
+              >
+                {estornar.isPending ? "Estornando…" : "Confirmar estorno"}
+              </button>
+            </>
+          }
+        >
+          <div style={{ marginBottom: 12 }}>
+            <span className="wms-mono">
+              {estornoAlvo.produto?.sku ?? "—"}
+            </span>{" "}
+            <span className="wms-td-mute">
+              {estornoAlvo.produto?.descricao ?? ""}
+            </span>
+          </div>
+          <Field label="Motivo do estorno" required>
+            <input
+              autoFocus
+              className="wms-input"
+              placeholder="ex.: ajuste lançado por engano"
+              value={estornoMotivo}
+              onChange={(e) => setEstornoMotivo(e.target.value)}
+            />
+          </Field>
+        </Modal>
+      )}
     </>
   );
 }

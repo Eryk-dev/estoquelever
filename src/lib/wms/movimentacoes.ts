@@ -298,6 +298,14 @@ export interface TransferirGalpaoInput {
 /**
  * Par S+E NEUTRO (sem empresa) — em 3D a transferência entre galpões não
  * carrega dona; estoque é fungível dentro do pool físico.
+ *
+ * Compensação por item (P2-EST-09): cada item emite S (origem) seguido de E
+ * (destino) em chamadas separadas (não há RPC inter-galpão). Se a perna E de
+ * um item falhar, a perna S correspondente é estornada e o lote aborta com
+ * erro listando o item — o saldo da origem desse item não fica fantasma.
+ * ⚠ Itens ANTERIORES (pares S+E completos) PERMANECEM materializados — esta
+ * função NÃO é transacional sobre o lote inteiro; o caller deve tratar o
+ * aborto parcial (ex.: reprocessar só os itens restantes).
  */
 export async function transferirInterGalpao(
   input: TransferirGalpaoInput,
@@ -309,7 +317,7 @@ export async function transferirInterGalpao(
   }
   const origem_id = input.origem_id ?? crypto.randomUUID();
   for (const item of input.itens) {
-    await inserirMovimentacao({
+    const movS = await inserirMovimentacao({
       tripla: {
         produto_id: item.produto_id,
         galpao_id: input.galpao_origem_id,
@@ -322,19 +330,51 @@ export async function transferirInterGalpao(
       usuario_id: input.usuario_id,
       motivo: input.observacoes,
     });
-    await inserirMovimentacao({
-      tripla: {
-        produto_id: item.produto_id,
-        galpao_id: input.galpao_destino_id,
-        localizacao_id: input.localizacao_destino_id,
-      },
-      tipo: "E",
-      qty: item.qty,
-      origem_tipo: "transferencia_galpao",
-      origem_id,
-      usuario_id: input.usuario_id,
-      motivo: input.observacoes,
-    });
+    try {
+      await inserirMovimentacao({
+        tripla: {
+          produto_id: item.produto_id,
+          galpao_id: input.galpao_destino_id,
+          localizacao_id: input.localizacao_destino_id,
+        },
+        tipo: "E",
+        qty: item.qty,
+        origem_tipo: "transferencia_galpao",
+        origem_id,
+        usuario_id: input.usuario_id,
+        motivo: input.observacoes,
+      });
+    } catch (eEntrada) {
+      // Perna E falhou: estorna a S desse item pra não deixar saldo fantasma
+      // na origem. "Já estornada" é absorvido como não-fatal.
+      try {
+        await estornarMovimentacao({
+          mov_id: movS.id,
+          motivo: "estorno de S órfã (perna E da transferência falhou)",
+          usuario_id: input.usuario_id,
+        });
+      } catch (eEstorno) {
+        const msgEstorno =
+          eEstorno instanceof Error ? eEstorno.message : String(eEstorno);
+        if (!/já.*estorn|estorno.*já|already/i.test(msgEstorno)) {
+          logger.error(
+            "wms.transferencia",
+            "falha ao estornar S órfã da transferência inter-galpão",
+            {
+              origem_id,
+              produto_id: item.produto_id,
+              mov_saida_id: movS.id,
+              err: msgEstorno,
+            },
+          );
+        }
+      }
+      const msgEntrada =
+        eEntrada instanceof Error ? eEntrada.message : String(eEntrada);
+      throw new Error(
+        `transferência abortada no item ${item.produto_id} (perna E falhou): ${msgEntrada}`,
+      );
+    }
   }
   return { origem_id };
 }

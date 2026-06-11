@@ -20,9 +20,11 @@
 
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
-import { inserirMovimentacao } from "./wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "./wms/ledger";
+import { isForwardStatus } from "./wms/cutover";
 import { upsertNotaFiscal } from "./nf-webhook-handler";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
+import { registrarEvento } from "./historico-service";
 
 interface ReservaRow {
   id: string;
@@ -31,6 +33,10 @@ interface ReservaRow {
   localizacao_id: string;
   quantidade: number;
 }
+
+/** Usuário "Sistema (automação)" — uuid-zero seedado em 20260611m_system_user.
+ *  Carimba o actor de estornos automáticos (FK siso_movimentacoes.usuario_id). */
+const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 export async function executarEstoquePosNfWms(job: {
   pedido_id: string;
@@ -41,7 +47,7 @@ export async function executarEstoquePosNfWms(job: {
 
   const { data: pedido, error: pedidoErr } = await sb
     .from("siso_pedidos")
-    .select("id, status_separacao, estoque_lancado, nota_fiscal_id, chave_acesso_nf, empresa_origem_id")
+    .select("id, status, status_separacao, estoque_lancado, nota_fiscal_id, chave_acesso_nf, empresa_origem_id")
     .eq("id", job.pedido_id)
     .single();
 
@@ -51,6 +57,26 @@ export async function executarEstoquePosNfWms(job: {
 
   if (pedido.estoque_lancado) {
     logger.info("worker.wms", "estoque já lançado (idempotente)", { pedidoId: job.pedido_id });
+    return;
+  }
+
+  // Gate de status (SEP-07b): o job pos_nf só nasce via dispararCutoverSePronto
+  // com o pedido em status forward (separado/embalado/expedido); aguardando_nf
+  // cobre o caminho legado pós-NF (transição própria no passo 4 abaixo). Se o
+  // pedido regrediu (voltar-etapa/desmarcar → aguardando_separacao,
+  // em_separacao, pendente_realocacao, ...) ou foi cancelado entre o enqueue e
+  // a execução, converter R viva em L+S aqui criaria saída fantasma — o
+  // re-pick emitiria OUTRA S depois (baixa dupla). No-op: retorna sem tocar o
+  // ledger e o worker marca o job como concluído (mesmo padrão dos early
+  // returns idempotentes acima).
+  const statusSep = pedido.status_separacao as string | null;
+  if (pedido.status === "cancelado" || (statusSep !== "aguardando_nf" && !isForwardStatus(statusSep))) {
+    logger.warn("worker.wms", "job pos_nf stale — pedido fora de status lançável (no-op)", {
+      pedidoId: job.pedido_id,
+      status: pedido.status,
+      statusSeparacao: statusSep,
+      decisao: job.decisao,
+    });
     return;
   }
 
@@ -132,6 +158,9 @@ export async function executarEstoquePosNfWms(job: {
   // 3. Pra cada reserva pendente: L (com estorno_de=R.id) + S
   let convertidas = 0;
   const erros: Array<{ reservaId: string; err: string }> = [];
+  // P2-CST-05: rastreia as S criadas NESTA execução pra estorno se o pedido
+  // for cancelado no meio (cancel chega após o gate de status do início).
+  const saidasCriadas: string[] = [];
 
   for (const r of reservasPendentes) {
     try {
@@ -155,7 +184,7 @@ export async function executarEstoquePosNfWms(job: {
       });
 
       // S — lança saída (nf_venda). Empresa vendedora vira tag.
-      await inserirMovimentacao({
+      const movS = await inserirMovimentacao({
         tripla,
         tipo: "S",
         qty: Number(r.quantidade),
@@ -167,6 +196,7 @@ export async function executarEstoquePosNfWms(job: {
         nota_fiscal_id: notaFiscalUuid,
         motivo: "Saída via WMS (cutover Plano 2)",
       });
+      saidasCriadas.push((movS as { id: string }).id);
       convertidas++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -183,6 +213,58 @@ export async function executarEstoquePosNfWms(job: {
     throw new Error(
       `Falha ao converter ${erros.length}/${reservas.length} reservas: ${erros[0]?.err}`,
     );
+  }
+
+  // P2-CST-05: o gate de status no início roda ANTES da conversão; um cancel
+  // (webhook/polling Tiny) que chega DURANTE o loop não é visto lá. Re-checa o
+  // status agora: se o pedido virou cancelado, as S que acabamos de lançar são
+  // saída fantasma (a peça não vai ser expedida) — estornamos e garantimos
+  // estoque_lancado=false. Caminho feliz (não-cancelado) segue intacto.
+  if (saidasCriadas.length > 0) {
+    const { data: pedidoPos } = await sb
+      .from("siso_pedidos")
+      .select("status")
+      .eq("id", job.pedido_id)
+      .single();
+    if (pedidoPos?.status === "cancelado") {
+      for (const movId of saidasCriadas) {
+        try {
+          await estornarMovimentacao({
+            mov_id: movId,
+            // Usuário sistema (automação) — uuid-zero seedado em 20260611m.
+            usuario_id: SYSTEM_USER_ID,
+            motivo: "Cancelamento durante lançamento — S estornada (P2-CST-05)",
+          });
+        } catch (err) {
+          logger.logError({
+            error: err,
+            source: "worker.wms",
+            message: `Falha ao estornar S ${movId} de pedido cancelado durante lançamento`,
+            category: "business_logic",
+            metadata: { pedidoId: job.pedido_id, movId },
+          });
+        }
+      }
+      // Garante estoque_lancado=false (reverte se algum caminho concorrente
+      // já tinha setado true). O cancel-handler mantém o pedido cancelado.
+      await sb
+        .from("siso_pedidos")
+        .update({ estoque_lancado: false, nf_estoque_lancado: false })
+        .eq("id", job.pedido_id);
+      void registrarEvento({
+        pedidoId: job.pedido_id,
+        evento: "cancelado",
+        detalhes: {
+          motivo: "cancelamento durante lançamento — S estornadas",
+          saidas_estornadas: saidasCriadas.length,
+        },
+      });
+      logger.warn("worker.wms", "pedido cancelado durante lançamento — S estornadas", {
+        pedidoId: job.pedido_id,
+        saidasEstornadas: saidasCriadas.length,
+      });
+      return;
+    }
   }
 
   // 4. Marca pedido como estoque lançado + transita pra aguardando_separacao

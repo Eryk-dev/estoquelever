@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
+import { logger } from "@/lib/logger";
 import type { PerspectivaEstoque } from "./types";
 
 interface EstoqueRow {
@@ -27,25 +28,44 @@ export async function saldosPorPerspectiva(
   filtro?: { produto_id?: string; galpao_id?: string },
 ): Promise<AgregadoSaldo[]> {
   const sb = createServiceClient();
-  let q = sb
-    .from("siso_estoque")
-    .select(
-      `
+
+  // Pagina internamente em páginas de 1000 (range) até a página vir
+  // incompleta. Cap de 10 páginas (10k triplas) com warn — antes truncava
+  // silenciosamente em 500 e SKUs sumiam da tela (P2-EST-10).
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 10;
+  const rows: EstoqueRow[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    let q = sb
+      .from("siso_estoque")
+      .select(
+        `
         id, saldo, reservado, disponivel, atualizado_em,
         produto:siso_produtos(id, sku, descricao, imagem_url, imagens),
         galpao:siso_galpoes(id, nome, cidade, estado),
         localizacao:siso_localizacoes(id, codigo, tipo)
       `,
-    )
-    .gt("saldo", 0);
+      )
+      .gt("saldo", 0)
+      .order("id", { ascending: true })
+      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
-  if (filtro?.produto_id) q = q.eq("produto_id", filtro.produto_id);
-  if (filtro?.galpao_id) q = q.eq("galpao_id", filtro.galpao_id);
+    if (filtro?.produto_id) q = q.eq("produto_id", filtro.produto_id);
+    if (filtro?.galpao_id) q = q.eq("galpao_id", filtro.galpao_id);
 
-  const { data, error } = await q.limit(500);
-  if (error) throw error;
-
-  const rows = (data ?? []) as unknown as EstoqueRow[];
+    const { data, error } = await q;
+    if (error) throw error;
+    const pageRows = (data ?? []) as unknown as EstoqueRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < PAGE_SIZE) break;
+    if (page === MAX_PAGES - 1) {
+      logger.warn(
+        "wms.estoque",
+        "saldosPorPerspectiva atingiu o cap de 10k triplas — resultado pode estar truncado",
+        { perspectiva: view, ...filtro },
+      );
+    }
+  }
   // 3D: custo médio é global por SKU. Carrega o lote dos produtos em jogo
   // pra anexar ao agregado.
   const produtoIds = Array.from(new Set(rows.map((r) => r.produto.id)));

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/session";
-import { userCan } from "@/lib/permissions";
+import { userCan, userCanAny } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { cancelarCompraManual, listarComprasManuais } from "@/lib/wms/compras-manuais";
 
@@ -10,7 +10,9 @@ export async function GET(
 ) {
   const session = await getSessionUser(request);
   if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  if (!userCan(session, "compras.executar")) {
+  // P2-CMP-05: operador de doca abre o detalhe da compra manual na fila de
+  // recebimento — aceita operacoes.receber (espelha receber/oc/[id]).
+  if (!userCanAny(session, "compras.executar", "operacoes.receber")) {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
   const { id } = await params;

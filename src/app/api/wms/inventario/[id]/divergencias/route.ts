@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireAuth, requireWarehouseAccess } from "@/lib/wms/auth";
+import { userCan } from "@/lib/permissions";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 export async function GET(
@@ -73,6 +74,33 @@ export async function PATCH(
   }
 
   const sb = createServiceClient();
+
+  // [INV-02] Sessão presa em 'aprovada' porque 1 divergência aprovada falha na
+  // aplicação (ex.: pick consumiu o saldo entre aprovação e aplicação): o
+  // supervisor pode REJEITAR a divergência culpada e re-aplicar a sessão.
+  // Só pra acao='rejeitar', só com a sessão em 'aprovada', e exige
+  // inventario.supervisionar.
+  let statusAlvo: string[] = ["pendente"];
+  if (novoStatus === "rejeitada") {
+    const { data: sessaoRow } = await sb
+      .from("siso_inventario_sessoes")
+      .select("status")
+      .eq("id", sessaoId)
+      .maybeSingle();
+    if ((sessaoRow as { status?: string } | null)?.status === "aprovada") {
+      if (!userCan(auth.user, "inventario.supervisionar")) {
+        return NextResponse.json(
+          {
+            error:
+              "rejeitar divergência já aprovada exige permissão inventario.supervisionar",
+          },
+          { status: 403 },
+        );
+      }
+      statusAlvo = ["pendente", "aprovada"];
+    }
+  }
+
   const { data, error } = await sb
     .from("siso_inventario_divergencias")
     .update({
@@ -83,7 +111,7 @@ export async function PATCH(
     })
     .in("id", ids)
     .eq("sessao_id", sessaoId)
-    .eq("status", "pendente")
+    .in("status", statusAlvo)
     .select("id");
 
   if (error) {

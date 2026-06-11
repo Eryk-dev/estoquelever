@@ -166,7 +166,10 @@ const SORT_OPTS = [
   { value: "sku", label: "Ordenar: SKU" },
 ];
 
-// Move targets (admin) — espelha o mapa do legado.
+// Move targets (admin) — espelha o STATUS_ORDER da API (voltar-etapa).
+// SEP-08: `aguardando_compra` fica FORA (como tab de origem e como target) —
+// a API não tem esse status no STATUS_ORDER e rejeitava com 400 sempre.
+// A tab aguardando_compra não tem entry → botão "Mover…" não renderiza.
 const MOVE_TARGETS: Partial<
   Record<
     Tab,
@@ -176,13 +179,6 @@ const MOVE_TARGETS: Partial<
     }
   >
 > = {
-  aguardando_compra: {
-    back: [],
-    forward: [
-      { value: "aguardando_separacao", label: "Aguard. separação" },
-      { value: "em_separacao", label: "Em separação" },
-    ],
-  },
   aguardando_nf: {
     back: [],
     forward: [
@@ -193,10 +189,7 @@ const MOVE_TARGETS: Partial<
     ],
   },
   aguardando_separacao: {
-    back: [
-      { value: "aguardando_compra", label: "Aguard. OC" },
-      { value: "aguardando_nf", label: "Aguard. NF" },
-    ],
+    back: [{ value: "aguardando_nf", label: "Aguard. NF" }],
     forward: [
       { value: "em_separacao", label: "Em separação" },
       { value: "separado", label: "Separado" },
@@ -204,10 +197,7 @@ const MOVE_TARGETS: Partial<
     ],
   },
   em_separacao: {
-    back: [
-      { value: "aguardando_compra", label: "Aguard. OC" },
-      { value: "aguardando_separacao", label: "Aguard. separação" },
-    ],
+    back: [{ value: "aguardando_separacao", label: "Aguard. separação" }],
     forward: [
       { value: "separado", label: "Separado" },
       { value: "embalado", label: "Embalado" },

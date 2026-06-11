@@ -50,11 +50,35 @@ export async function POST(
     qtyEstorno = n;
   }
 
-  // Existência: a mov precisa estar no ledger pra preservar a trilha de auditoria.
+  // Existência + validação: a compra_mov precisa ser uma entrada (E) de origem
+  // de compra, do MESMO produto do lançamento retroativo alvo. Sem isso, um
+  // reconciliar poderia estornar uma mov arbitrária de outro produto/tipo.
   const sb = createServiceClient();
+  const { data: retroRow, error: retroErr } = await sb
+    .from("siso_movimentacoes")
+    .select("id, produto_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (retroErr) {
+    return wmsErrorResponse({
+      source: "wms.lancamento-retroativo.reconciliar",
+      error: retroErr,
+      status: 500,
+      requestPath: `/api/wms/lancamento-retroativo/${id}/reconciliar`,
+      requestMethod: "POST",
+      metadata: { retroativo_mov_id: id, compra_mov_id: compraMovId },
+    });
+  }
+  if (!retroRow) {
+    return NextResponse.json(
+      { error: `retroativo_mov_id ${id} não existe em siso_movimentacoes` },
+      { status: 404 },
+    );
+  }
+
   const { data: compraRow, error: compraErr } = await sb
     .from("siso_movimentacoes")
-    .select("id, origem_tipo")
+    .select("id, tipo, produto_id, origem_tipo")
     .eq("id", compraMovId)
     .maybeSingle();
   if (compraErr) {
@@ -71,6 +95,27 @@ export async function POST(
     return NextResponse.json(
       { error: `compra_mov_id ${compraMovId} não existe em siso_movimentacoes` },
       { status: 404 },
+    );
+  }
+  if (compraRow.tipo !== "E") {
+    return NextResponse.json(
+      { error: "mov_invalida", message: `compra_mov_id deve ser uma entrada (tipo='E'), recebido tipo='${compraRow.tipo}'` },
+      { status: 400 },
+    );
+  }
+  if (compraRow.produto_id !== retroRow.produto_id) {
+    return NextResponse.json(
+      { error: "mov_invalida", message: "compra_mov_id é de outro produto — não corresponde ao lançamento retroativo alvo" },
+      { status: 400 },
+    );
+  }
+  if (
+    compraRow.origem_tipo !== "nf_compra" &&
+    compraRow.origem_tipo !== "lancamento_retroativo"
+  ) {
+    return NextResponse.json(
+      { error: "mov_invalida", message: `compra_mov_id tem origem_tipo='${compraRow.origem_tipo}' — só 'nf_compra' ou 'lancamento_retroativo' podem reconciliar` },
+      { status: 400 },
     );
   }
 

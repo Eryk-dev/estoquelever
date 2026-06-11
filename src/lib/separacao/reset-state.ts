@@ -11,6 +11,9 @@
  *  1. Carrega items + realocs + links de ponte (siso_pedido_item_mov_links).
  *  2. Estorna `item.mov_saida_id` (se existe e ainda não estornada).
  *  3. Estorna `realoc.mov_saida_id` pra realocs com status 'picado' | 'picado_parcial'.
+ *  3b. (opt-in `recriarReservas` — SEP-06) Ressuscita R's das L's de pick
+ *      (`estornarLiberacaoReserva`) + estorna R's cascade residuais. Usado por
+ *      voltar_etapa/reiniciar, onde o pedido fica no galpão aguardando re-pick.
  *  4. Cancela realocs em 'aguardando_picking' (batch UPDATE).
  *  5. Reseta campos do item (10 fields — vide spec linha 211).
  *  6. Apaga linhas órfãs de `siso_pedido_item_mov_links`.
@@ -34,6 +37,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
+import { estornarLiberacaoReserva } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
 import { logger } from "@/lib/logger";
 
@@ -44,6 +48,7 @@ export type ResetMotivo = "encaminhar" | "reiniciar" | "voltar_etapa" | "esgotad
 export interface ResetResult {
   estornadas: string[];
   realocsCanceladas: number;
+  reservasRecriadas: number;
 }
 
 interface ItemRow {
@@ -67,7 +72,7 @@ interface LinkRow {
   pedido_item_id: number;
   mov_id: string;
   qty: number;
-  tipo_link: "saida" | "ajuste_loc_zerou";
+  tipo_link: "saida" | "ajuste_loc_zerou" | "liberacao_reserva" | "reserva_cascade";
 }
 
 export async function resetarEstadoSeparacaoItens(opts: {
@@ -75,15 +80,28 @@ export async function resetarEstadoSeparacaoItens(opts: {
   itemIds: number[];
   usuarioId: string;
   motivo: ResetMotivo;
+  /**
+   * SEP-06: quando true, ressuscita as reservas das L's de pick (e estorna as
+   * R's cascade residuais) depois de estornar as S's. Usar pra motivos em que
+   * o pedido CONTINUA no mesmo galpão aguardando re-pick (voltar_etapa,
+   * reiniciar) — sem isso o pedido volta pra fila com 0 reservas e outro
+   * pedido rouba o saldo. NÃO usar em encaminhar/esgotado: lá o pedido sai do
+   * galpão (ou vira OC) e as R's recriadas segurariam saldo indevidamente.
+   */
+  recriarReservas?: boolean;
   estornarMov?: typeof estornarMovimentacao;
+  estornarLiberacao?: typeof estornarLiberacaoReserva;
 }): Promise<ResetResult> {
   const { supabase, itemIds, usuarioId, motivo } = opts;
   const estornar = opts.estornarMov ?? estornarMovimentacao;
+  const ressuscitar = opts.estornarLiberacao ?? estornarLiberacaoReserva;
+  const recriarReservas = opts.recriarReservas ?? false;
   const estornadas: string[] = [];
   let realocsCanceladas = 0;
+  let reservasRecriadas = 0;
 
   if (itemIds.length === 0) {
-    return { estornadas, realocsCanceladas };
+    return { estornadas, realocsCanceladas, reservasRecriadas };
   }
 
   // 1. Load items, realocs, bridge links
@@ -94,7 +112,7 @@ export async function resetarEstadoSeparacaoItens(opts: {
 
   const items = (itemsRaw ?? []) as ItemRow[];
   if (items.length === 0) {
-    return { estornadas, realocsCanceladas };
+    return { estornadas, realocsCanceladas, reservasRecriadas };
   }
 
   const { data: realocsRaw } = await supabase
@@ -150,6 +168,69 @@ export async function resetarEstadoSeparacaoItens(opts: {
         error: msg,
       });
       throw err;
+    }
+  }
+
+  // 3b. (opt-in SEP-06) Ressuscita as reservas das L's de pick. O pick converte
+  //     R→L+S; o estorno da S (passo 3) devolve o saldo mas NÃO recria a
+  //     reserva — sem este passo o pedido volta pra fila com 0 R's e qualquer
+  //     pedido novo roteia em cima do saldo (re-pick → 409). Espelha
+  //     desfazer-parcial: `estornarLiberacaoReserva` é idempotente (R
+  //     existente com estorno_de=L é retornada sem duplicar).
+  if (recriarReservas) {
+    const itemById = new Map(items.map((it) => [it.id, it]));
+    for (const lk of links) {
+      if (lk.tipo_link !== "liberacao_reserva") continue;
+      const pedidoId = itemById.get(lk.pedido_item_id)?.pedido_id;
+      if (!pedidoId) continue;
+      try {
+        await ressuscitar({
+          liberacao_mov_id: lk.mov_id,
+          pedido_id: pedidoId,
+          usuario_id: usuarioId,
+          motivo: `Reset de separação (motivo=${motivo}) — recria reserva`,
+        });
+        reservasRecriadas++;
+      } catch (err) {
+        // LOUD: sem a R recriada o saldo volta livre e outro pedido pode
+        // rotear em cima (overselling). O reset segue (S já estornada), mas
+        // registra erro real pro supervisor — espelha desfazer-parcial.
+        logger.logError({
+          error: err,
+          source: LOG_SOURCE,
+          message: "Falhou recriar reserva (estorno de L) — item fica sem R",
+          category: "business_logic",
+          metadata: { mov_id: lk.mov_id, pedido_item_id: lk.pedido_item_id, motivo },
+        });
+      }
+    }
+
+    // 3c. Estorna R's cascade (residuais de parcial/realocação). A R original
+    //     ressuscitada em 3b já cobre a quantidade do item — manter a cascade
+    //     viva duplicaria reserva. Cascade já consumida por pick de realoc
+    //     (L com estorno_de=R) cai no ramo "já estornada" (idempotência).
+    for (const lk of links) {
+      if (lk.tipo_link !== "reserva_cascade") continue;
+      try {
+        await estornar({
+          mov_id: lk.mov_id,
+          usuario_id: usuarioId,
+          motivo: `Reset de separação (motivo=${motivo}) — estorna R cascade`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+          logger.warn(LOG_SOURCE, "R cascade já estornada — skip", { mov_id: lk.mov_id, motivo });
+          continue;
+        }
+        // Falha aqui deixa reserva EXTRA viva (over-reserve, TTL 30d) — direção
+        // conservadora, não bloqueia o reset. Espelha desfazer-parcial.
+        logger.warn(LOG_SOURCE, "Falha ao estornar R cascade (segue)", {
+          mov_id: lk.mov_id,
+          motivo,
+          error: msg,
+        });
+      }
     }
   }
 
@@ -230,6 +311,7 @@ export async function resetarEstadoSeparacaoItens(opts: {
         item_ids: ids,
         estornadas: estornadas,
         realocs_canceladas: realocsCanceladas,
+        reservas_recriadas: reservasRecriadas,
       },
     });
   }
@@ -239,7 +321,8 @@ export async function resetarEstadoSeparacaoItens(opts: {
     itemIds,
     estornadas,
     realocsCanceladas,
+    reservasRecriadas,
   });
 
-  return { estornadas, realocsCanceladas };
+  return { estornadas, realocsCanceladas, reservasRecriadas };
 }

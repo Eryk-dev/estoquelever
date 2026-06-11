@@ -6,6 +6,14 @@ import { createServiceClient } from "@/lib/supabase-server";
 // - Decisão simplificada: propria (galpão home cobre tudo) > transferencia
 //   (outro galpão cobre tudo) > oc (ninguém cobre).
 
+/**
+ * CST-01: tipos de localização VENDÁVEIS — os únicos que contam pra cobertura
+ * de roteamento e onde reservas R de pedido podem ser criadas. Saldo em
+ * recebimento/quarentena/packing/expedicao NÃO é vendável (ex.: devolução
+ * avariada parada na quarentena não pode rotear um pedido pra 'propria').
+ */
+export const TIPOS_LOC_VENDAVEIS = ["picking", "overstock"] as const;
+
 export interface GalpaoLite {
   id: string;
   cidade: string | null;
@@ -233,15 +241,18 @@ export async function rotearPedidoDoBanco(
       // 3D: pool fungível por galpão. Sem filtro por dona. Busca todas as
       // linhas com disponivel >= qty, filtra locs bloqueadas, prioriza
       // picking, depois maior saldo.
+      // CST-01: só locs VENDÁVEIS (picking/overstock) contam pra cobertura —
+      // recebimento/quarentena/packing/expedicao ficam fora (join !inner).
       const { data } = await sb
         .from("siso_estoque")
         .select(
-          "id, localizacao_id, disponivel, localizacao:siso_localizacoes(tipo)",
+          "id, localizacao_id, disponivel, localizacao:siso_localizacoes!inner(tipo)",
         )
         .match({
           produto_id: q.produto_id,
           galpao_id: q.galpao_id,
         })
+        .in("localizacao.tipo", [...TIPOS_LOC_VENDAVEIS])
         .gte("disponivel", q.qty)
         .order("disponivel", { ascending: false })
         .limit(20);

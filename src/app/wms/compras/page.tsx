@@ -88,6 +88,7 @@ interface ReceberDoc {
   qty_pendente: number;
   criado_em: string | null;
   custo_total: number | null;
+  galpao_nome: string | null;
   skus_count: number;
   href: string;
 }
@@ -107,7 +108,9 @@ interface HistoricoItem {
   sku: string;
   descricao: string;
   quantidade_recebida: number;
-  recebido_em: string | null;
+  // P3-02: a coluna recebido_em nunca é populada no recebimento de OC; o único
+  // timestamp real é comprado_em. Exibido como "Comprado em".
+  comprado_em: string | null;
 }
 
 interface HistoricoFornecedor {
@@ -143,6 +146,13 @@ function coberturaLabel(s: StatusCobertura): { txt: string; color: string } {
     default:
       return { txt: "sem giro", color: "var(--wms-c-mute)" };
   }
+}
+
+// P3-04: chave de seleção/override composta por fornecedor+SKU. O mesmo SKU pode
+// aparecer em fornecedores diferentes; uma chave só por SKU vazaria seleção e
+// qty entre cards (risco de double-buy ao confirmar).
+function selKey(fornecedor: string, sku: string): string {
+  return `${fornecedor}::${sku}`;
 }
 
 // ── Página ──────────────────────────────────────────────────────────
@@ -318,8 +328,20 @@ function TabComprar({
   );
   const [cancelAlvo, setCancelAlvo] = useState<ComprarItem | null>(null);
   const [cancelMotivo, setCancelMotivo] = useState("");
+  // Modal de confirmação da compra: comprador define galpão destino + preço por item
+  const [confirmItens, setConfirmItens] = useState<
+    | { sku: string; descricao: string; qty: number; galpaoId: string; preco: string }[]
+    | null
+  >(null);
   // ref-per-fornecedor pra suportar shift+click range select isolado por card
   const lastCheckedRef = useRef<Map<string, number>>(new Map());
+
+  const galpoesQuery = useQuery<{ galpoes: { id: string; nome: string }[] }>({
+    queryKey: ["compras-contexto-galpoes"],
+    queryFn: () => wmsApi("/api/wms/compras-manuais/contexto"),
+    staleTime: 5 * 60_000,
+  });
+  const galpoes = galpoesQuery.data?.galpoes ?? [];
 
   const data = query.data;
 
@@ -343,19 +365,21 @@ function TabComprar({
       setSelected((prev) => {
         const next = new Set(prev);
         const last = lastCheckedRef.current.get(fornecedor);
-        const isChecking = !next.has(sku);
+        const isChecking = !next.has(selKey(fornecedor, sku));
 
         if (shiftKey && last != null && last !== idx) {
           const [from, to] = last < idx ? [last, idx] : [idx, last];
           for (let i = from; i <= to; i++) {
             const it = itens[i];
             if (!it) continue;
-            if (isChecking) next.add(it.sku);
-            else next.delete(it.sku);
+            const k = selKey(fornecedor, it.sku);
+            if (isChecking) next.add(k);
+            else next.delete(k);
           }
         } else {
-          if (isChecking) next.add(sku);
-          else next.delete(sku);
+          const k = selKey(fornecedor, sku);
+          if (isChecking) next.add(k);
+          else next.delete(k);
         }
         lastCheckedRef.current.set(fornecedor, idx);
         return next;
@@ -364,18 +388,44 @@ function TabComprar({
     [],
   );
 
-  const setQtyOverride = useCallback((sku: string, value: number) => {
+  const toggleSelectAll = useCallback(
+    (fornecedor: string, itens: ComprarItem[]) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        const allSelected = itens.every((it) =>
+          next.has(selKey(fornecedor, it.sku)),
+        );
+        for (const it of itens) {
+          const k = selKey(fornecedor, it.sku);
+          if (allSelected) next.delete(k);
+          else next.add(k);
+        }
+        lastCheckedRef.current.delete(fornecedor);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const setQtyOverride = useCallback((key: string, value: number) => {
     setQtyOverrides((prev) => {
       const next = new Map(prev);
-      if (Number.isFinite(value)) next.set(sku, value);
-      else next.delete(sku);
+      if (Number.isFinite(value)) next.set(key, value);
+      else next.delete(key);
       return next;
     });
   }, []);
 
   // mutations
   const comprarMut = useMutation({
-    mutationFn: async (itens: { sku: string; quantidade_comprada: number }[]) => {
+    mutationFn: async (
+      itens: {
+        sku: string;
+        quantidade_comprada: number;
+        galpao_id: string;
+        preco_unitario: number;
+      }[],
+    ) => {
       const r = await sisoFetch("/api/wms/compras/comprar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -394,6 +444,7 @@ function TabComprar({
       );
       setSelected(new Set());
       setQtyOverrides(new Map());
+      setConfirmItens(null);
       onMutated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -406,13 +457,24 @@ function TabComprar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(vars),
       });
+      const b = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        itens_nao_trocados?: Array<{ item_id: string; motivo: string }>;
+      };
       if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
       }
+      return b;
     },
-    onSuccess: () => {
-      toast.success("SKU trocado");
+    onSuccess: (d) => {
+      const falhas = d.itens_nao_trocados?.length ?? 0;
+      if (falhas > 0) {
+        toast.warning(
+          `SKU trocado, mas ${falhas} ite${falhas === 1 ? "m ficou" : "ns ficaram"} sem troca (empresa sem mapeamento Tiny do SKU novo)`,
+        );
+      } else {
+        toast.success("SKU trocado");
+      }
       setTrocaSkuAlvo(null);
       onMutated();
     },
@@ -420,10 +482,16 @@ function TabComprar({
   });
 
   const indisponivelMut = useMutation({
-    mutationFn: async (itemId: string) => {
+    // P3-05: 1 request com TODOS os item_ids do card (não só pedidos[0]).
+    mutationFn: async (itemIds: string[]) => {
+      const [first, ...rest] = itemIds;
       const r = await sisoFetch(
-        `/api/wms/compras/itens/${itemId}/indisponivel`,
-        { method: "POST" },
+        `/api/wms/compras/itens/${first}/indisponivel`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item_ids: rest }),
+        },
       );
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
@@ -431,7 +499,7 @@ function TabComprar({
       }
     },
     onSuccess: () => {
-      toast.success("Item marcado como indisponível");
+      toast.success("Itens marcados como indisponível");
       setIndisponivelAlvo(null);
       onMutated();
     },
@@ -439,13 +507,15 @@ function TabComprar({
   });
 
   const cancelamentoMut = useMutation({
-    mutationFn: async (vars: { itemId: string; motivo: string }) => {
+    // P3-05: 1 request com TODOS os item_ids do card (não só pedidos[0]).
+    mutationFn: async (vars: { itemIds: string[]; motivo: string }) => {
+      const [first, ...rest] = vars.itemIds;
       const r = await sisoFetch(
-        `/api/wms/compras/itens/${vars.itemId}/cancelamento`,
+        `/api/wms/compras/itens/${first}/cancelamento`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ motivo: vars.motivo }),
+          body: JSON.stringify({ motivo: vars.motivo, item_ids: rest }),
         },
       );
       if (!r.ok) {
@@ -568,30 +638,75 @@ function TabComprar({
     setTrocaFornNome("");
   }, []);
 
-  // Bulk action: marcar como comprados
-  const allItensBySku = useMemo(() => {
+  // Bulk action: marcar como comprados.
+  // P3-04: indexado por chave composta (fornecedor::sku), não só por SKU.
+  const allItensByKey = useMemo(() => {
     const map = new Map<string, ComprarItem>();
     for (const f of data?.fornecedores ?? []) {
-      for (const it of f.itens) map.set(it.sku, it);
+      for (const it of f.itens) map.set(selKey(f.fornecedor, it.sku), it);
     }
     return map;
   }, [data]);
 
-  const onMarcarComprados = useCallback(() => {
-    const itens: { sku: string; quantidade_comprada: number }[] = [];
-    for (const sku of selected) {
-      const it = allItensBySku.get(sku);
-      if (!it) continue;
-      const qty = qtyOverrides.get(sku) ?? it.quantidade_necessaria;
-      if (qty <= 0) continue;
-      itens.push({ sku, quantidade_comprada: qty });
+  const galpaoSugeridoByKey = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const f of data?.fornecedores ?? []) {
+      for (const it of f.itens)
+        map.set(selKey(f.fornecedor, it.sku), f.galpao_sugerido_id);
     }
-    if (itens.length === 0) {
+    return map;
+  }, [data]);
+
+  // Abre o modal de confirmação — galpão default = sugerido do fornecedor.
+  const onMarcarComprados = useCallback(() => {
+    const lista: NonNullable<typeof confirmItens> = [];
+    for (const key of selected) {
+      const it = allItensByKey.get(key);
+      if (!it) continue;
+      const qty = qtyOverrides.get(key) ?? it.quantidade_necessaria;
+      if (qty <= 0) continue;
+      lista.push({
+        sku: it.sku,
+        descricao: it.descricao,
+        qty,
+        galpaoId: galpaoSugeridoByKey.get(key) ?? "",
+        preco: "",
+      });
+    }
+    if (lista.length === 0) {
       toast.error("Nenhum item válido selecionado");
       return;
     }
-    comprarMut.mutate(itens);
-  }, [selected, allItensBySku, qtyOverrides, comprarMut]);
+    setConfirmItens(lista);
+  }, [selected, allItensByKey, qtyOverrides, galpaoSugeridoByKey]);
+
+  const confirmValido =
+    confirmItens != null &&
+    confirmItens.every((c) => c.galpaoId && Number(c.preco) > 0);
+
+  const submitCompra = useCallback(() => {
+    if (!confirmItens) return;
+    comprarMut.mutate(
+      confirmItens.map((c) => ({
+        sku: c.sku,
+        quantidade_comprada: c.qty,
+        galpao_id: c.galpaoId,
+        preco_unitario: Number(c.preco),
+      })),
+    );
+  }, [confirmItens, comprarMut]);
+
+  const setConfirmCampo = useCallback(
+    (idx: number, campo: "galpaoId" | "preco", valor: string) => {
+      setConfirmItens((prev) => {
+        if (!prev) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], [campo]: valor };
+        return next;
+      });
+    },
+    [],
+  );
 
   const onTrocarSku = useCallback((item: ComprarItem) => {
     setTrocaSkuAlvo(item);
@@ -683,13 +798,33 @@ function TabComprar({
         fornecedores.map((f) => {
           const isExpanded = expanded.has(f.fornecedor);
           const agCls = agingClass(f.aging_dias);
+          const selectedCount = f.itens.filter((it) =>
+            selected.has(selKey(f.fornecedor, it.sku)),
+          ).length;
+          const allSelected =
+            f.itens.length > 0 && selectedCount === f.itens.length;
           return (
             <article key={f.fornecedor} className={`wms-frc ${agCls}`}>
               <div
                 className="wms-frc-h"
                 onClick={() => toggleExpand(f.fornecedor)}
               >
-                <div style={{ minWidth: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={(el) => {
+                    if (el)
+                      el.indeterminate = selectedCount > 0 && !allSelected;
+                  }}
+                  onChange={() => {}}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelectAll(f.fornecedor, f.itens);
+                  }}
+                  title="Selecionar todos os itens do fornecedor"
+                  style={{ flexShrink: 0 }}
+                />
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <div className="wms-frc-name">{f.fornecedor}</div>
                   <div
                     className="wms-frc-meta"
@@ -732,9 +867,10 @@ function TabComprar({
                     <div />
                   </div>
                   {f.itens.map((item, idx) => {
-                    const checked = selected.has(item.sku);
+                    const itemKey = selKey(f.fornecedor, item.sku);
+                    const checked = selected.has(itemKey);
                     const qty =
-                      qtyOverrides.get(item.sku) ?? item.quantidade_necessaria;
+                      qtyOverrides.get(itemKey) ?? item.quantidade_necessaria;
                     const itemAg = agingClass(item.aging_dias);
                     return (
                       <div
@@ -871,7 +1007,7 @@ function TabComprar({
                           value={qty}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) =>
-                            setQtyOverride(item.sku, Number(e.target.value))
+                            setQtyOverride(itemKey, Number(e.target.value))
                           }
                           style={{ width: 80 }}
                         />
@@ -938,6 +1074,124 @@ function TabComprar({
             </button>
           </div>
         </div>
+      )}
+
+      {confirmItens && (
+        <Modal
+          title="Confirmar compra"
+          subtitle="Defina o galpão que vai receber e o preço unitário de cada item"
+          onClose={() => setConfirmItens(null)}
+        >
+          {/* P3-08: sem a lista de galpões não dá pra escolher destino — mostra
+              o erro e oferece retry em vez de travar o botão sem explicação. */}
+          {galpoesQuery.isError && (
+            <div
+              className="wms-empty-block"
+              style={{ marginBottom: 12, textAlign: "left" }}
+            >
+              <p style={{ color: "var(--wms-c-danger)", fontSize: 12 }}>
+                Não foi possível carregar os galpões.
+              </p>
+              <button
+                className="wms-btn wms-btn-ghost wms-btn-sm"
+                type="button"
+                onClick={() => galpoesQuery.refetch()}
+                disabled={galpoesQuery.isFetching}
+              >
+                {galpoesQuery.isFetching ? "Tentando…" : "Tentar de novo"}
+              </button>
+            </div>
+          )}
+          <div
+            className="wms-frc-row wms-td-mute"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 56px 140px 110px",
+              gap: 8,
+              fontSize: 10.5,
+              padding: "4px 0",
+            }}
+          >
+            <div>SKU</div>
+            <div className="wms-tar">Qtd</div>
+            <div>Galpão destino</div>
+            <div>Preço unit.</div>
+          </div>
+          {confirmItens.map((c, idx) => (
+            <div
+              key={c.sku}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 56px 140px 110px",
+                gap: 8,
+                alignItems: "center",
+                padding: "6px 0",
+                borderTop: "1px solid var(--wms-c-border)",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div className="wms-mono" style={{ fontWeight: 600 }}>
+                  {c.sku}
+                </div>
+                <div className="wms-pcard-item-desc">{c.descricao}</div>
+              </div>
+              <div className="wms-tar wms-mono">{c.qty}</div>
+              <select
+                className="wms-select"
+                value={c.galpaoId}
+                disabled={galpoesQuery.isLoading || galpoesQuery.isError}
+                onChange={(e) => setConfirmCampo(idx, "galpaoId", e.target.value)}
+              >
+                <option value="">
+                  {galpoesQuery.isLoading
+                    ? "carregando…"
+                    : galpoesQuery.isError
+                      ? "erro ao carregar"
+                      : "selecione…"}
+                </option>
+                {galpoes.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.nome}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="wms-input"
+                type="number"
+                min={0.01}
+                step={0.01}
+                placeholder="R$"
+                value={c.preco}
+                onChange={(e) => setConfirmCampo(idx, "preco", e.target.value)}
+              />
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setConfirmItens(null)}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-primary"
+              disabled={!confirmValido || comprarMut.isPending}
+              title={
+                galpoesQuery.isError
+                  ? "Galpões não carregaram — clique em Tentar de novo acima"
+                  : !confirmValido
+                    ? "Defina galpão e preço de todos os itens"
+                    : ""
+              }
+              onClick={submitCompra}
+              type="button"
+            >
+              <Icon name="check" size={11} />
+              {comprarMut.isPending ? "Confirmando…" : "Confirmar compra"}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {trocaFornAlvo && (
@@ -1039,7 +1293,11 @@ function TabComprar({
           <p style={{ fontSize: 13 }}>
             Marcar SKU{" "}
             <strong className="wms-mono">{indisponivelAlvo.sku}</strong> como
-            indisponível para o pedido #{indisponivelAlvo.pedidos[0]?.numero}?
+            indisponível para{" "}
+            {indisponivelAlvo.pedidos.length === 1
+              ? `o pedido #${indisponivelAlvo.pedidos[0]?.numero}`
+              : `os ${indisponivelAlvo.pedidos.length} pedidos vinculados`}
+            ?
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
             <button
@@ -1053,9 +1311,11 @@ function TabComprar({
               className="wms-btn wms-btn-danger"
               disabled={indisponivelMut.isPending}
               onClick={() => {
-                const itemId = indisponivelAlvo.pedidos[0]?.item_id;
-                if (!itemId) return;
-                indisponivelMut.mutate(itemId);
+                const itemIds = indisponivelAlvo.pedidos
+                  .map((p) => p.item_id)
+                  .filter((id): id is string => !!id);
+                if (itemIds.length === 0) return;
+                indisponivelMut.mutate(itemIds);
               }}
               type="button"
             >
@@ -1068,7 +1328,11 @@ function TabComprar({
       {cancelAlvo && (
         <Modal
           title={`Propor cancelamento — ${cancelAlvo.sku}`}
-          subtitle={`Pedido #${cancelAlvo.pedidos[0]?.numero}`}
+          subtitle={
+            cancelAlvo.pedidos.length === 1
+              ? `Pedido #${cancelAlvo.pedidos[0]?.numero}`
+              : `${cancelAlvo.pedidos.length} pedidos vinculados`
+          }
           onClose={() => setCancelAlvo(null)}
         >
           <Field label="Motivo">
@@ -1091,9 +1355,11 @@ function TabComprar({
               className="wms-btn wms-btn-danger"
               disabled={!cancelMotivo.trim() || cancelamentoMut.isPending}
               onClick={() => {
-                const itemId = cancelAlvo.pedidos[0]?.item_id;
-                if (!itemId) return;
-                cancelamentoMut.mutate({ itemId, motivo: cancelMotivo.trim() });
+                const itemIds = cancelAlvo.pedidos
+                  .map((p) => p.item_id)
+                  .filter((id): id is string => !!id);
+                if (itemIds.length === 0) return;
+                cancelamentoMut.mutate({ itemIds, motivo: cancelMotivo.trim() });
               }}
               type="button"
             >
@@ -1259,6 +1525,14 @@ function TabReceber({
                 </span>
                 <span>
                   {d.skus_count} SKU{d.skus_count === 1 ? "" : "s"}
+                  {f.galpao_nome === "Vários galpões" && d.galpao_nome ? (
+                    <span
+                      className="wms-pcard-chip is-galpao"
+                      style={{ marginLeft: 6 }}
+                    >
+                      {d.galpao_nome}
+                    </span>
+                  ) : null}
                 </span>
                 <span>
                   {fmtNum(d.qty_pendente)} un pendente
@@ -1327,7 +1601,7 @@ function TabHistorico({
         <table>
           <thead>
             <tr>
-              <th>Data</th>
+              <th>Comprado em</th>
               <th>Fornecedor</th>
               <th>SKU</th>
               <th>Produto</th>
@@ -1339,8 +1613,8 @@ function TabHistorico({
               f.itens.map((i, idx) => (
                 <tr key={`${fIdx}-${f.fornecedor}-${i.sku}-${idx}`}>
                   <td className="wms-td-mute">
-                    {i.recebido_em
-                      ? fmtDateTime(i.recebido_em)
+                    {i.comprado_em
+                      ? fmtDateTime(i.comprado_em)
                       : fmtDateTime(f.data_recebimento)}
                   </td>
                   <td>{f.fornecedor}</td>

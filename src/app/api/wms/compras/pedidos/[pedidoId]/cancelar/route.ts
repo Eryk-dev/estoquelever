@@ -80,41 +80,47 @@ export async function POST(
       (i) => (i.compra_quantidade_recebida ?? 0) > 0,
     );
     if (itensComEstoque.length > 0) {
-      // Carrega TODAS as movs E nf_compra que essa OC/item gerou no ledger
-      // (origem_id = pedido_id). Filtra por pedido_item_id via origem_detalhes
-      // dentro do loop pra evitar query por item.
-      const { data: movsE } = await supabase
-        .from("siso_movimentacoes")
-        .select("id, estorno_de, origem_detalhes")
-        .eq("origem_tipo", "nf_compra")
-        .eq("origem_id", pedidoId);
-      for (const item of itensComEstoque) {
-        for (const mov of movsE ?? []) {
-          // Pula movs que já têm estorno OU que são elas mesmas estornos
-          if (mov.estorno_de) continue;
-          const detalhes = (mov.origem_detalhes ?? {}) as {
-            pedido_item_id?: string | number;
-          };
-          if (String(detalhes.pedido_item_id ?? "") !== String(item.id)) continue;
-
-          try {
-            await estornarMovimentacao({
-              mov_id: mov.id as string,
-              usuario_id: session.id,
-              motivo: `Cancelamento pedido ${pedidoId} — estorno de OC recebida`,
-            });
-            movsEstornadas++;
-          } catch (estErr) {
-            const msg = estErr instanceof Error ? estErr.message : String(estErr);
-            if (/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
-              continue;
-            }
-            logger.error("compras-cancelar-pedido", "falha estornando mov", {
-              pedidoId,
-              mov_id: mov.id,
-              error: msg,
-            });
+      // P2-CMP-03: o caminho LEGADO grava origem_id=pedido_id; o caminho RICO
+      // (receberItensViaOC) grava origem_id=ocId + origem_detalhes.pedido_id.
+      // Busca pelas DUAS chaves e une (dedup por id) — senão o estorno nunca
+      // achava as movs do recebimento rico.
+      const [{ data: movsPorPedido }, { data: movsPorDetalhe }] = await Promise.all([
+        supabase
+          .from("siso_movimentacoes")
+          .select("id, estorno_de")
+          .eq("origem_tipo", "nf_compra")
+          .eq("origem_id", pedidoId),
+        supabase
+          .from("siso_movimentacoes")
+          .select("id, estorno_de")
+          .eq("origem_tipo", "nf_compra")
+          .eq("origem_detalhes->>pedido_id", pedidoId),
+      ]);
+      const movsPorId = new Map<string, { id: string; estorno_de: unknown }>();
+      for (const mov of [...(movsPorPedido ?? []), ...(movsPorDetalhe ?? [])]) {
+        movsPorId.set(mov.id as string, mov);
+      }
+      for (const mov of movsPorId.values()) {
+        // Pula movs que são elas mesmas estornos (estornarMovimentacao já
+        // absorve "já estornada" como não-fatal; pré-filtra os estornos puros).
+        if (mov.estorno_de) continue;
+        try {
+          await estornarMovimentacao({
+            mov_id: mov.id,
+            usuario_id: session.id,
+            motivo: `Cancelamento pedido ${pedidoId} — estorno de OC recebida`,
+          });
+          movsEstornadas++;
+        } catch (estErr) {
+          const msg = estErr instanceof Error ? estErr.message : String(estErr);
+          if (/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+            continue;
           }
+          logger.error("compras-cancelar-pedido", "falha estornando mov", {
+            pedidoId,
+            mov_id: mov.id,
+            error: msg,
+          });
         }
       }
       logger.info(

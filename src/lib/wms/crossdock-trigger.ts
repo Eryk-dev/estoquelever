@@ -94,6 +94,10 @@ export async function dispararTriggerCrossDock(args: {
     try {
       const res = await prepararPedidosDasOcsParaEmbalagem({
         ordemCompraIds: [ocId],
+        // CMP-03: restringe o efeito aos pedidos com TODOS os itens OC
+        // recebidos (filtro todosRecebidos acima). Sem isso, TODOS os pedidos
+        // packable da OC flipavam pra 'separado' sem pick.
+        pedidoIds: pedidosSeparados,
         usuarioId: null,
         usuarioNome: null,
       });

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { rotearPedido, type GalpaoLite } from "./roteamento";
+import { rotearPedido, TIPOS_LOC_VENDAVEIS, type GalpaoLite } from "./roteamento";
 
 export type Sugestao = "propria" | "transferencia" | "oc";
 
@@ -134,7 +134,10 @@ export async function recomputarSugestaoBatch(
             "id, produto_id, galpao_id, localizacao_id, disponivel, " +
               "siso_localizacoes!inner(tipo)",
           )
-          .in("produto_id", todosProdutoIds);
+          .in("produto_id", todosProdutoIds)
+          // CST-01: só locs vendáveis contam pra cobertura (mesma regra do
+          // rotearPedidoDoBanco — senão a sugestão diverge do roteamento real).
+          .in("siso_localizacoes.tipo", [...TIPOS_LOC_VENDAVEIS]);
 
   const estoquePorChave = new Map<string, EstoqueLinhaIndex[]>();
   for (const r of (estoqueRows ?? []) as unknown as EstoqueRowRaw[]) {

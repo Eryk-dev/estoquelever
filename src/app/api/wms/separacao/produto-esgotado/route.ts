@@ -6,6 +6,7 @@ import { getSessionUser } from "@/lib/session";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
 import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/separacao/produto-esgotado
@@ -36,9 +37,22 @@ export async function POST(request: NextRequest) {
   const acao: string | undefined = body?.acao;
   const galpaoDestinoId: string | undefined = body?.galpao_destino_id;
 
+  // P2-SEP-01: galpão obrigatório. Sem o filtro, a busca de pedidos ativos
+  // pegava pedidos de TODOS os galpões e o esgotado/OC/encaminhar derrubava
+  // separações de galpões que não tinham nada a ver com este operador.
+  // X-Galpao-Id popula session.galpaoId; body.galpao_id é override explícito.
+  const galpao: string | null = body?.galpao_id ?? session.galpaoId ?? null;
+
   if (!sku || typeof sku !== "string") {
     return NextResponse.json(
       { error: "Campo 'sku' obrigatorio" },
+      { status: 400 },
+    );
+  }
+
+  if (!galpao) {
+    return NextResponse.json(
+      { error: "galpao_obrigatorio" },
       { status: 400 },
     );
   }
@@ -71,7 +85,9 @@ export async function POST(request: NextRequest) {
     const { data: activePedidos, error: pedidosErr } = await supabase
       .from("siso_pedidos")
       .select("id, empresa_origem_id, separacao_galpao_id")
-      .in("status_separacao", ACTIVE_STATUSES);
+      .in("status_separacao", ACTIVE_STATUSES)
+      // P2-SEP-01: restringe ao galpão do operador — nunca toca pedidos de outro.
+      .eq("separacao_galpao_id", galpao);
 
     if (pedidosErr) {
       logger.error("produto-esgotado", "Erro ao buscar pedidos ativos", {
@@ -264,54 +280,76 @@ export async function POST(request: NextRequest) {
     const fornecedorInfo = getFornecedorBySku(sku);
     const now = new Date().toISOString();
 
-    // Re-fetch matching items with quantidade_pega pra calcular residual.
-    // Sem isso, o OC seria criado pela qty pedida total — mas se uma realocação
-    // já pegou parte do item (quantidade_pega>0 no item ou nas realocs picadas),
-    // o residual real é menor. Pedir a qty total causaria compra duplicada.
-    const { data: itemsComPega } = await supabase
+    // P2-SEP-02: o RESET (estorno dos picks) roda ANTES do cálculo do residual.
+    // Antes, o residual era calculado com quantidade_pega/realocs picadas AINDA
+    // vivas — depois o reset zerava tudo e estornava as S, então a OC pedia
+    // MENOS do que a necessidade física real (drift físico×ledger: peça volta
+    // pra prateleira mas a OC compra só a fração). Pós-reset, quantidade_pega=0
+    // e as S estão estornadas → residual = necessidade cheia (= quantidade_pedida).
+
+    // Snapshot pré-reset só pra auditoria do evento (qty que será devolvida à
+    // prateleira ao estornar os picks). Não entra no cálculo do residual.
+    const { data: itemsPreReset } = await supabase
       .from("siso_pedido_itens")
       .select("id, quantidade_pedida, quantidade_pega")
       .in("id", itemIds);
-    const itemsPegaMap = new Map<number, { qPedida: number; qPega: number }>();
-    for (const it of itemsComPega ?? []) {
-      itemsPegaMap.set(it.id as number, {
+    const preResetMap = new Map<number, { qPedida: number; qPega: number }>();
+    for (const it of itemsPreReset ?? []) {
+      preResetMap.set(it.id as number, {
         qPedida: Number(it.quantidade_pedida ?? 0),
         qPega: Number(it.quantidade_pega ?? 0),
       });
+    }
+    let qtyEstornadaPick = 0;
+    for (const v of preResetMap.values()) qtyEstornadaPick += v.qPega;
+
+    // OC branch: só reseta itens do SKU esgotado, não pedido inteiro (#2.14).
+    // Itens de outros SKUs do mesmo pedido continuam picados normalmente — só
+    // o SKU sem cobertura vai virar OC, então preservar pick state dos outros.
+    // Também ESTORNAR S+L emitidas no pick antes do switch pra aguardando_compra
+    // (#2.8 — mesmo bug do branch encaminhar).
+    try {
+      await resetarEstadoSeparacaoItens({
+        supabase,
+        itemIds: itemIds.map((id) => Number(id)),
+        usuarioId: session.id,
+        motivo: "esgotado",
+      });
+    } catch (resetErr) {
+      logger.error("produto-esgotado", "Reset com estorno falhou (OC branch)", {
+        error: resetErr instanceof Error ? resetErr.message : String(resetErr),
+        affectedPedidoIds,
+        itemIds,
+      });
+      return NextResponse.json(
+        { error: "Erro ao estornar movs antes de marcar OC" },
+        { status: 500 },
+      );
+    }
+
+    // Re-fetch pós-reset: quantidade_pega foi zerada e as S estornadas, então o
+    // residual a comprar é a necessidade cheia. Pedir a qty pedida completa
+    // agora é CORRETO — a peça parcial voltou pra prateleira.
+    const { data: itemsPosReset } = await supabase
+      .from("siso_pedido_itens")
+      .select("id, quantidade_pedida")
+      .in("id", itemIds);
+    const qtyPedidaMap = new Map<number, number>();
+    for (const it of itemsPosReset ?? []) {
+      qtyPedidaMap.set(it.id as number, Number(it.quantidade_pedida ?? 0));
     }
 
     // Itens que efetivamente serão marcados pra compra (residual > 0)
     const itemsParaOC: Array<{ id: number; residual: number }> = [];
 
-    // Update matching items: mark for purchase with the real missing quantity.
+    // Update matching items: mark for purchase with the full (post-reset) need.
     for (const item of matchingItems) {
-      // Soma qty_pega das realocações já picadas pra este item (modo realoc preserva
-      // quantidade_pega no item, mas em alguns paths a qty fica só nas realocs).
-      const { data: realocsPicadas } = await supabase
-        .from("siso_pedido_item_realocacoes")
-        .select("quantidade_pega")
-        .eq("pedido_item_id", item.id)
-        .in("status", ["picado", "picado_parcial"]);
-
-      const qtyPegaRealocs = (realocsPicadas ?? []).reduce(
-        (s, r) => s + (Number(r.quantidade_pega) || 0),
-        0,
-      );
-      const itemInfo = itemsPegaMap.get(item.id as number);
-      const qtyPegaItem = itemInfo?.qPega ?? 0;
-      const qtyPedida = itemInfo?.qPedida ?? Number(item.quantidade_pedida ?? 0);
-      const qtyPegaTotal = qtyPegaItem + qtyPegaRealocs;
-      const residual = Math.max(0, qtyPedida - qtyPegaTotal);
+      const residual =
+        qtyPedidaMap.get(item.id as number) ??
+        Number(item.quantidade_pedida ?? 0);
 
       if (residual === 0) {
-        // Nada a comprar — pula este item (já 100% coberto por realocs)
-        logger.info("produto-esgotado", "item já coberto por realocação, sem residual a comprar", {
-          sku,
-          itemId: item.id,
-          qtyPedida,
-          qtyPegaItem,
-          qtyPegaRealocs,
-        });
+        // Pedido sem quantidade pedida — nada a comprar (defensivo).
         continue;
       }
 
@@ -339,10 +377,9 @@ export async function POST(request: NextRequest) {
       itemsParaOC.push({ id: item.id as number, residual });
     }
 
-    // Se nenhum item tem residual a comprar (tudo já coberto por realocação),
-    // não cria OC nem move pedidos pra aguardando_compra — apenas retorna.
+    // Se nenhum item tem residual a comprar — apenas retorna.
     if (itemsParaOC.length === 0) {
-      logger.info("produto-esgotado", "SKU esgotado mas tudo coberto por realocação — sem OC", {
+      logger.info("produto-esgotado", "SKU esgotado mas sem residual a comprar — sem OC", {
         sku,
         itens_afetados: itemIds.length,
       });
@@ -351,30 +388,6 @@ export async function POST(request: NextRequest) {
         itens_afetados: 0,
         ordem_compra_id: null,
       });
-    }
-
-    // OC branch: só reseta itens do SKU esgotado, não pedido inteiro (#2.14).
-    // Itens de outros SKUs do mesmo pedido continuam picados normalmente — só
-    // o SKU sem cobertura vai virar OC, então preservar pick state dos outros.
-    // Também ESTORNAR S+L emitidas no pick antes do switch pra aguardando_compra
-    // (#2.8 — mesmo bug do branch encaminhar).
-    try {
-      await resetarEstadoSeparacaoItens({
-        supabase,
-        itemIds: itemIds.map((id) => Number(id)),
-        usuarioId: session.id,
-        motivo: "esgotado",
-      });
-    } catch (resetErr) {
-      logger.error("produto-esgotado", "Reset com estorno falhou (OC branch)", {
-        error: resetErr instanceof Error ? resetErr.message : String(resetErr),
-        affectedPedidoIds,
-        itemIds,
-      });
-      return NextResponse.json(
-        { error: "Erro ao estornar movs antes de marcar OC" },
-        { status: 500 },
-      );
     }
 
     // Move affected pedidos to aguardando_compra
@@ -497,7 +510,28 @@ export async function POST(request: NextRequest) {
       pedidos_afetados: affectedPedidoIds.length,
       itens_afetados: itemsParaOC.length,
       ordem_compra_id: ordemCompraId,
+      qty_estornada_pick: qtyEstornadaPick,
     });
+
+    // P2-SEP-02: quando havia picks estornados, registra evento instrutivo por
+    // pedido — o operador precisa DEVOLVER as peças já pegas à prateleira (o S
+    // foi estornado, o saldo voltou ao ledger, mas a peça pode estar na bancada).
+    if (qtyEstornadaPick > 0) {
+      registrarEventos(
+        affectedPedidoIds.map((pid) => ({
+          pedidoId: pid,
+          evento: "status_revertido" as const,
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+          detalhes: {
+            motivo: "esgotado_para_oc",
+            sku,
+            qty_estornada_pick: qtyEstornadaPick,
+            instrucao: "devolver peças à prateleira",
+          },
+        })),
+      ).catch(() => {});
+    }
 
     return NextResponse.json({
       pedidos_afetados: affectedPedidoIds.length,

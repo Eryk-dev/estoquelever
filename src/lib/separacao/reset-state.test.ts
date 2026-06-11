@@ -22,7 +22,7 @@ type SeedLink = {
   pedido_item_id: number;
   mov_id: string;
   qty: number;
-  tipo_link: "saida" | "ajuste_loc_zerou";
+  tipo_link: "saida" | "ajuste_loc_zerou" | "liberacao_reserva" | "reserva_cascade";
 };
 
 interface SupabaseSeed {
@@ -322,5 +322,135 @@ describe("resetarEstadoSeparacaoItens", () => {
     // Erro de double-estorno é tolerado — mov não entra em `estornadas`
     expect(result.estornadas).toEqual([]);
     expect(estornar).toHaveBeenCalledTimes(1);
+  });
+
+  it("recriarReservas: ressuscita R das L's de pick + estorna R cascade (SEP-06)", async () => {
+    const { client } = mockSupabase({
+      items: [
+        {
+          id: 10,
+          pedido_id: "ped-10",
+          mov_saida_id: "mov-s-1",
+          mov_ajuste_loc_zerou_id: null,
+          separacao_parcial: false,
+          quantidade_pega: 5,
+        },
+      ],
+      realocs: [],
+      links: [
+        { id: "lk-s", pedido_item_id: 10, mov_id: "mov-s-1", qty: 5, tipo_link: "saida" },
+        { id: "lk-l", pedido_item_id: 10, mov_id: "mov-l-1", qty: 5, tipo_link: "liberacao_reserva" },
+        { id: "lk-rc", pedido_item_id: 10, mov_id: "mov-rc-1", qty: 2, tipo_link: "reserva_cascade" },
+      ],
+    });
+    const estornar = vi.fn().mockResolvedValue({ id: "estorno-X" });
+    const estornarLiberacao = vi.fn().mockResolvedValue({ id: "r-nova" });
+
+    const result = await resetarEstadoSeparacaoItens({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supabase: client as any,
+      itemIds: [10],
+      usuarioId: "u-10",
+      motivo: "voltar_etapa",
+      recriarReservas: true,
+      estornarMov: estornar,
+      estornarLiberacao,
+    });
+
+    // L de pick ressuscitada em R (idempotente via estorno_de=L)
+    expect(estornarLiberacao).toHaveBeenCalledWith({
+      liberacao_mov_id: "mov-l-1",
+      pedido_id: "ped-10",
+      usuario_id: "u-10",
+      motivo: expect.stringContaining("voltar_etapa"),
+    });
+    expect(result.reservasRecriadas).toBe(1);
+
+    // R cascade residual estornada (evita reserva duplicada com a R ressuscitada)
+    const cascadeCalls = estornar.mock.calls.filter(
+      ([arg]) => (arg as { mov_id: string }).mov_id === "mov-rc-1",
+    );
+    expect(cascadeCalls).toHaveLength(1);
+
+    // S do pick estornada normalmente; L NUNCA passa pelo estorno genérico
+    expect(result.estornadas).toEqual(["mov-s-1"]);
+    const lCalls = estornar.mock.calls.filter(
+      ([arg]) => (arg as { mov_id: string }).mov_id === "mov-l-1",
+    );
+    expect(lCalls).toHaveLength(0);
+  });
+
+  it("default (sem recriarReservas): não ressuscita L nem toca R cascade", async () => {
+    const { client } = mockSupabase({
+      items: [
+        {
+          id: 11,
+          pedido_id: "ped-11",
+          mov_saida_id: "mov-s-2",
+          mov_ajuste_loc_zerou_id: null,
+          separacao_parcial: false,
+          quantidade_pega: 3,
+        },
+      ],
+      realocs: [],
+      links: [
+        { id: "lk-l2", pedido_item_id: 11, mov_id: "mov-l-2", qty: 3, tipo_link: "liberacao_reserva" },
+        { id: "lk-rc2", pedido_item_id: 11, mov_id: "mov-rc-2", qty: 1, tipo_link: "reserva_cascade" },
+      ],
+    });
+    const estornar = vi.fn().mockResolvedValue({ id: "estorno-Y" });
+    const estornarLiberacao = vi.fn().mockResolvedValue({ id: "r-nova-2" });
+
+    const result = await resetarEstadoSeparacaoItens({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supabase: client as any,
+      itemIds: [11],
+      usuarioId: "u-11",
+      motivo: "encaminhar",
+      estornarMov: estornar,
+      estornarLiberacao,
+    });
+
+    expect(estornarLiberacao).not.toHaveBeenCalled();
+    expect(result.reservasRecriadas).toBe(0);
+    const cascadeCalls = estornar.mock.calls.filter(
+      ([arg]) => (arg as { mov_id: string }).mov_id === "mov-rc-2",
+    );
+    expect(cascadeCalls).toHaveLength(0);
+  });
+
+  it("recriarReservas: falha ao ressuscitar L não aborta o reset (loga e segue)", async () => {
+    const { client } = mockSupabase({
+      items: [
+        {
+          id: 12,
+          pedido_id: "ped-12",
+          mov_saida_id: "mov-s-3",
+          mov_ajuste_loc_zerou_id: null,
+          separacao_parcial: false,
+          quantidade_pega: 2,
+        },
+      ],
+      realocs: [],
+      links: [
+        { id: "lk-l3", pedido_item_id: 12, mov_id: "mov-l-3", qty: 2, tipo_link: "liberacao_reserva" },
+      ],
+    });
+    const estornar = vi.fn().mockResolvedValue({ id: "estorno-Z" });
+    const estornarLiberacao = vi.fn().mockRejectedValue(new Error("CHECK reservado<=saldo"));
+
+    const result = await resetarEstadoSeparacaoItens({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supabase: client as any,
+      itemIds: [12],
+      usuarioId: "u-12",
+      motivo: "reiniciar",
+      recriarReservas: true,
+      estornarMov: estornar,
+      estornarLiberacao,
+    });
+
+    expect(result.estornadas).toEqual(["mov-s-3"]);
+    expect(result.reservasRecriadas).toBe(0);
   });
 });

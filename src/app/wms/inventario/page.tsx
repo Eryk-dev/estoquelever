@@ -56,7 +56,7 @@ export default function InventarioListaPage() {
     <>
       <PageHeader
         title="Inventários"
-        subtitle="Pool compartilhado · 5 slots de operador · sugestão inteligente"
+        subtitle="Pool compartilhado · party dinâmica de operadores · sugestão inteligente"
       >
         <Link href="/wms/inventario/metricas" className="wms-btn wms-btn-ghost">
           <Icon name="gauge" size={12} />

@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
+import { TIPOS_LOC_VENDAVEIS } from "@/lib/wms/roteamento";
 
 export interface MappingDeps {
   buscarProdutoId: (empresaId: string, tinyProdutoId: string) => Promise<string | null>;
@@ -66,12 +67,31 @@ export async function resolverLocalizacaoWms(
  *
  * Retorna o ID da loc (uuid de siso_localizacoes) ou null se nenhuma loc
  * tem disponível positivo.
+ *
+ * CST-01: `opts.apenasVendaveis` restringe a locs de tipo vendável
+ * (picking/overstock) — usado pela criação de reserva R em aprovar, pra não
+ * reservar saldo de quarentena/recebimento/packing/expedicao. O fallback de
+ * pick (pick-mov/marcar-item/parcial) segue sem filtro (comportamento antigo).
  */
 export async function buscarLocComMaiorSaldoNoGalpao(
   galpaoId: string,
   produtoUuid: string,
+  opts?: { apenasVendaveis?: boolean },
 ): Promise<string | null> {
   const supabase = createServiceClient();
+  if (opts?.apenasVendaveis) {
+    const { data } = await supabase
+      .from("siso_estoque")
+      .select("localizacao_id, siso_localizacoes!inner(tipo)")
+      .eq("galpao_id", galpaoId)
+      .eq("produto_id", produtoUuid)
+      .in("siso_localizacoes.tipo", [...TIPOS_LOC_VENDAVEIS])
+      .gt("disponivel", 0)
+      .order("disponivel", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return (data?.localizacao_id as string | null | undefined) ?? null;
+  }
   const { data } = await supabase
     .from("siso_estoque")
     .select("localizacao_id")

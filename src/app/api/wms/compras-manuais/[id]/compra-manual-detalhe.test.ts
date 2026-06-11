@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@/lib/session", () => ({ getSessionUser: async () => ({ id: "u1", nome: "T" }) }));
-vi.mock("@/lib/permissions", () => ({ userCan: () => true }));
+vi.mock("@/lib/permissions", () => ({ userCan: () => true, userCanAny: () => true }));
 const { listarSpy } = vi.hoisted(() => ({
   listarSpy: vi.fn(async () => [
     { id: "m1", status: "comprado", observacao: null, criado_em: "2026-06-02T00:00:00Z", recebido_em: null,

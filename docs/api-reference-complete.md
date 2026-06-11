@@ -1391,12 +1391,22 @@ Caminhos suportados:
 }
 ```
 
+**Response (422 - Pick falhou, 2026-06-11):**
+```json
+{
+  "error": "string (resumo: motivo)",
+  "nao_bipados": [{ "item_id": "uuid", "pedido_id": "string", "sku": "string", "motivo": "string" }],
+  "itens_marcados": "number"
+}
+```
+
 **Business Logic:**
 - Tries to find items by SKU within the given pedidos
 - If no SKU match, tries GTIN match
 - Filters out items with compra_status = "cancelado"
 - Marks all matching items as separacao_marcado = true
 - Returns updated items
+- **Fail-loud (2026-06-11):** item cujo pick falhou (ctx do pedido ausente, `pickMovPicking` null ou exceção) **NÃO é marcado** — fica pendente pro re-bipe e a resposta vira 422 com `nao_bipados`. Antes o item era marcado com `quantidade_pega=pedida` e `mov_saida_id=null` (peça saía sem S no ledger).
 
 **Side Effects:**
 - Updates `siso_pedido_itens.separacao_marcado`, `separacao_marcado_em` for matching items
@@ -1550,6 +1560,8 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 ---
 
 ### POST /api/wms/separacao/concluir
+
+> **2026-06-11:** o claim do UPDATE pra `separado` agora aceita `em_separacao` E `aguardando_separacao` e verifica os ids efetivamente claimados; pedidos não-claimados voltam em `nao_concluidos: [{pedido_id, motivo}]` na resposta (UI mostra toast warn). Antes respondia sucesso com pedido preso.
 
 **File:** `src/app/api/wms/separacao/concluir/route.ts`
 
@@ -2255,6 +2267,8 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 
 ### POST /api/wms/separacao/voltar-etapa
 
+> **2026-06-11:** `expedido` entrou no fim do STATUS_ORDER — hop `expedido→embalado` permitido (só status; sem estornos; não há tab na UI, uso via API/admin).
+
 **File:** `src/app/api/wms/separacao/voltar-etapa/route.ts`
 
 **Purpose:** Admin-only. Move one or more pedidos to ANY separation stage (forward or backward). Cleans up item-level data appropriately.
@@ -2642,6 +2656,8 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 
 ### POST /api/wms/separacao/produto-esgotado
 
+> **2026-06-11:** galpão é OBRIGATÓRIO (`body.galpao_id` ?? header `X-Galpao-Id` → 400 `galpao_obrigatorio` sem ele); só pedidos do galpão informado são afetados (antes derrubava pedidos de TODOS os galpões). O residual da OC é calculado APÓS o estorno dos picks (necessidade cheia); o evento registra `qty_estornada_pick` + instrução de devolver à prateleira.
+
 **File:** `src/app/api/wms/separacao/produto-esgotado/route.ts`
 
 **Purpose:** Three modes for handling out-of-stock products: preview alternatives, create purchase order, or redirect to another galpão.
@@ -2745,6 +2761,8 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 - `qty_contada` (number, optional — only meaningful when `acao='encontrei'`): total de unidades contadas fisicamente na prateleira (acerto de prateleira / contagem inline). Quando presente, o backend reconcilia o saldo da loc registrando uma contagem oficial (gera mov `inventario_ganho`/`inventario_perda` conforme o delta vs. saldo de sistema — UMA vez por chamada, antes dos picks) e **distribui a contagem entre os itens pendentes** (`alocarContagem`, menor quantidade primeiro, maximizando pedidos liberados por inteiro): itens cobertos por inteiro são separados normalmente; a sobra que não cobre o próximo item inteiro vira **pick parcial** dele (`separacao_parcial=true`, `parcial_motivo='encontrei_parcial'`) com o restante mandado pra compras; itens sem cobertura nenhuma vão **direto pra compras** (`aguardando_compra`, qty efetiva = pedida − pega − realocs picadas, mesma semântica do esgotado explícito). Contagem menor que o total é PERMITIDA (decisão 2026-06-10 — antes respondia 422 `contagem_menor_que_pedido`). `qty_contada <= 0` responde **422** `contagem_invalida`. Ausente = comportamento legado (pick sem contagem). **Mutuamente exclusivo com `solicitar_contagem`** — enviar ambos retorna **400**.
 - `localizacao_codigo` (string, optional — only meaningful when `acao='encontrei'`): código da prateleira bipada. Alternativa a `localizacao_id` (uuid) pra resolver a loc-alvo da contagem dentro do galpão do pedido (`siso_localizacoes` filtrado por `galpao_id` do pedido + `codigo`). Usado em conjunto com `qty_contada` ou `solicitar_contagem`.
 - `solicitar_contagem` (boolean, optional — only meaningful when `acao='encontrei'`): quando `true`, pega exatamente a `quantidade_pedida` do item (gera mov E de ajuste_manual + mov S de pick) e enfileira a localização para contagem futura via inventário. O saldo da loc fica temporariamente subcontado de propósito — o operador achou fisicamente o item mas não contou a prateleira inteira; a reconciliação completa acontece depois. **Mutuamente exclusivo com `qty_contada`** — enviar ambos retorna **400** `solicitar_contagem e qty_contada são mutuamente exclusivos`.
+
+**Fail-loud no pick (2026-06-11):** em `acao='encontrei'` (com ou sem contagem), item cujo pick falhou **não é marcado como pego** (antes o caminho legado marcava com `mov_saida_id=null`). A resposta inclui `itens_nao_validados: [{ item_id, sku, motivo }]` quando há falhas; se TODOS os picks falharem, retorna **422** `{ error: "falha_baixa_estoque", message, itens_nao_validados }`. Contagem que deixaria o saldo abaixo do reservado vivo retorna **409** `{ error: "contagem_bloqueada_reserva", message }` (pré-check da RPC, migration 20260611f).
 
 **Response (200):**
 ```json
@@ -3347,6 +3365,8 @@ OR
 
 **Purpose:** Marks items as purchased (comprado) for a supplier. Qty is consolidated by SKU and distributed across order items by aging (oldest first). Items are linked to an OC via find-or-create (by fornecedor + galpão); at the end the touched OCs are confirmed `aguardando_compra` → `comprado` so the document appears in the Receber tab.
 
+`galpao_id` (escolhido pelo comprador no modal de confirmação da UI) define o galpão de recebimento da OC — itens do mesmo fornecedor+galpão consolidam numa OC só. Sem ele, fallback no galpão do pedido (`separacao_galpao_id`, comportamento legado dos cenários E2E). Quando o galpão escolhido difere do galpão do pedido, `siso_pedidos.separacao_galpao_id` é re-apontado pro escolhido (senão o reconciliador-oc nunca casa a entrada com o pedido). `preco_unitario` é gravado em `siso_pedido_itens.compra_preco_unitario` e pré-preenche o custo no recebimento da OC.
+
 **Auth:** X-Session-Id (required), must be comprador or admin
 
 **Request Body:**
@@ -3355,7 +3375,9 @@ OR
   "itens": [
     {
       "sku": "string",
-      "quantidade_comprada": "number"
+      "quantidade_comprada": "number",
+      "galpao_id": "string (opcional — galpão de recebimento escolhido pelo comprador)",
+      "preco_unitario": "number (opcional no backend; obrigatório na UI — deve ser > 0 se presente)"
     }
   ]
 }
@@ -3399,7 +3421,8 @@ OR
   - Updates compra_status = "comprado" and timestamps
 
 **Side Effects:**
-- Updates `siso_pedido_itens.compra_status`, `compra_quantidade_comprada`, `comprado_em`, `comprado_por`
+- Updates `siso_pedido_itens.compra_status`, `compra_quantidade_comprada`, `comprado_em`, `comprado_por`, `compra_preco_unitario` (quando `preco_unitario` enviado)
+- Updates `siso_pedidos.separacao_galpao_id` quando o galpão escolhido difere do galpão do pedido
 - Logs to `siso_logs`
 
 **Rate Limiting:** None
@@ -3410,7 +3433,7 @@ OR
 
 **File:** `src/app/api/wms/compras/trocar-sku/route.ts`
 
-**Purpose:** Swaps the SKU of order items to an equivalent product. Looks up product in Tiny across all group empresas, updates description, image, stock, and supplier. Does not auto-release the order.
+**Purpose:** Swaps the SKU of order items to an equivalent product. Resolves the new product via the WMS catalog (`siso_produtos` by SKU → `siso_produto_empresas` per empresa) and writes the `tiny_produto_id` **of each pedido's own empresa_origem** (gotcha #1 — rewritten 2026-06-11; the old version looked up Tiny across group empresas and applied the FIRST empresa's id to all items, making OCs unreceivable). Does not auto-release the order.
 
 **Auth:** X-Session-Id (required), must have compras access
 
@@ -3428,9 +3451,12 @@ OR
   "ok": true,
   "novo_sku": "string",
   "novo_fornecedor": "string",
-  "descricao": "string | null"
+  "descricao": "string | null",
+  "itens_nao_trocados": [{ "item_id": "uuid", "motivo": "string" }]
 }
 ```
+
+**Errors:** 404 SKU fora do catálogo WMS · 422 nenhum item trocável (todas as empresas sem mapping). Parcial → 200 com `itens_nao_trocados` (a UI mostra toast warning); itens sem mapping da empresa NÃO são trocados silenciosamente.
 
 **Response (400 - Missing fields):**
 ```json
@@ -3735,6 +3761,8 @@ OR
 ---
 
 ### POST /api/wms/compras/itens/[itemId]/indisponivel
+
+> **2026-06-11:** aceita `item_ids: string[]` no body (união dedupada com o `itemId` da rota) — a UI agora marca TODOS os pedidos do card num request. Mesmo padrão em `cancelamento` (propor).
 
 **File:** `src/app/api/wms/compras/itens/[itemId]/indisponivel/route.ts`
 
@@ -4049,6 +4077,8 @@ OR
 ---
 
 ### POST /api/wms/compras-manuais/[id]/receber
+
+> **2026-06-11:** auth aceita `userCanAny("compras.executar", "operacoes.receber")` (operador de doca recebe sem 403) — espelha o fluxo OC. Mesmo gate no GET do detalhe.
 
 **File:** `src/app/api/wms/compras-manuais/[id]/receber/route.ts`
 
@@ -5264,6 +5294,8 @@ Saldos agregados por perspectiva (3D — refactor 2026-05-20).
 
 ### GET /api/wms/ledger
 
+> **2026-06-11:** param additive `before` (`"criado_em|id"`) pra paginação keyset (usada pelo produto-drawer — elimina linhas duplicadas do offset durante operação ativa); ordenação ganhou tie-break determinístico por `id`. A page global usa `offset`+`count` (paginação real com "X–Y de Z").
+
 Lista movimentações (mais recentes primeiro). Response inclui as novas colunas de metadata por empresa/fornecedor desde 2026-05-20.
 
 **Query params:** `produto_id`, `galpao_id`, `localizacao_id`, `origem_tipo`, `desde`, `ate`, `limit` (default 100). Filtros novos: `empresa_compradora_id`, `empresa_vendedora_id`, `empresa_referencia_id`, `fornecedor_id`. *`empresa_id` legacy descontinuado.*
@@ -5374,13 +5406,15 @@ Idempotente (pula R já liberada). A `empresa_vendedora_id` da S (caso `saiu`) v
       "ja_recebido": "number",
       "pendente": "number",
       "produto_id": "string (tiny_produto_id)",
-      "produto_wms_id": "uuid | null"
+      "produto_wms_id": "uuid | null",
+      "preco_compra": "number | null"
     }
   ]
 }
 ```
 
 - `produto_wms_id`: UUID de `siso_produtos` resolvido via SKU; `null` se produto não cadastrado no WMS.
+- `preco_compra`: `compra_preco_unitario` declarado pelo comprador em `/compras/comprar`; a UI pré-preenche o campo custo do recebimento (editável).
 - `fornecedor_id`: UUID de `siso_fornecedores` resolvido por nome (ilike, ativo); `null` se não mapeado. Usado pela UI para pré-preencher o fornecedor no ReceberLote (sugestão de custo médio).
 
 **Response (404):** `{ error: "OC não encontrada" }`
@@ -5525,6 +5559,8 @@ Galpão sem locs `recebimento` ou sem saldos retorna `{ itens: [] }` (200, não 
 Fila consumida no tablet. Operador imprime etiquetas → cola nas peças → leva pra loc destino → bipa o QR → confirma. Mov de guarda usa `origem_tipo='transferencia_localizacao'` (replenishment_intra) saindo de RECEBIMENTO. Custo médio da loc origem é propagado pra loc destino via `recalcularCustoMedio`.
 
 #### GET /api/wms/guarda
+
+> **2026-06-11:** `encerrada_sem_saldo` entrou em STATUS_VALIDOS (tab "Sem saldo" na UI); resposta do confirmar propaga `auto_encerrada` (toast correto em vez de "Parcial: faltam N"); desfazer devolve `qty_estornada`/`status_final` (additive).
 
 Lista pendências. **Query:** `galpao_id?`, `status=pendente,em_guarda` (CSV, default ativas), `q?`, `limit=200`. *(Filtro `empresa_dona_id` removido em 2026-05-20 — coluna não existe mais na tabela.)*
 
@@ -5854,7 +5890,7 @@ Cron-friendly. **Auth:** `x-worker-secret`. Insere mov L pra reservas com `expir
 ## WMS — Inventário (Plano 4)
 
 ### GET /api/wms/inventario
-Lista sessões. Query: `status`, `galpao_id`.
+Lista sessões. Query: `status`, `galpao_id`. **Filtra `continua=false`** (2026-06-11) — a sessão contínua de contagens operacionais é infra interna e não pode ser encerrada/computada (guard hard em `computarDivergencias`; encerrá-la re-aplicaria acertos inline históricos como ganho falso).
 
 ### POST /api/wms/inventario
 Cria sessão (v2 — pool compartilhado + party dinâmica de operadores, sem cap rígido).
@@ -5982,6 +6018,8 @@ Atualiza status de divergências em lote (single-id é caso particular com `[id]
 **Response:** `{ ok: true, atualizadas: number }`
 
 Defesas: o UPDATE filtra por `sessao_id` (impede IDs de outra sessão) e `status='pendente'` (idempotente — re-aplicar é no-op). `atualizadas` pode ser menor que `divergencia_ids.length` se algum ID já não estava pendente.
+
+**Exceção (2026-06-11, fix INV-02):** com a SESSÃO em `aprovada`, `acao='rejeitar'` também aceita divergências em status `aprovada` (exige `inventario.supervisionar`; senão 403) — destrava sessão presa quando o Aplicar falha numa divergência cujo saldo mudou (pick entre aprovação e aplicação). A UI expõe o botão Rejeitar nesse estado.
 
 ### GET /api/wms/inventario/metricas
 RPCs: acuracidade por operador (30d) + por localização (5000 últimas).

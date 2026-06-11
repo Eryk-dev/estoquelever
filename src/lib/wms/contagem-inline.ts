@@ -3,8 +3,15 @@ import { logger } from "@/lib/logger";
 
 /**
  * Enfileira uma localização para contagem futura na sessão operacional contínua
- * do galpão. Idempotente via UNIQUE(sessao_id, localizacao_id).
- * Falha silenciosa — o caller deve fazer .catch() pra não bloquear o pick.
+ * do galpão. Falha silenciosa — o caller deve fazer .catch() pra não bloquear o
+ * pick.
+ *
+ * [P2-INV-05] O upsert com ignoreDuplicates era no-op quando a loc JÁ existia na
+ * sessão contínua com status 'contada' (acerto inline anterior nunca a devolvia
+ * pra 'pendente') — "solicitar contagem depois" não reabria a fila. Agora:
+ *   - ausente            → INSERT 'pendente'
+ *   - status 'contada'   → UPDATE pra 'pendente' (reabre a fila; limpa o lock)
+ *   - 'pendente'/'em_contagem' → no-op (já na fila / sendo contada)
  */
 export async function enfileirarLocParaContagem(
   sb: ReturnType<typeof createServiceClient>,
@@ -13,13 +20,32 @@ export async function enfileirarLocParaContagem(
   solicitada_por: string,
 ): Promise<void> {
   const sessao_id = await getOrCreateSessaoOperacional(sb, galpao_id, solicitada_por);
-  // Idempotência clique-duplo via UNIQUE(sessao_id, localizacao_id)
-  await sb
+
+  const { data: existente } = await sb
     .from("siso_inventario_localizacoes")
-    .upsert(
-      { sessao_id, localizacao_id, status: "pendente", motivo: "solicitada_pick" },
-      { onConflict: "sessao_id,localizacao_id", ignoreDuplicates: true },
-    );
+    .select("id, status")
+    .eq("sessao_id", sessao_id)
+    .eq("localizacao_id", localizacao_id)
+    .maybeSingle();
+
+  const row = existente as { id: string; status: string } | null;
+  if (!row) {
+    await sb
+      .from("siso_inventario_localizacoes")
+      .insert({ sessao_id, localizacao_id, status: "pendente", motivo: "solicitada_pick" });
+    return;
+  }
+  if (row.status === "contada") {
+    await sb
+      .from("siso_inventario_localizacoes")
+      .update({
+        status: "pendente",
+        bloqueada_por: null,
+        bloqueada_em: null,
+      })
+      .eq("id", row.id);
+  }
+  // 'pendente' / 'em_contagem' / outros → no-op (já está na fila ou sendo contada).
 }
 
 const NOME_SESSAO_OPERACIONAL = "Contagens operacionais";

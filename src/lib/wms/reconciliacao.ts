@@ -23,8 +23,11 @@ export async function reconciliarEstoqueComLedger(
 
   const { data, error } = await sb.rpc("wms_detectar_divergencias_estoque");
   if (error) {
-    logger.warn("wms.reconciliacao", "RPC indisponível", { error });
-    return { divergencias: [], corrigidas: 0 };
+    // Não mascarar falha da RPC como "0 divergências" — a rota trata/500.
+    logger.error("wms.reconciliacao", "RPC indisponível", { error });
+    throw new Error(
+      `wms_detectar_divergencias_estoque falhou: ${error.message}`,
+    );
   }
 
   const divergencias = (data ?? []) as unknown as DivergenciaRow[];

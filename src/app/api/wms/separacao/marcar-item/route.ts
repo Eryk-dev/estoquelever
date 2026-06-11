@@ -237,30 +237,47 @@ export async function POST(request: NextRequest) {
     } else {
       const { data: links } = await supabase
         .from("siso_pedido_item_mov_links")
-        .select("id, mov_id, tipo_link")
+        .select("id, mov_id, tipo_link, qty")
         .eq("pedido_item_id", item.id)
         .in("tipo_link", ["saida", "liberacao_reserva"]);
 
-      const movS = (links ?? []).find((l) => l.tipo_link === "saida");
-      const movL = (links ?? []).find((l) => l.tipo_link === "liberacao_reserva");
+      // P0-01: a S pode ser CONSOLIDADA de wave (1 mov S pra N itens; rateio
+      // por item em link.qty). Estornar a mov inteira devolveria também a
+      // fração dos outros itens (estoque fantasma). Passamos p_qty_link pra
+      // RPC estornar SÓ a fração (acumula qty_estornada — mesmo padrão do
+      // desfazer-parcial), idempotente por (mov S, pedido_item_id). Loop cobre
+      // item com mais de uma S (parcial em progresso completada via checkbox);
+      // L pareada por posição (ordem de criação dos links).
+      const movsS = (links ?? [])
+        .filter((l) => l.tipo_link === "saida")
+        .sort((a, b) => Number(a.id) - Number(b.id));
+      const movsL = (links ?? [])
+        .filter((l) => l.tipo_link === "liberacao_reserva")
+        .sort((a, b) => Number(a.id) - Number(b.id));
 
-      if (movS) {
-        const { error: rpcErr } = await supabase.rpc("wms_desmarcar_item_atomico", {
-          p_mov_s_id: movS.mov_id,
-          p_mov_l_id: movL?.mov_id ?? null,
-          p_pedido_id: String(pedido.id),
-          p_usuario_id: session.id,
-          p_motivo: `Desmarcar checkbox pedido #${pedido.numero}`,
-        });
-        if (rpcErr) {
-          // Tudo-ou-nada: a RPC rolou back. Item permanece marcado intacto.
-          logger.warn("separacao-marcar-item", "Desmarcar atômico falhou — item NÃO desmarcado", {
-            error: rpcErr.message, pedido_item_id, pedido_id: pedido.id,
+      if (movsS.length > 0) {
+        for (let i = 0; i < movsS.length; i++) {
+          const { error: rpcErr } = await supabase.rpc("wms_desmarcar_item_atomico", {
+            p_mov_s_id: movsS[i].mov_id,
+            p_mov_l_id: movsL[i]?.mov_id ?? null,
+            p_pedido_id: String(pedido.id),
+            p_usuario_id: session.id,
+            p_motivo: `Desmarcar checkbox pedido #${pedido.numero}`,
+            p_qty_link: Number(movsS[i].qty),
+            p_pedido_item_id: Number(item.id),
           });
-          return NextResponse.json(
-            { error: "falha_desmarcar", message: rpcErr.message },
-            { status: 409 },
-          );
+          if (rpcErr) {
+            // Tudo-ou-nada por mov: a RPC rolou back. Estornos já feitos no
+            // loop são idempotentes no retry (marker por item). Item permanece
+            // marcado intacto.
+            logger.warn("separacao-marcar-item", "Desmarcar atômico falhou — item NÃO desmarcado", {
+              error: rpcErr.message, pedido_item_id, pedido_id: pedido.id, mov_s_id: movsS[i].mov_id,
+            });
+            return NextResponse.json(
+              { error: "falha_desmarcar", message: rpcErr.message },
+              { status: 409 },
+            );
+          }
         }
         await supabase
           .from("siso_pedido_item_mov_links")

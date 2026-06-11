@@ -3,6 +3,7 @@ import { use, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import {
   Icon,
   Modal,
@@ -31,6 +32,7 @@ export default function DivergenciasPage({
 }) {
   const { id } = use(params);
   const queryClient = useQueryClient();
+  const { can } = usePermissoes();
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-inv-div", id],
@@ -39,6 +41,19 @@ export default function DivergenciasPage({
         `/api/wms/inventario/${id}/divergencias`,
       ),
   });
+
+  // [INV-02] Sessão 'aprovada' que falha na aplicação fica presa: o supervisor
+  // precisa poder REJEITAR a divergência aprovada culpada e re-aplicar.
+  const sessaoQuery = useQuery({
+    queryKey: ["wms-inv", id],
+    queryFn: () =>
+      wmsApi<{ sessao?: { status?: string } | null }>(
+        `/api/wms/inventario/${id}`,
+      ),
+  });
+  const podeRejeitarAprovada =
+    sessaoQuery.data?.sessao?.status === "aprovada" &&
+    can("inventario.supervisionar");
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const pendentesRows = useMemo(
@@ -395,6 +410,32 @@ export default function DivergenciasPage({
                             className="wms-btn wms-btn-sm wms-btn-ghost"
                             disabled={bulkAction.isPending}
                             title="Rejeitar"
+                            onClick={() =>
+                              bulkAction.mutate({
+                                ids: [d.id],
+                                acao: "rejeitar",
+                              })
+                            }
+                          >
+                            <Icon name="x" size={11} />
+                          </button>
+                        </div>
+                      )}
+                      {/* [INV-02] Sessão presa em 'aprovada' (aplicação falhou):
+                          supervisor rejeita a divergência culpada e re-aplica. */}
+                      {d.status === "aprovada" && podeRejeitarAprovada && (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 4,
+                            justifyContent: "flex-end",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="wms-btn wms-btn-sm wms-btn-ghost"
+                            disabled={bulkAction.isPending}
+                            title="Rejeitar divergência aprovada (remove da aplicação — use quando a aplicação falha nesta linha)"
                             onClick={() =>
                               bulkAction.mutate({
                                 ids: [d.id],

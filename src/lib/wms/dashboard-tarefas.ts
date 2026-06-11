@@ -144,6 +144,15 @@ export type EntradaDiretaCard = {
   criado_em: string;
 };
 
+/** Pedido travado em erro: pedido status='erro' (job esgotou as tentativas)
+ *  OU job de fila status='erro'. Invisível no quadro sem este card — só
+ *  aparecia em /wms/pedidos. */
+export type PedidoErroCard = {
+  pedido_id: string;
+  origem: "pedido" | "job";
+  criado_em: string | null;
+};
+
 export type ExcecoesPayload = {
   devolucoes: { count: number; itens: DevolucaoPendenteCard[] };
   transferencias_transito: { count: number; itens: TransferenciaTransitoCard[] };
@@ -152,6 +161,7 @@ export type ExcecoesPayload = {
   retroativos: { count: number; itens: RetroativoPendenteCard[] };
   recebimento_orfao: { count: number; itens: RecebimentoOrfaoCard[] };
   entradas_diretas: { count: number; itens: EntradaDiretaCard[] };
+  pedidos_erro: { count: number; itens: PedidoErroCard[] };
 };
 
 export type DashboardTarefasResult = {
@@ -467,6 +477,8 @@ export async function montarExcecoes(
     saldosRecebQ,
     pendenciasVivasQ,
     entradasDiretasQ,
+    pedidosErroQ,
+    jobsErroQ,
   ] = await Promise.all([
     // Devoluções pendentes — global, sem filtro de galpão (a devolução
     // só ganha galpão quando classificada).
@@ -600,6 +612,36 @@ export async function montarExcecoes(
       if (galpao_id) q = q.eq("localizacao.galpao_id", galpao_id);
       return q;
     })(),
+
+    // [P2-CST-03] Pedidos travados em erro: job esgotou as tentativas e setou
+    // siso_pedidos.status='erro'. Invisíveis no quadro — só apareciam em
+    // /wms/pedidos. Filtramos por galpão quando presente (pedido já roteado).
+    (() => {
+      let q = sb
+        .from("siso_pedidos")
+        .select("id, criado_em, separacao_galpao_id")
+        .eq("status", "erro")
+        .order("criado_em", { ascending: true })
+        .limit(MAX_DETALHE_POR_SECAO + 1);
+      if (galpao_id) {
+        // Pedido em erro pode não ter separacao_galpao_id (falhou antes de
+        // rotear) — incluímos os NULL pra não esconder do operador do galpão.
+        q = q.or(
+          `separacao_galpao_id.eq.${galpao_id},separacao_galpao_id.is.null`,
+        );
+      }
+      return q;
+    })(),
+
+    // [P2-CST-03] Jobs de fila em erro (status='erro'): cobre o caso em que o
+    // job esgotou mas o pedido NÃO foi marcado erro (ex: pedido já cancelado).
+    // DISTINCT por pedido_id é feito em memória na união abaixo.
+    sb
+      .from("siso_fila_execucao")
+      .select("pedido_id, atualizado_em")
+      .eq("status", "erro")
+      .order("atualizado_em", { ascending: true })
+      .limit(MAX_DETALHE_POR_SECAO + 1),
   ]);
 
   // Devoluções
@@ -721,6 +763,43 @@ export async function montarExcecoes(
     }),
   };
 
+  // Pedidos em erro — união dedupada de pedidos status='erro' + jobs status='erro'
+  // (DISTINCT por pedido_id). Pedido tem prioridade sobre job pra origem/criado_em.
+  const pedidosErroRows = (pedidosErroQ.data ?? []) as Array<{
+    id: string;
+    criado_em: string | null;
+  }>;
+  const jobsErroRows = (jobsErroQ.data ?? []) as Array<{
+    pedido_id: string | null;
+    atualizado_em: string | null;
+  }>;
+  const erroPorPedido = new Map<string, PedidoErroCard>();
+  for (const p of pedidosErroRows) {
+    if (!p.id) continue;
+    erroPorPedido.set(p.id, {
+      pedido_id: p.id,
+      origem: "pedido",
+      criado_em: p.criado_em,
+    });
+  }
+  for (const j of jobsErroRows) {
+    if (!j.pedido_id || j.pedido_id === "MAINT") continue;
+    if (erroPorPedido.has(j.pedido_id)) continue;
+    erroPorPedido.set(j.pedido_id, {
+      pedido_id: j.pedido_id,
+      origem: "job",
+      criado_em: j.atualizado_em,
+    });
+  }
+  const pedidosErroItens = Array.from(erroPorPedido.values()).slice(
+    0,
+    MAX_DETALHE_POR_SECAO,
+  );
+  const pedidosErro = {
+    count: erroPorPedido.size,
+    itens: pedidosErroItens,
+  };
+
   return {
     devolucoes,
     transferencias_transito: transferencias,
@@ -729,6 +808,7 @@ export async function montarExcecoes(
     retroativos,
     recebimento_orfao: recebimentoOrfao,
     entradas_diretas: entradasDiretas,
+    pedidos_erro: pedidosErro,
   };
 }
 

@@ -24,6 +24,8 @@ export interface ReceberDoc {
   criado_em: string | null;
   /** custo total do documento (só manual tem; OC vem da NF downstream) */
   custo_total: number | null;
+  /** galpão do próprio documento — exibido na linha quando o grupo é misto. */
+  galpao_nome: string | null;
   /** rota da page rica de recebimento */
   href: string;
 }
@@ -45,34 +47,35 @@ export function mergeReceberDocs(
 ): ReceberFornecedorGrupo[] {
   const map = new Map<string, ReceberFornecedorGrupo>();
 
-  function grupo(fornecedor: string | null, galpaoNome: string | null): ReceberFornecedorGrupo {
+  function grupo(fornecedor: string | null): ReceberFornecedorGrupo {
     const key = fornecedor ?? "Sem fornecedor";
     let g = map.get(key);
     if (!g) {
-      g = { fornecedor: key, galpao_nome: galpaoNome, documentos: [] };
+      g = { fornecedor: key, galpao_nome: null, documentos: [] };
       map.set(key, g);
     }
-    if (!g.galpao_nome && galpaoNome) g.galpao_nome = galpaoNome;
     return g;
   }
 
   for (const oc of ocs) {
-    grupo(oc.fornecedor, oc.galpao_nome).documentos.push({
+    grupo(oc.fornecedor).documentos.push({
       origem: "oc",
       id: oc.id,
       qty_pendente: oc.qty_pendente,
       criado_em: oc.criado_em,
       custo_total: null,
+      galpao_nome: oc.galpao_nome,
       href: `/wms/receber/oc/${oc.id}`,
     });
   }
   for (const m of manuais) {
-    grupo(m.fornecedor, m.galpao_nome).documentos.push({
+    grupo(m.fornecedor).documentos.push({
       origem: "manual",
       id: m.id,
       qty_pendente: m.qty_pendente,
       criado_em: m.criado_em,
       custo_total: m.custo_total,
+      galpao_nome: m.galpao_nome,
       href: `/wms/receber/manual/${m.id}`,
     });
   }
@@ -80,6 +83,14 @@ export function mergeReceberDocs(
   const grupos = [...map.values()];
   for (const g of grupos) {
     g.documentos.sort((a, b) => (a.criado_em ?? "").localeCompare(b.criado_em ?? ""));
+    // P3-09: galpão do grupo só vale quando TODOS os docs apontam pro mesmo
+    // galpão. Docs do mesmo fornecedor com galpões distintos → 'Vários galpões'
+    // (o galpão real fica em cada linha de doc via galpao_nome).
+    const galpoes = [
+      ...new Set(g.documentos.map((d) => d.galpao_nome).filter((n): n is string => !!n)),
+    ];
+    g.galpao_nome =
+      galpoes.length === 0 ? null : galpoes.length === 1 ? galpoes[0] : "Vários galpões";
   }
   grupos.sort((a, b) => a.fornecedor.localeCompare(b.fornecedor, "pt-BR"));
   return grupos;

@@ -10,7 +10,7 @@ import {
   resolverProdutoWms,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
-import { rotearPedidoDoBanco } from "@/lib/wms/roteamento";
+import { rotearPedidoDoBanco, TIPOS_LOC_VENDAVEIS } from "@/lib/wms/roteamento";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 
@@ -196,10 +196,14 @@ export async function POST(request: NextRequest) {
       const dispPorWms = new Map<string, number>();
       const wmsIds = [...new Set(wmsPorTiny.values())];
       if (wmsIds.length > 0) {
+        // CST-01: cobertura só conta locs VENDÁVEIS (picking/overstock) —
+        // mesma regra do roteamento. Sem o filtro, saldo de quarentena
+        // bloquearia OC legítima e a reserva subsequente falharia.
         const { data: estVivo } = await supabase
           .from("siso_estoque")
-          .select("produto_id, disponivel")
-          .in("produto_id", wmsIds);
+          .select("produto_id, disponivel, siso_localizacoes!inner(tipo)")
+          .in("produto_id", wmsIds)
+          .in("siso_localizacoes.tipo", [...TIPOS_LOC_VENDAVEIS]);
         for (const e of estVivo ?? []) {
           dispPorWms.set(
             String(e.produto_id),
@@ -546,9 +550,11 @@ async function criarReservasPedido(args: {
         empresaOrigemId,
         String(item.produto_id),
       );
+      // CST-01: R só pode ser criada em loc vendável (picking/overstock).
       const locId = await buscarLocComMaiorSaldoNoGalpao(
         separacaoGalpaoId,
         produtoWmsId,
+        { apenasVendaveis: true },
       );
       if (!locId) {
         const rb = await rollbackReservas(criadas, pedidoId);

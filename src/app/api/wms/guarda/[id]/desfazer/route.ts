@@ -36,7 +36,14 @@ export async function POST(
       usuario_id: auth.user.id,
       motivo,
     });
-    return NextResponse.json({ ok: true, ...r });
+    // Mantém os campos atuais (pendencia/movsEstornadas/qtyEstornada/statusFinal)
+    // + expõe snake_case que a UI consome (additive — sem quebrar consumidores).
+    return NextResponse.json({
+      ok: true,
+      ...r,
+      qty_estornada: r.qtyEstornada,
+      status_final: r.statusFinal,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const isClient =

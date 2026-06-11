@@ -102,6 +102,13 @@ export async function POST(request: NextRequest) {
 
     const now = new Date().toISOString();
     let itensAtualizados = 0;
+    // SEP-03: itens cujo pick falhou no "encontrei" — NÃO são marcados como
+    // pegos; reportados na resposta pro operador re-tentar.
+    const itensNaoValidados: Array<{
+      item_id: string;
+      sku: string | null;
+      motivo: string;
+    }> = [];
     // Resumo da alocação da contagem parcial (só no caminho encontrei+qty_contada)
     let coberturaResp: {
       qty_contada: number;
@@ -280,6 +287,17 @@ export async function POST(request: NextRequest) {
               category: "business_logic",
               metadata: { item_id: primeiro.id, sku: primeiro.sku, loc_id: locAlvoId },
             });
+            // [INV-04] Perda bloqueada por reserva viva: a RPC
+            // wms_contagem_inline_atomica manda mensagem orientada ("libere ou
+            // realoque as reservas") — propaga como 409 em vez do 500 genérico.
+            const contMsg =
+              contErr instanceof Error ? contErr.message : String(contErr);
+            if (/abaixo do reservado/i.test(contMsg)) {
+              return NextResponse.json(
+                { error: "contagem_bloqueada_reserva", message: contMsg },
+                { status: 409 },
+              );
+            }
             return NextResponse.json(
               { error: "falhou_contagem_inline", message: "Não foi possível registrar a contagem" },
               { status: 500 },
@@ -669,12 +687,49 @@ export async function POST(request: NextRequest) {
               });
               movSaidaId = result?.movSaidaId ?? null;
             } catch (movErr) {
-              logger.warn("validar-oc-item", "pickMovPicking falhou em encontrei", {
-                item_id: item.id,
-                error: movErr instanceof Error ? movErr.message : String(movErr),
+              const msg = movErr instanceof Error ? movErr.message : String(movErr);
+              logger.logError({
+                error: movErr instanceof Error ? movErr : new Error(msg),
+                source: "validar-oc-item",
+                message: "pickMovPicking falhou em encontrei (legado) — item segue pendente p/ retry",
+                category: "business_logic",
+                metadata: { item_id: item.id, sku: item.sku },
               });
+              // Falha de pick NÃO deve marcar o item como pego (mesmo tratamento
+              // do ramo de contagem acima): sem o continue, o update compartilhado
+              // abaixo gravaria separacao_marcado/bipado_completo=true com
+              // mov_saida_id nulo (item falsamente "pego", saldo nunca debitado).
+              itensNaoValidados.push({
+                item_id: String(item.id),
+                sku: (item.sku as string | null) ?? null,
+                motivo: msg,
+              });
+              continue;
             }
           }
+        }
+
+        // Backstop fail-loud: item sem pick confirmado (ctx de pedido ausente ou
+        // pickMovPicking retornou null) NÃO entra no update compartilhado — só
+        // itens com baixa OK (movSaidaId) ou já picados antes (jaPicado/replay).
+        if (!jaPicado && !movSaidaId) {
+          const motivo =
+            ctx && ctx.galpao && ctx.empresa
+              ? "baixa de estoque não confirmada (pick não gerou movimentação)"
+              : "pedido sem empresa/galpão — não é possível dar baixa no estoque";
+          logger.logError({
+            error: new Error(motivo),
+            source: "validar-oc-item",
+            message: "encontrei sem baixa confirmada — item NÃO marcado",
+            category: "business_logic",
+            metadata: { item_id: item.id, sku: item.sku, pedido_id: item.pedido_id },
+          });
+          itensNaoValidados.push({
+            item_id: String(item.id),
+            sku: (item.sku as string | null) ?? null,
+            motivo,
+          });
+          continue;
         }
 
         const updates: Record<string, unknown> = {
@@ -789,19 +844,13 @@ export async function POST(request: NextRequest) {
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
 
-        // Qty efetiva = pedida - já pegada (parcial) - picadas em realocações.
-        // Sem essa dedução, marcar "esgotado" pediria pra OC qty que já foi
-        // separada fisicamente, gerando overstock no recebimento.
+        // Qty efetiva = pedida - já pegada (parcial). As realocações picadas JÁ
+        // estão acumuladas em quantidade_pega via wms_acumular_qty_pega — somar de
+        // novo daqui seria double-count (P3-01). A query antiga lia a coluna
+        // INEXISTENTE qty_picada (erro engolido pelo PostgREST → soma 0 "por
+        // acidente correto"); removida.
         const qtyJaPega = Number(item.quantidade_pega ?? 0);
-        const { data: realocs } = await supabase
-          .from("siso_pedido_item_realocacoes")
-          .select("qty_picada")
-          .eq("pedido_item_id", item.id)
-          .eq("status", "picado");
-        const qtyRealocsPicadas = (realocs ?? []).reduce(
-          (acc, r) => acc + Number(r.qty_picada ?? 0),
-          0,
-        );
+        const qtyRealocsPicadas = 0;
         const qtyEfetiva = Math.max(
           0,
           Number(item.quantidade_pedida ?? 0) - qtyJaPega - qtyRealocsPicadas,
@@ -972,12 +1021,27 @@ export async function POST(request: NextRequest) {
       acao,
       item_ids: normalizedIds,
       transicoes,
+      itens_nao_validados: itensNaoValidados.length,
       operador: user.nome,
     });
+
+    // SEP-03: todos os picks do "encontrei" falharam → erro explícito (a UI
+    // surfaça error+message via erroApiTexto) em vez de 200 com toast de sucesso.
+    if (acao === "encontrei" && itensAtualizados === 0 && itensNaoValidados.length > 0) {
+      return NextResponse.json(
+        {
+          error: "falha_baixa_estoque",
+          message: `Nenhum item validado — baixa de estoque falhou: ${itensNaoValidados[0].motivo}`,
+          itens_nao_validados: itensNaoValidados,
+        },
+        { status: 422 },
+      );
+    }
 
     return NextResponse.json({
       itens_atualizados: itensAtualizados,
       transicoes,
+      ...(itensNaoValidados.length > 0 ? { itens_nao_validados: itensNaoValidados } : {}),
       ...(coberturaResp ? { cobertura: coberturaResp } : {}),
     });
   } catch (err) {
@@ -1019,15 +1083,10 @@ async function enviarItemParaCompras(
   const fornecedorInfo = getFornecedorBySku(item.sku);
   const fornecedor = item.fornecedor_oc || fornecedorInfo.fornecedor;
 
-  const { data: realocs } = await supabase
-    .from("siso_pedido_item_realocacoes")
-    .select("qty_picada")
-    .eq("pedido_item_id", item.id)
-    .eq("status", "picado");
-  const qtyRealocsPicadas = (realocs ?? []).reduce(
-    (acc, r) => acc + Number(r.qty_picada ?? 0),
-    0,
-  );
+  // Realocações picadas JÁ estão acumuladas em quantidade_pega (= opts.qtyJaPega)
+  // via wms_acumular_qty_pega — somar de novo seria double-count (P3-01). A query
+  // antiga lia a coluna INEXISTENTE qty_picada (erro engolido → soma 0); removida.
+  const qtyRealocsPicadas = 0;
   const qtyEfetiva = Math.max(
     0,
     item.quantidade_pedida - opts.qtyJaPega - qtyRealocsPicadas,

@@ -18,7 +18,17 @@ import type { StatusSeparacao } from "@/types";
  * Body: { pedido_ids: string[], novo_status: StatusSeparacao }
  */
 
-const STATUS_ORDER: StatusSeparacao[] = [
+// P2-SEP-07: 'expedido' é escrito na coluna mas fica fora do type StatusSeparacao
+// (gotcha conhecido). Incluído aqui no fim da ordem pra destravar o hop reverso
+// expedido→embalado — antes 'expedido' era beco sem saída (nenhuma rota revertia).
+// O hop expedido→embalado só muda status_separacao: 'embalado' (target) está muito
+// além dos limiares de reset de pick (≤ aguardando_separacao/em_separacao/separado),
+// então NÃO dispara resetarEstadoSeparacaoItens — estoque/NF/etiqueta intactos.
+// E reverterCutoverSeRetrocedeu(novoStatus='embalado') é no-op (embalado ainda é
+// forward) → nada de estoque mexido nesse hop.
+type StatusOrdem = StatusSeparacao | "expedido";
+
+const STATUS_ORDER: StatusOrdem[] = [
   "aguardando_nf",
   "validacao_oc",
   "aguardando_separacao",
@@ -26,6 +36,7 @@ const STATUS_ORDER: StatusSeparacao[] = [
   "pendente_realocacao",
   "separado",
   "embalado",
+  "expedido",
 ];
 
 export async function POST(request: NextRequest) {
@@ -43,7 +54,7 @@ export async function POST(request: NextRequest) {
 
   // Accept both pedido_ids (array) and pedido_id (single) for backwards compat
   const pedidoIds: string[] = body?.pedido_ids ?? (body?.pedido_id ? [body.pedido_id] : []);
-  const novoStatus: StatusSeparacao | undefined = body?.novo_status;
+  const novoStatus: StatusOrdem | undefined = body?.novo_status;
 
   if (pedidoIds.length === 0 || !pedidoIds.every((id: unknown) => typeof id === "string") || !novoStatus) {
     return NextResponse.json(
@@ -72,7 +83,7 @@ export async function POST(request: NextRequest) {
   // Filter pedidos that are at a DIFFERENT status than target
   const validIds = pedidos
     .filter((p) => {
-      const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusSeparacao);
+      const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusOrdem);
       return currentIdx !== targetIdx && currentIdx >= 0;
     })
     .map((p) => p.id);
@@ -86,11 +97,11 @@ export async function POST(request: NextRequest) {
 
   // Determine direction for each pedido
   const goingBack = pedidos.some((p) => {
-    const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusSeparacao);
+    const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusOrdem);
     return currentIdx > targetIdx;
   });
   const goingForward = pedidos.some((p) => {
-    const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusSeparacao);
+    const currentIdx = STATUS_ORDER.indexOf(p.status_separacao as StatusOrdem);
     return currentIdx < targetIdx;
   });
 
@@ -167,6 +178,13 @@ export async function POST(request: NextRequest) {
       if (targetIdx <= STATUS_ORDER.indexOf("aguardando_separacao")) {
         // Full reset: usa helper compartilhado pra estornar mov_saida_id,
         // cancelar realocs, resetar parciais e registrar evento de auditoria.
+        // recriarReservas (SEP-06): o reset ressuscita as R's das S's de pick
+        // que estorna — sem isso o pedido voltava pra aguardando_separacao com
+        // 0 reservas (a RPC do reverterCutoverSeRetrocedeu abaixo pula S's já
+        // estornadas via NOT EXISTS, então não recriava nada). O reverter
+        // continua responsável pelas S's residuais do cutover (origem
+        // nf_venda não ligadas a item) + flipar estoque_lancado=false; os
+        // conjuntos são disjuntos, sem double-estorno nem R duplicada.
         const { data: itensReset } = await supabase
           .from("siso_pedido_itens")
           .select("id")
@@ -177,6 +195,7 @@ export async function POST(request: NextRequest) {
           itemIds: (itensReset ?? []).map((i) => i.id),
           usuarioId: session.id,
           motivo: "voltar_etapa",
+          recriarReservas: true,
         });
 
         // Campos não cobertos pelo helper (auditoria de embalagem)

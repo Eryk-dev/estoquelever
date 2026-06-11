@@ -654,7 +654,11 @@ async function fetchHistorico(
       sku: string;
       descricao: string;
       quantidade_recebida: number;
-      recebido_em: string | null;
+      // P3-02: a coluna siso_pedido_itens.recebido_em existe mas NUNCA é
+      // populada pelo recebimento de OC (receber-oc só seta
+      // compra_quantidade_recebida + flip de status). O único timestamp real é
+      // comprado_em. Expor como `comprado_em` (não mentir o dado como recebido).
+      comprado_em: string | null;
       origem: "oc" | "manual";
     }>;
   }>;
@@ -683,7 +687,7 @@ async function fetchHistorico(
     sku: string;
     descricao: string;
     quantidade_recebida: number;
-    recebido_em: string | null;
+    comprado_em: string | null;
     origem: "oc" | "manual";
   };
 
@@ -715,7 +719,7 @@ async function fetchHistorico(
       sku: item.sku as string,
       descricao: item.descricao as string,
       quantidade_recebida: Number(item.compra_quantidade_recebida ?? 0),
-      recebido_em: item.comprado_em as string | null,
+      comprado_em: item.comprado_em as string | null,
       origem: "oc",
     });
   }
@@ -730,11 +734,14 @@ async function fetchHistorico(
     for (const m of manuais) {
       const fornecedor = m.fornecedor?.nome ?? "Sem fornecedor";
       for (const it of m.itens) {
+        // Agrupa por data de recebimento (m.recebido_em) — semântica do grupo —
+        // mas a coluna exibida (`comprado_em`) carrega quando a compra manual
+        // foi criada, coerente com o label "Comprado em" da UI.
         addLinha(fornecedor, m.recebido_em, {
           sku: it.sku,
           descricao: it.descricao,
           quantidade_recebida: it.qty_recebida,
-          recebido_em: m.recebido_em,
+          comprado_em: m.criado_em,
           origem: "manual",
         });
       }

@@ -135,17 +135,33 @@ export async function POST(request: NextRequest) {
 
     // Por item: emite par S+L via pickMovPicking (helper NÃO é idempotente —
     // guard via mov_saida_id no item pra evitar dupla baixa em retry).
+    // ⚠ Race de double-tap permanece: o guard lê mov_saida_id ANTES do pick;
+    // dois requests simultâneos pro mesmo item podem emitir 2 pares L+S.
     let movsGeradas = 0;
     const movSaidaIds: Record<string, string> = {};
+    // Fail-loud (SEP-02): item cujo pick falhou/não rolou NÃO é marcado como
+    // pego — senão a peça sai fisicamente sem S no ledger (overselling).
+    const pickFalhas = new Map<string, string>(); // item.id → motivo
     for (const item of itemsFull ?? []) {
       if (!permitidos.has(item.pedido_id as string)) continue; // status terminal
       if (item.separacao_parcial) continue; // parcial usa fluxo separado
       if (item.mov_saida_id) continue; // já picado anteriormente (retry-safe)
-      const ctx = ctxMap.get(item.pedido_id as string);
-      if (!ctx) continue;
       const qtyJaPega = Number(item.quantidade_pega ?? 0);
       const qtyADescontar = Number(item.quantidade_pedida ?? 0) - qtyJaPega;
-      if (qtyADescontar <= 0) continue;
+      if (qtyADescontar <= 0) continue; // já 100% pego — marca sem nova mov
+      const ctx = ctxMap.get(item.pedido_id as string);
+      if (!ctx || !ctx.empresa || !ctx.galpao) {
+        logger.error("separacao-bipar-checklist", "pedido sem empresa/galpão — item NÃO marcado", {
+          pedido_item_id: item.id,
+          pedido_id: item.pedido_id,
+          sku,
+        });
+        pickFalhas.set(
+          String(item.id),
+          "pedido sem empresa/galpão — não é possível dar baixa no estoque",
+        );
+        continue;
+      }
 
       try {
         const result = await pickMovPicking({
@@ -163,21 +179,40 @@ export async function POST(request: NextRequest) {
         if (result) {
           movsGeradas++;
           movSaidaIds[String(item.id)] = result.movSaidaId;
+        } else {
+          // null silencioso do helper (contexto incompleto) — sem S, não marca.
+          logger.error("separacao-bipar-checklist", "pickMovPicking retornou null — item NÃO marcado", {
+            pedido_item_id: item.id,
+            pedido_id: item.pedido_id,
+            sku,
+          });
+          pickFalhas.set(
+            String(item.id),
+            "baixa de estoque não confirmada (pick não gerou movimentação)",
+          );
         }
       } catch (wmsErr) {
-        logger.warn("separacao-bipar-checklist", "pickMovPicking falhou (continua marcando)", {
-          error: wmsErr instanceof Error ? wmsErr.message : String(wmsErr),
-          pedido_item_id: item.id,
+        const msg = wmsErr instanceof Error ? wmsErr.message : String(wmsErr);
+        logger.logError({
+          error: wmsErr instanceof Error ? wmsErr : new Error(msg),
+          source: "separacao-bipar-checklist",
+          message: "pickMovPicking falhou — item NÃO marcado",
+          category: "business_logic",
+          metadata: { pedido_item_id: item.id, pedido_id: item.pedido_id, sku },
         });
+        pickFalhas.set(String(item.id), msg);
       }
     }
 
-    // Marca todos os itens (atualiza separacao_marcado, qty_pega, mov_saida_id).
-    // Pula itens em pedidos com status terminal e itens em parcial (preserva qty_pega).
+    // Marca os itens com baixa confirmada (atualiza separacao_marcado, qty_pega,
+    // mov_saida_id). Pula itens em pedidos com status terminal, itens em parcial
+    // (preserva qty_pega) e itens cujo pick falhou (fail-loud — ficam pendentes
+    // pro operador re-bipar após resolver o erro).
     const itensMarcadosIds: Array<string | number> = [];
     for (const item of itemsFull ?? []) {
       if (!permitidos.has(item.pedido_id as string)) continue;
       if (item.separacao_parcial) continue;
+      if (pickFalhas.has(String(item.id))) continue;
       const updates: Record<string, unknown> = {
         separacao_marcado: true,
         separacao_marcado_em: now,
@@ -189,19 +224,47 @@ export async function POST(request: NextRequest) {
       itensMarcadosIds.push(item.id as string | number);
     }
 
-    const { data: updated } = await supabase
-      .from("siso_pedido_itens")
-      .select()
-      .in("id", itensMarcadosIds.length > 0 ? itensMarcadosIds : itemIds);
-
     logger.info("separacao-bipar-checklist", "Items marcados via bip", {
       sku,
       pedido_ids,
       items_encontrados: itemIds.length,
       items_marcados: itensMarcadosIds.length,
       items_skipados_status: itensSkipStatus,
+      items_nao_bipados: pickFalhas.size,
       movs_geradas: movsGeradas,
     });
+
+    // Fail-loud: algum pick falhou → 422 com o motivo por item. Os itens que
+    // tiveram baixa OK JÁ foram marcados acima; os falhos seguem pendentes no
+    // checklist pro operador re-bipar. A UI surfaça `error` no scanFeedback.
+    if (pickFalhas.size > 0) {
+      const naoBipados = [...pickFalhas.entries()].map(([itemId, motivo]) => {
+        const it = (itemsFull ?? []).find((i) => String(i.id) === itemId);
+        return {
+          item_id: itemId,
+          pedido_id: (it?.pedido_id as string | undefined) ?? null,
+          sku: (it?.sku as string | undefined) ?? null,
+          motivo,
+        };
+      });
+      const head =
+        itensMarcadosIds.length > 0
+          ? `${itensMarcadosIds.length} item(ns) bipado(s); ${naoBipados.length} sem baixa de estoque`
+          : "Falha ao dar baixa no estoque — nenhum item bipado";
+      return NextResponse.json(
+        {
+          error: `${head}: ${naoBipados[0].motivo}`,
+          nao_bipados: naoBipados,
+          itens_marcados: itensMarcadosIds.length,
+        },
+        { status: 422 },
+      );
+    }
+
+    const { data: updated } = await supabase
+      .from("siso_pedido_itens")
+      .select()
+      .in("id", itensMarcadosIds.length > 0 ? itensMarcadosIds : itemIds);
 
     return NextResponse.json(updated ?? []);
   } catch (err) {

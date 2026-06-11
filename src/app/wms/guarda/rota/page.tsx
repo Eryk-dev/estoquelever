@@ -322,7 +322,13 @@ function PendenciaCard({
   const terminal =
     pendencia.status === "guardada" || pendencia.status === "cancelada";
 
-  const [qtyInput, setQtyInput] = useState(String(pendencia.qty_pendente));
+  // Teto físico real do que dá pra guardar agora: min(qty_pendente, saldo livre
+  // na loc de recebimento). Pode ser < qty_pendente se um pick consumiu a peça
+  // antes da guarda. Fallback pra qty_pendente quando ausente.
+  const aGuardar = pendencia.a_guardar ?? pendencia.qty_pendente;
+  const consumidoPorPicks = Math.max(0, pendencia.qty_pendente - aGuardar);
+
+  const [qtyInput, setQtyInput] = useState(String(aGuardar));
   const [destinoOverride, setDestinoOverride] = useState<{
     id: string;
     codigo: string;
@@ -332,10 +338,10 @@ function PendenciaCard({
 
   // Pendência muda (refetch após resolver alguém) → reseta estado local
   useEffect(() => {
-    setQtyInput(String(pendencia.qty_pendente));
+    setQtyInput(String(aGuardar));
     setDestinoOverride(null);
     setTrocandoLoc(false);
-  }, [pendencia.id, pendencia.qty_pendente]);
+  }, [pendencia.id, pendencia.qty_pendente, aGuardar]);
 
   const { data: locsResp } = useLocalizacoes(pendencia.galpao_id);
   const locsByCodigo = useMemo(() => {
@@ -422,11 +428,16 @@ function PendenciaCard({
       return (await r.json()) as {
         ok: boolean;
         totalmente_guardada: boolean;
+        auto_encerrada?: boolean;
         pendencia: PendenciaJoined;
       };
     },
     onSuccess: (r) => {
-      if (r.totalmente_guardada) {
+      if (r.auto_encerrada) {
+        // Pick consumiu o saldo da loc de recebimento antes da guarda — a RPC
+        // encerrou a pendência sem mov. Não é parcial.
+        toast.info("Pick consumiu o saldo — pendência encerrada sem guarda");
+      } else if (r.totalmente_guardada) {
         toast.success(`✓ ${pendencia.produto?.sku ?? "guarda"}`);
       } else {
         toast.success(
@@ -715,11 +726,20 @@ function PendenciaCard({
             className="wms-input wms-mono wms-tar"
             type="number"
             min="1"
-            max={pendencia.qty_pendente}
+            max={aGuardar}
             value={qtyInput}
             onChange={(e) => setQtyInput(e.target.value)}
             style={{ fontSize: 20, fontWeight: 700, padding: "12px 10px" }}
           />
+          {consumidoPorPicks > 0 && (
+            <div
+              className="wms-td-mute"
+              style={{ fontSize: 10.5, marginTop: 4 }}
+            >
+              <Icon name="alert" size={9} /> {fmtNum(consumidoPorPicks)} un
+              consumidas por picks — guarde {fmtNum(aGuardar)}
+            </div>
+          )}
         </div>
         <button
           type="button"

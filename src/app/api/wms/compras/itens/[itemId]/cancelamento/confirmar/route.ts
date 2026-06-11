@@ -6,7 +6,88 @@ import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { checkAndCancelPedidoIfAllTerminal } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
-import { liberarReserva } from "@/lib/wms/reservas";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * P2-CMP-04: libera APENAS as reservas vivas do PRODUTO do item informado —
+ * `liberarReserva({pedido_id})` derrubava a R de TODOS os itens do pedido
+ * (multi-item compartilham pedido_id). Resolve o uuid WMS do produto (gotcha
+ * #1: siso_produto_empresas por tiny_produto_id + empresa_origem_id), busca as
+ * R vivas (sem L apontando) desse produto e estorna cada uma individualmente.
+ * Produto não-resolvível → warn + não libera nada (conservador).
+ */
+async function liberarReservasDoProdutoDoItem(
+  supabase: SupabaseClient,
+  args: {
+    pedido_id: string;
+    tiny_produto_id: string;
+    empresa_origem_id: string | null;
+    usuario_id: string;
+    source: string;
+  },
+): Promise<number> {
+  if (!args.empresa_origem_id) {
+    logger.warn(args.source, "sem empresa_origem_id — não libera reserva (conservador)", {
+      pedido_id: args.pedido_id,
+    });
+    return 0;
+  }
+  let produtoWmsId: string;
+  try {
+    produtoWmsId = await resolverProdutoWms(args.empresa_origem_id, args.tiny_produto_id);
+  } catch (e) {
+    logger.warn(args.source, "produto não resolvível — não libera reserva (conservador)", {
+      pedido_id: args.pedido_id,
+      tiny_produto_id: args.tiny_produto_id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return 0;
+  }
+
+  const { data: reservas, error: rErr } = await supabase
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("tipo", "R")
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("origem_id", args.pedido_id)
+    .eq("produto_id", produtoWmsId);
+  if (rErr) {
+    logger.warn(args.source, "falha buscando R do produto (segue)", {
+      pedido_id: args.pedido_id,
+      error: rErr.message,
+    });
+    return 0;
+  }
+  const ids = (reservas ?? []).map((r) => r.id as string);
+  if (ids.length === 0) return 0;
+
+  // "Viva" = sem L (estorno_de) apontando pra ela.
+  const { data: ls } = await supabase
+    .from("siso_movimentacoes")
+    .select("estorno_de")
+    .eq("tipo", "L")
+    .in("estorno_de", ids);
+  const liberadas = new Set(
+    (ls ?? []).map((l) => l.estorno_de as string | null).filter((x): x is string => !!x),
+  );
+
+  let liberados = 0;
+  for (const id of ids) {
+    if (liberadas.has(id)) continue;
+    try {
+      await estornarReservaIndividual({ reserva_id: id, motivo: "outro", usuario_id: args.usuario_id });
+      liberados++;
+    } catch (e) {
+      logger.warn(args.source, "falha estornando R individual (segue)", {
+        reserva_id: id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  return liberados;
+}
 
 /**
  * POST /api/compras/itens/[itemId]/cancelamento/confirmar
@@ -80,24 +161,26 @@ export async function POST(
     let pedidosLiberados: string[] = [];
     if (!pedidoCancelado) {
       pedidosLiberados = await checkAndReleasePedidos([itemId]);
-      // P039: o pedido segue vivo (multi-item) mas a R criada pra ESTE item
-      // (via reconciliador-oc) fica órfã. liberarReserva é pedido-scoped.
-      try {
-        const liberadas = await liberarReserva({
-          pedido_id: String(item.pedido_id),
-          motivo: "cancelamento",
-          usuario_id: session.id,
-        });
-        logger.info("compras-cancelamento-confirmar", "Rs liberadas no cancelamento de item", {
-          pedido_id: item.pedido_id,
-          item_id: itemId,
-          liberadas,
-        });
-      } catch (e) {
-        logger.warn("compras-cancelamento-confirmar", "falha liberando R (segue)", {
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
+      // P039 + P2-CMP-04: o pedido segue vivo (multi-item) e a R criada pra
+      // ESTE item (via reconciliador-oc) fica órfã. Libera SÓ a R do produto
+      // deste item — não a do pedido inteiro (que derrubaria os outros itens).
+      const { data: pedidoR } = await supabase
+        .from("siso_pedidos")
+        .select("empresa_origem_id")
+        .eq("id", item.pedido_id)
+        .maybeSingle();
+      const liberadas = await liberarReservasDoProdutoDoItem(supabase, {
+        pedido_id: String(item.pedido_id),
+        tiny_produto_id: String(item.produto_id),
+        empresa_origem_id: (pedidoR?.empresa_origem_id as string | null) ?? null,
+        usuario_id: session.id,
+        source: "compras-cancelamento-confirmar",
+      });
+      logger.info("compras-cancelamento-confirmar", "Rs liberadas no cancelamento de item", {
+        pedido_id: item.pedido_id,
+        item_id: itemId,
+        liberadas,
+      });
     }
 
     await registrarEvento({

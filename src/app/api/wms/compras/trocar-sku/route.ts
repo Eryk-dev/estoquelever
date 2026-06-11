@@ -4,18 +4,18 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan } from "@/lib/permissions";
-import { buscarProdutoPorSku, getEstoque, getProdutoDetalhe } from "@/lib/tiny-api";
-import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
-import { runWithEmpresa } from "@/lib/tiny-queue";
-import { getEmpresasDoGrupo } from "@/lib/grupo-resolver";
 import { registrarEventos } from "@/lib/historico-service";
 
 /**
  * POST /api/compras/trocar-sku
  *
  * Swaps the SKU of a pedido item to an equivalent product.
- * Looks up the new product in Tiny across all group empresas,
- * updates description, image, stock, and supplier.
+ * Resolves the new product via the WMS catalog (siso_produtos +
+ * siso_produto_empresas) and applies the tiny_produto_id of EACH item's
+ * pedido empresa_origem (gotcha #1: siso_pedido_itens.produto_id é o
+ * tiny_produto_id da empresa do pedido — não pode ser o de outra empresa).
+ * Items whose empresa has no Tiny mapping for the new SKU are NOT swapped
+ * and are reported back in `itens_nao_trocados`.
  * Does NOT auto-release the pedido — the operator decides.
  *
  * Body: {
@@ -46,7 +46,8 @@ export async function POST(request: NextRequest) {
   const supabase = createServiceClient();
 
   try {
-    // Get items and their pedidos
+    // Get items and their pedidos (empresa_origem por item — pode haver
+    // itens de pedidos de empresas diferentes no mesmo lote)
     const { data: items, error: fetchErr } = await supabase
       .from("siso_pedido_itens")
       .select("id, pedido_id, produto_id, sku, quantidade_pedida, siso_pedidos(empresa_origem_id)")
@@ -61,158 +62,125 @@ export async function POST(request: NextRequest) {
 
     const novoFornecedor = getFornecedorBySku(novoSku);
 
-    const firstItem = items[0] as unknown as {
-      id: string;
-      pedido_id: string;
-      produto_id: number;
-      quantidade_pedida: number;
-      siso_pedidos: { empresa_origem_id: string } | null;
-    };
-    const empresaOrigemId = firstItem.siso_pedidos?.empresa_origem_id;
+    // Produto novo no catálogo WMS (caso normal de troca: SKU já catalogado).
+    const { data: produtoNovo } = await supabase
+      .from("siso_produtos")
+      .select("id, descricao, imagem_url")
+      .eq("sku", novoSku)
+      .maybeSingle();
 
-    if (!empresaOrigemId) {
+    if (!produtoNovo) {
       return NextResponse.json(
-        { error: "Pedido sem empresa de origem" },
-        { status: 400 },
-      );
-    }
-
-    // Get empresa's group
-    const { data: grupoRel } = await supabase
-      .from("siso_grupo_empresas")
-      .select("grupo_id")
-      .eq("empresa_id", empresaOrigemId)
-      .single();
-
-    const empresasDoGrupo = grupoRel
-      ? await getEmpresasDoGrupo(grupoRel.grupo_id)
-      : [];
-
-    // Get deposito IDs for each empresa
-    const { data: connections } = await supabase
-      .from("siso_tiny_connections")
-      .select("empresa_id, deposito_id")
-      .eq("ativo", true);
-    const depositoMap = new Map<string, number | null>();
-    for (const c of connections ?? []) {
-      depositoMap.set(c.empresa_id, c.deposito_id);
-    }
-
-    // Look up the new product in each empresa
-    let novaDescricao: string | null = null;
-    let novaImagem: string | null = null;
-    let novoProdutoId: number | null = null;
-    const novosEstoques: Array<{
-      pedido_id: string;
-      produto_id: number;
-      empresa_id: string;
-      deposito_id: number | null;
-      deposito_nome: string | null;
-      saldo: number;
-      reservado: number;
-      disponivel: number;
-      localizacao: string | null;
-      produto_id_na_empresa: number | null;
-    }> = [];
-
-    const empresasParaConsultar = empresasDoGrupo.length > 0
-      ? empresasDoGrupo
-      : [{ empresaId: empresaOrigemId, galpaoId: "", galpaoNome: "", empresaNome: "", tier: 1 }];
-
-    for (const emp of empresasParaConsultar) {
-      try {
-        const { token } = await getValidTokenByEmpresa(emp.empresaId);
-        const produto = await runWithEmpresa(emp.empresaId, () =>
-          buscarProdutoPorSku(token, novoSku),
-        );
-
-        if (!produto) continue;
-
-        // Get image from first empresa that has the product
-        if (!novaDescricao) {
-          novaDescricao = produto.descricao ?? null;
-          novoProdutoId = produto.id;
-          try {
-            const detalhe = await runWithEmpresa(emp.empresaId, () =>
-              getProdutoDetalhe(token, produto.id),
-            );
-            novaImagem = detalhe.imagemUrl;
-          } catch {
-            // Image fetch failed, not critical
-          }
-        }
-
-        const estoque = await runWithEmpresa(emp.empresaId, () =>
-          getEstoque(token, produto.id),
-        );
-
-        const depositoId = depositoMap.get(emp.empresaId) ?? null;
-        const depositos = estoque.depositos ?? [];
-        const dep = depositoId != null
-          ? depositos.find((d) => d.id === depositoId) ?? null
-          : depositos[0] ?? null;
-
-        const saldo = dep?.saldo ?? 0;
-        const reservado = dep?.reservado ?? 0;
-
-        // Add stock row for each pedido_id that has this item
-        for (const item of items) {
-          novosEstoques.push({
-            pedido_id: item.pedido_id as string,
-            produto_id: produto.id,
-            empresa_id: emp.empresaId,
-            deposito_id: dep?.id ?? null,
-            deposito_nome: dep?.nome ?? null,
-            saldo,
-            reservado,
-            disponivel: saldo - reservado,
-            localizacao: estoque.localizacao ?? null,
-            produto_id_na_empresa: produto.id,
-          });
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    if (!novoProdutoId) {
-      return NextResponse.json(
-        { error: `SKU "${novoSku}" não encontrado em nenhuma empresa do grupo` },
+        { error: `SKU "${novoSku}" não encontrado no catálogo WMS (siso_produtos)` },
         { status: 404 },
       );
     }
 
-    // Update siso_pedido_itens with new SKU, description, image
-    const { error: updateErr } = await supabase
-      .from("siso_pedido_itens")
-      .update({
-        sku: novoSku,
-        descricao: novaDescricao,
-        imagem_url: novaImagem,
-        produto_id: novoProdutoId,
-        fornecedor_oc: novoFornecedor.fornecedor,
-      })
-      .in("id", itemIds);
+    // Mapping Tiny por empresa (bridge siso_produto_empresas).
+    const { data: mappings, error: mapErr } = await supabase
+      .from("siso_produto_empresas")
+      .select("empresa_id, tiny_produto_id")
+      .eq("produto_id", produtoNovo.id)
+      .eq("ativo", true);
 
-    if (updateErr) {
-      throw new Error(`Erro ao atualizar itens: ${updateErr.message}`);
+    if (mapErr) {
+      throw new Error(`Erro ao buscar mapeamentos Tiny: ${mapErr.message}`);
     }
 
-    const pedidoIds = [...new Set(items.map((i) => i.pedido_id as string))];
+    const tinyPorEmpresa = new Map<string, number>();
+    for (const m of mappings ?? []) {
+      tinyPorEmpresa.set(m.empresa_id as string, Number(m.tiny_produto_id));
+    }
 
-    // (Fase 1.4) REMOVIDO: delete/upsert de siso_pedido_item_estoques no swap
-    // de SKU. Tabela dropada — estoque do novo SKU é lido vivo de siso_estoque.
+    type ItemRow = {
+      id: string;
+      pedido_id: string;
+      sku: string;
+      siso_pedidos: { empresa_origem_id: string | null } | null;
+    };
+    const itemsTyped = items as unknown as ItemRow[];
 
-    // Audit trail: 1 evento compra_sku_trocado por pedido afetado.
+    // Agrupa itens por empresa_origem do pedido dono; itens cuja empresa não
+    // tem mapping do SKU novo NÃO são trocados (fail loud, sem troca parcial
+    // silenciosa com tiny id errado).
+    const itensPorEmpresa = new Map<string, ItemRow[]>();
+    const naoTrocados: Array<{
+      item_id: string;
+      pedido_id: string;
+      motivo: string;
+    }> = [];
+
+    for (const item of itemsTyped) {
+      const empresaId = item.siso_pedidos?.empresa_origem_id ?? null;
+      if (!empresaId) {
+        naoTrocados.push({
+          item_id: String(item.id),
+          pedido_id: item.pedido_id,
+          motivo: "Pedido sem empresa de origem",
+        });
+        continue;
+      }
+      if (!tinyPorEmpresa.has(empresaId)) {
+        naoTrocados.push({
+          item_id: String(item.id),
+          pedido_id: item.pedido_id,
+          motivo: `SKU "${novoSku}" sem mapeamento Tiny pra empresa ${empresaId} (siso_produto_empresas)`,
+        });
+        continue;
+      }
+      const lista = itensPorEmpresa.get(empresaId) ?? [];
+      lista.push(item);
+      itensPorEmpresa.set(empresaId, lista);
+    }
+
+    if (itensPorEmpresa.size === 0) {
+      logger.warn("compras-trocar-sku", "Nenhum item pôde ser trocado", {
+        novoSku,
+        naoTrocados,
+      });
+      return NextResponse.json(
+        {
+          error: `Nenhum item pôde ser trocado: SKU "${novoSku}" sem mapeamento Tiny pras empresas dos pedidos`,
+          itens_nao_trocados: naoTrocados,
+        },
+        { status: 422 },
+      );
+    }
+
+    // Update por empresa — cada grupo recebe o tiny_produto_id DA SUA empresa.
+    const trocadosIds: string[] = [];
+    for (const [empresaId, itensEmpresa] of itensPorEmpresa) {
+      const tinyId = tinyPorEmpresa.get(empresaId)!;
+      const ids = itensEmpresa.map((i) => i.id);
+      const { error: updateErr } = await supabase
+        .from("siso_pedido_itens")
+        .update({
+          sku: novoSku,
+          descricao: produtoNovo.descricao ?? null,
+          imagem_url: produtoNovo.imagem_url ?? null,
+          produto_id: tinyId,
+          fornecedor_oc: novoFornecedor.fornecedor,
+        })
+        .in("id", ids);
+
+      if (updateErr) {
+        throw new Error(
+          `Erro ao atualizar itens da empresa ${empresaId}: ${updateErr.message}`,
+        );
+      }
+      trocadosIds.push(...ids.map(String));
+    }
+
+    // Audit trail: 1 evento compra_sku_trocado por pedido afetado (só itens
+    // efetivamente trocados).
+    const trocadosSet = new Set(trocadosIds);
+    const itensTrocados = itemsTyped.filter((i) => trocadosSet.has(String(i.id)));
+    const pedidoIds = [...new Set(itensTrocados.map((i) => i.pedido_id))];
+
     if (pedidoIds.length > 0) {
-      const itemsTyped = items as unknown as Array<{
-        id: string;
-        pedido_id: string;
-        sku: string;
-      }>;
       await registrarEventos(
         pedidoIds.map((pedidoId) => {
-          const itensDoPedido = itemsTyped.filter((i) => i.pedido_id === pedidoId);
+          const itensDoPedido = itensTrocados.filter((i) => i.pedido_id === pedidoId);
           const skuAnterior = itensDoPedido[0]?.sku ?? null;
           return {
             pedidoId,
@@ -220,7 +188,7 @@ export async function POST(request: NextRequest) {
             usuarioId: session.id,
             usuarioNome: session.nome,
             detalhes: {
-              item_ids: itensDoPedido.map((i) => i.id),
+              item_ids: itensDoPedido.map((i) => String(i.id)),
               sku_anterior: skuAnterior,
               novo_sku: novoSku,
               novo_fornecedor: novoFornecedor.fornecedor,
@@ -230,19 +198,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (naoTrocados.length > 0) {
+      logger.warn("compras-trocar-sku", "Itens NÃO trocados — sem mapeamento Tiny da empresa", {
+        novoSku,
+        naoTrocados,
+      });
+    }
+
     logger.info("compras-trocar-sku", "SKU trocado com sucesso", {
-      itemIds,
+      itemIds: trocadosIds,
       novoSku,
-      novoProdutoId,
       novoFornecedor: novoFornecedor.fornecedor,
-      estoques: novosEstoques.length,
+      naoTrocados: naoTrocados.length,
     });
 
     return NextResponse.json({
       ok: true,
       novo_sku: novoSku,
       novo_fornecedor: novoFornecedor.fornecedor,
-      descricao: novaDescricao,
+      descricao: produtoNovo.descricao ?? null,
+      itens_trocados: trocadosIds,
+      itens_nao_trocados: naoTrocados,
     });
   } catch (err) {
     logger.error("compras-trocar-sku", "Erro ao trocar SKU", {

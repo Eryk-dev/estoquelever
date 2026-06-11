@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -8,7 +14,6 @@ import { wmsApi } from "@/lib/wms/api-client";
 import {
   Card,
   Icon,
-  Pagination,
   StatusBadge,
   LocTipoBadge,
   fmtBRL,
@@ -75,14 +80,17 @@ export function ProdutoDrawer({
 }) {
   const [tab, setTab] = useState<TabId>("overview");
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
-  // Derive-during-render: reseta a paginação quando o produto muda
-  // sem usar useEffect (padrão recomendado pelo React).
-  const [movsPage, setMovsPage] = useState(1);
+  // Paginação keyset por cursor (evita duplicar/pular linhas que o offset
+  // causava quando novas movs entram entre páginas). `movsCursors` é a pilha
+  // de cursores `before` — índice 0 = cursor da página atual ("" = primeira).
+  // Derive-during-render: reseta quando o produto muda (sem useEffect).
+  const [movsCursors, setMovsCursors] = useState<string[]>([""]);
   const [movsPageFor, setMovsPageFor] = useState(produtoId);
   if (movsPageFor !== produtoId) {
     setMovsPageFor(produtoId);
-    setMovsPage(1);
+    setMovsCursors([""]);
   }
+  const movsBefore = movsCursors[0] ?? "";
   const MOVS_PAGE_SIZE = 100;
   const modals = useWmsModals();
 
@@ -109,13 +117,17 @@ export function ProdutoDrawer({
   });
 
   const ledgerQuery = useQuery({
-    queryKey: ["wms-produto-ledger", produtoId, movsPage],
-    queryFn: () =>
-      wmsApi<{ rows: MovComposite[]; total: number }>(
-        `/api/wms/ledger?produto_id=${produtoId}&limit=${MOVS_PAGE_SIZE}&offset=${
-          (movsPage - 1) * MOVS_PAGE_SIZE
-        }`,
-      ),
+    queryKey: ["wms-produto-ledger", produtoId, movsBefore],
+    queryFn: () => {
+      const sp = new URLSearchParams({
+        produto_id: produtoId,
+        limit: String(MOVS_PAGE_SIZE),
+      });
+      if (movsBefore) sp.set("before", movsBefore);
+      return wmsApi<{ rows: MovComposite[]; total: number }>(
+        `/api/wms/ledger?${sp}`,
+      );
+    },
   });
 
   const coberturaQuery = useQuery({
@@ -140,9 +152,20 @@ export function ProdutoDrawer({
   const agregado = estoqueQuery.data?.rows[0];
   const linhas = agregado?.itens ?? [];
   const movs = ledgerQuery.data?.rows ?? [];
-  const movsTotal = ledgerQuery.data?.total ?? 0;
   const cobertura = coberturaQuery.data?.[0];
   const ultimasContagens = ultimasContagensQuery.data?.rows ?? [];
+
+  // Keyset: página atual = profundidade da pilha; há mais se a página veio cheia.
+  const movsPageNum = movsCursors.length;
+  const movsHasNext = movs.length === MOVS_PAGE_SIZE;
+  const movsHasPrev = movsCursors.length > 1;
+  const goMovsNext = () => {
+    const last = movs[movs.length - 1];
+    if (!last) return;
+    setMovsCursors((cur) => [`${last.criado_em}|${last.id}`, ...cur]);
+  };
+  const goMovsPrev = () =>
+    setMovsCursors((cur) => (cur.length > 1 ? cur.slice(1) : cur));
 
   const saldo = agregado ? Number(agregado.saldo) : 0;
   const reservado = agregado ? Number(agregado.reservado) : 0;
@@ -341,10 +364,11 @@ export function ProdutoDrawer({
                 <Movimentacoes
                   movs={movs}
                   contagens={ultimasContagens}
-                  total={movsTotal}
-                  pageSize={MOVS_PAGE_SIZE}
-                  page={movsPage}
-                  onPageChange={setMovsPage}
+                  page={movsPageNum}
+                  hasNext={movsHasNext}
+                  hasPrev={movsHasPrev}
+                  onNext={goMovsNext}
+                  onPrev={goMovsPrev}
                 />
               )}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
@@ -699,40 +723,65 @@ function EstoquePorLocal({
 function Movimentacoes({
   movs,
   contagens,
-  total,
-  pageSize,
   page,
-  onPageChange,
+  hasNext,
+  hasPrev,
+  onNext,
+  onPrev,
 }: {
   movs: MovComposite[];
   contagens: UltimaContagemProduto[];
-  total: number;
-  pageSize: number;
   page: number;
-  onPageChange: (p: number) => void;
+  hasNext: boolean;
+  hasPrev: boolean;
+  onNext: () => void;
+  onPrev: () => void;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <ContagensInventario contagens={contagens} />
       {movs.length === 0 ? (
         <div className="wms-exp-empty" style={{ padding: 24 }}>
-          Sem movimentações no ledger.
+          {hasPrev
+            ? "Fim do histórico."
+            : "Sem movimentações no ledger."}
         </div>
       ) : (
-        <>
-          <div className="wms-ledger-list">
-            {movs.map((m) => (
-              <LedgerRow key={m.id} m={m} />
-            ))}
-          </div>
-          <Pagination
-            total={total}
-            pageSize={pageSize}
-            page={page}
-            onPageChange={onPageChange}
-            label="movimentações"
-          />
-        </>
+        <div className="wms-ledger-list">
+          {movs.map((m) => (
+            <LedgerRow key={m.id} m={m} />
+          ))}
+        </div>
+      )}
+      {(hasPrev || hasNext) && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+            gap: 8,
+          }}
+        >
+          <span className="wms-td-mute" style={{ fontSize: 12 }}>
+            Página {page}
+          </span>
+          <button
+            className="wms-btn wms-btn-sm wms-btn-ghost"
+            onClick={onPrev}
+            disabled={!hasPrev}
+          >
+            <Icon name="chevron-l" size={11} />
+            Anterior
+          </button>
+          <button
+            className="wms-btn wms-btn-sm wms-btn-ghost"
+            onClick={onNext}
+            disabled={!hasNext}
+          >
+            Próxima
+            <Icon name="chevron-r" size={11} />
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1904,7 +1953,14 @@ function LedgerMini({ m }: { m: MovComposite }) {
   );
 }
 
-export function LedgerRow({ m }: { m: MovComposite }) {
+export function LedgerRow({
+  m,
+  action,
+}: {
+  m: MovComposite;
+  /** Slot opcional de ação por linha (ex.: estornar ajuste manual). */
+  action?: ReactNode;
+}) {
   const tipos = {
     E: { lbl: "Entrada", cls: "ok", sign: "+" },
     S: { lbl: "Saída", cls: "danger", sign: "−" },
@@ -1998,8 +2054,16 @@ export function LedgerRow({ m }: { m: MovComposite }) {
           → <strong>{fmtNum(Number(m.saldo_posterior))}</strong>
         </div>
       </div>
-      <div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 6,
+        }}
+      >
         <span className="wms-badge wms-badge-mute">{m.origem_tipo}</span>
+        {action}
       </div>
     </div>
   );

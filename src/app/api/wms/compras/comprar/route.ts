@@ -13,8 +13,13 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
  * Qty is consolidated by SKU — distributed across order items by aging (oldest first).
  *
  * Body: {
- *   itens: Array<{ sku: string, quantidade_comprada: number }>
+ *   itens: Array<{ sku: string, quantidade_comprada: number, galpao_id?: string, preco_unitario?: number }>
  * }
+ *
+ * `galpao_id` (escolhido pelo comprador) define o galpão de recebimento da OC —
+ * itens do mesmo fornecedor+galpão consolidam numa OC só. Sem ele, fallback no
+ * galpão do pedido (comportamento legado, usado pelos cenários E2E).
+ * `preco_unitario` é gravado em compra_preco_unitario e sugere o custo no recebimento.
  *
  * Only comprador or admin can call this.
  */
@@ -33,7 +38,12 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const itens = body.itens as
-    | Array<{ sku: string; quantidade_comprada: number }>
+    | Array<{
+        sku: string;
+        quantidade_comprada: number;
+        galpao_id?: string | null;
+        preco_unitario?: number | null;
+      }>
     | undefined;
   const fornecedorOc =
     typeof body.fornecedor_oc === "string" && body.fornecedor_oc.trim().length > 0
@@ -45,6 +55,15 @@ export async function POST(request: NextRequest) {
       { error: "Envie { itens: [{ sku, quantidade_comprada }] }" },
       { status: 400 },
     );
+  }
+
+  for (const it of itens) {
+    if (it.preco_unitario != null && !(Number(it.preco_unitario) > 0)) {
+      return NextResponse.json(
+        { error: `Preço unitário inválido pro SKU ${it.sku}` },
+        { status: 400 },
+      );
+    }
   }
 
   const supabase = createServiceClient();
@@ -63,12 +82,50 @@ export async function POST(request: NextRequest) {
   // Per-pedido audit aggregator (1 evento compra_item_comprado por pedido).
   const eventosPorPedido = new Map<
     string,
-    { qty: number; skus: string[] }
+    {
+      qty: number;
+      skus: string[];
+      ajustes_solicitada: Array<{
+        item_id: string;
+        sku: string;
+        solicitada_anterior: number;
+        solicitada_nova: number;
+      }>;
+    }
   >();
+  // Pedidos cujo separacao_galpao_id precisa seguir o galpão escolhido pelo
+  // comprador — senão a entrada chega num galpão e o reconciliador-oc procura
+  // o pedido no outro (match por siso_pedidos.separacao_galpao_id) e nunca destrava.
+  const pedidosGalpao = new Map<string, string>();
+  // P2-CMP-08: primeiro galpão escolhido por pedido na rodada (determinístico).
+  // Pedido multi-SKU com galpões escolhidos diferentes → mantém o primeiro + warn.
+  const galpaoEscolhidoPorPedido = new Map<string, string>();
+  // P3-11: cache empresa_id → galpão preferencial, populado sob demanda mas no
+  // máximo 1 query por empresa (mata o N+1 do SELECT por item). undefined = não
+  // resolvido ainda; null = resolvido e sem preferencial.
+  const galpaoPreferencialPorEmpresa = new Map<string, string | null>();
+  async function resolverGalpaoPreferencial(
+    empresaId: string,
+  ): Promise<string | null> {
+    if (galpaoPreferencialPorEmpresa.has(empresaId)) {
+      return galpaoPreferencialPorEmpresa.get(empresaId) ?? null;
+    }
+    const { data: pref } = await supabase
+      .from("siso_empresa_galpoes_preferenciais")
+      .select("galpao_id")
+      .eq("empresa_id", empresaId)
+      .limit(1)
+      .maybeSingle();
+    const gid = (pref?.galpao_id as string | null) ?? null;
+    galpaoPreferencialPorEmpresa.set(empresaId, gid);
+    return gid;
+  }
 
   try {
-    for (const { sku, quantidade_comprada } of itens) {
+    for (const { sku, quantidade_comprada, galpao_id, preco_unitario } of itens) {
       if (!sku || quantidade_comprada <= 0) continue;
+      const galpaoEscolhido =
+        typeof galpao_id === "string" && galpao_id.length > 0 ? galpao_id : null;
 
       // Fetch all order items for this SKU that are aguardando_compra.
       // Include fornecedor_oc + pedido.empresa_origem_id + pedido.separacao_galpao_id
@@ -125,15 +182,11 @@ export async function POST(request: NextRequest) {
           separacao_galpao_id?: string | null;
         } | null;
         const empresaOrigemId = pedidoData?.empresa_origem_id ?? null;
-        let galpaoId = pedidoData?.separacao_galpao_id ?? null;
+        // Galpão escolhido pelo comprador manda; fallback legado no galpão do
+        // pedido (cenários E2E ainda mandam payload sem galpao_id).
+        let galpaoId = galpaoEscolhido ?? pedidoData?.separacao_galpao_id ?? null;
         if (!galpaoId && empresaOrigemId) {
-          const { data: pref } = await supabase
-            .from("siso_empresa_galpoes_preferenciais")
-            .select("galpao_id")
-            .eq("empresa_id", empresaOrigemId)
-            .limit(1)
-            .maybeSingle();
-          galpaoId = (pref?.galpao_id as string | null) ?? null;
+          galpaoId = await resolverGalpaoPreferencial(empresaOrigemId);
         }
 
         const ocId = await findOrCreateOC(supabase, {
@@ -152,9 +205,20 @@ export async function POST(request: NextRequest) {
           comprado_por: session.id,
           comprado_por_nome: session.nome,
         };
+        // CMP-01: compra parcial (comprada < solicitada) — ajusta a solicitada
+        // pra baixo (= comprada) no mesmo UPDATE. O flip pra 'recebido'
+        // (receber-oc.ts / compras/receber) e o release usam SOLICITADA; sem o
+        // ajuste o item comprado parcial nunca fecha. O restante da demanda
+        // volta a ser visto pela necessidade viva (emTransito cai junto).
+        const compraParcial = qtyParaEsteItem < qtySolicitada;
+        if (compraParcial) {
+          updatePayload.compra_quantidade_solicitada = qtyParaEsteItem;
+        }
         if (ocId) updatePayload.ordem_compra_id = ocId;
         // P6 #6.29/#3.11 — persiste fornecedor escolhido no body pra audit.
         if (fornecedorOc) updatePayload.fornecedor_oc = fornecedorOc;
+        if (preco_unitario != null)
+          updatePayload.compra_preco_unitario = Number(preco_unitario);
 
         const { error: updateErr } = await supabase
           .from("siso_pedido_itens")
@@ -175,9 +239,45 @@ export async function POST(request: NextRequest) {
         alocado += qtyParaEsteItem;
 
         const pedidoId = item.pedido_id as string;
-        const cur = eventosPorPedido.get(pedidoId) ?? { qty: 0, skus: [] };
+        if (galpaoEscolhido) {
+          const escolhaAnterior = galpaoEscolhidoPorPedido.get(pedidoId);
+          if (escolhaAnterior && escolhaAnterior !== galpaoEscolhido) {
+            // P2-CMP-08: mesmo pedido com SKUs comprados pra galpões DIFERENTES
+            // na mesma rodada — mantém o PRIMEIRO (determinístico). A entrada
+            // do outro SKU não vai casar no reconciliador (match por
+            // siso_pedidos.separacao_galpao_id).
+            logger.warn(
+              "compras-comprar",
+              "Pedido multi-SKU com galpões escolhidos diferentes na mesma rodada — mantendo o primeiro",
+              {
+                pedido_id: pedidoId,
+                galpao_mantido: escolhaAnterior,
+                galpao_ignorado: galpaoEscolhido,
+                sku,
+              },
+            );
+          } else if (!escolhaAnterior) {
+            galpaoEscolhidoPorPedido.set(pedidoId, galpaoEscolhido);
+            if (pedidoData?.separacao_galpao_id !== galpaoEscolhido) {
+              pedidosGalpao.set(pedidoId, galpaoEscolhido);
+            }
+          }
+        }
+        const cur = eventosPorPedido.get(pedidoId) ?? {
+          qty: 0,
+          skus: [],
+          ajustes_solicitada: [],
+        };
         cur.qty += qtyParaEsteItem;
         if (!cur.skus.includes(sku)) cur.skus.push(sku);
+        if (compraParcial) {
+          cur.ajustes_solicitada.push({
+            item_id: String(item.id),
+            sku,
+            solicitada_anterior: qtySolicitada,
+            solicitada_nova: qtyParaEsteItem,
+          });
+        }
         eventosPorPedido.set(pedidoId, cur);
       }
 
@@ -187,6 +287,51 @@ export async function POST(request: NextRequest) {
         quantidade_alocada: alocado,
         quantidade_excedente: Math.max(remaining, 0),
       });
+    }
+
+    // Re-aponta separacao_galpao_id dos pedidos pro galpão escolhido pelo
+    // comprador (batch por galpão). Sem isso o reconciliador-oc nunca casa a
+    // entrada com o pedido.
+    // CMP-02: guarda de status — só repontar pedido parado no fluxo de compra.
+    // Espelha compras-release (aguardando_compra/comprado) + validacao_oc
+    // (estado pré-separação do fluxo OC; reconciliador-oc transiciona
+    // validacao_oc/aguardando_compra). Pedido misto em separação ativa NÃO é
+    // repontado — senão some da wave do galpão atual com item já na bancada.
+    if (pedidosGalpao.size > 0) {
+      const statusPermitidos = ["aguardando_compra", "validacao_oc", "comprado"];
+      const porGalpao = new Map<string, string[]>();
+      for (const [pedidoId, gId] of pedidosGalpao) {
+        const lista = porGalpao.get(gId) ?? [];
+        lista.push(pedidoId);
+        porGalpao.set(gId, lista);
+      }
+      for (const [gId, pedidoIds] of porGalpao) {
+        const { data: repontados, error: galpErr } = await supabase
+          .from("siso_pedidos")
+          .update({ separacao_galpao_id: gId })
+          .in("id", pedidoIds)
+          .in("status_separacao", statusPermitidos)
+          .select("id");
+        if (galpErr) {
+          logger.error(
+            "compras-comprar",
+            "Erro ao re-apontar galpão de separação dos pedidos",
+            { error: galpErr.message, galpao_id: gId, pedido_ids: pedidoIds },
+          );
+          continue;
+        }
+        const repontadosSet = new Set(
+          (repontados ?? []).map((p) => p.id as string),
+        );
+        const pulados = pedidoIds.filter((id) => !repontadosSet.has(id));
+        if (pulados.length > 0) {
+          logger.warn(
+            "compras-comprar",
+            "Pedidos fora do fluxo de compra — separacao_galpao_id NÃO repontado",
+            { galpao_id: gId, pedido_ids: pulados },
+          );
+        }
+      }
     }
 
     // Confirma as OCs desta rodada: 'aguardando_compra' → 'comprado' (mesma
@@ -221,6 +366,10 @@ export async function POST(request: NextRequest) {
           detalhes: {
             qty_total: info.qty,
             skus: info.skus,
+            // CMP-01: audit do ajuste de solicitada em compra parcial.
+            ...(info.ajustes_solicitada.length > 0
+              ? { ajustes_solicitada: info.ajustes_solicitada }
+              : {}),
           },
         })),
       );
@@ -280,6 +429,21 @@ async function findOrCreateOC(
     .select("id")
     .single();
   if (error) {
+    // P3-06: corrida — outra request criou a OC aberta (fornecedor, galpao)
+    // entre o SELECT e o INSERT. O índice único uq_oc_aberta_fornecedor_galpao
+    // dispara 23505; re-seleciona e reusa a OC existente em vez de falhar.
+    if (error.code === "23505") {
+      let reQuery = supabase
+        .from("siso_ordens_compra")
+        .select("id")
+        .eq("fornecedor", fornecedor)
+        .eq("status", "aguardando_compra")
+        .limit(1);
+      if (galpaoId) reQuery = reQuery.eq("galpao_id", galpaoId);
+      else if (empresaId) reQuery = reQuery.eq("empresa_id", empresaId);
+      const { data: vencedora } = await reQuery.maybeSingle();
+      if (vencedora) return vencedora.id as string;
+    }
     logger.warn("compras-comprar", "Erro criando OC", {
       error: error.message,
       fornecedor,

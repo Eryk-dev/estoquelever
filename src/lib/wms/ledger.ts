@@ -271,6 +271,44 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
     tripla.galpao_id
   ) {
     void (async () => {
+      // P3-25: o backstop durável SEMPRE é enfileirado (não só no catch). O
+      // inline fire-and-forget tem latência baixa mas pode ser congelado pela
+      // serverless antes de rodar (sem waitUntil) — nesse caso só o job durável
+      // garante que a varredura/reconciliação acontece. O reconciliador tem
+      // claim CAS (idempotente), então rodar inline + job não duplica reserva.
+      // Dedup: pula se já há job 'varredura_pos_entrada' pendente pro mesmo
+      // (produto, galpão) — evita enfileirar N jobs em entradas em rajada.
+      try {
+        const { data: jobPendente } = await sb
+          .from("siso_fila_execucao")
+          .select("id")
+          .eq("tipo", "varredura_pos_entrada")
+          .eq("status", "pendente")
+          .eq("payload->>produto_id", tripla.produto_id)
+          .eq("payload->>galpao_id", tripla.galpao_id)
+          .limit(1)
+          .maybeSingle();
+        if (!jobPendente) {
+          const { enfileirarJobManutencao } = await import("./jobs-manutencao");
+          await enfileirarJobManutencao({
+            tipo: "varredura_pos_entrada",
+            payload: {
+              produto_id: tripla.produto_id,
+              galpao_id: tripla.galpao_id,
+              localizacao_id: tripla.localizacao_id,
+            },
+          });
+        }
+      } catch (enqErr) {
+        // Falha ao enfileirar o backstop não pode derrubar o caminho de escrita
+        // (a mov já foi gravada). Loga e segue pro inline.
+        logger.warn("ledger", "falha ao enfileirar backstop durável pós-entrada", {
+          error: enqErr instanceof Error ? enqErr.message : String(enqErr),
+        });
+      }
+
+      // Inline (latência baixa): roda a varredura/reconciliação já. Se falhar,
+      // o job durável acima cobre. Erros não fatais.
       try {
         const { varrerPedidosAfetadosPorEntrada } = await import(
           "./varredura-validacao-oc"
@@ -289,20 +327,10 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
         });
       } catch (err) {
         // P082/P149: a varredura/reconciliação inline falhou (transitório de
-        // banco). Antes só logava e desistia — pedido OC ficava preso e o banner
-        // "saldo apareceu" nunca surgia. Agora enfileira um job durável (retry
-        // 30s/5min/10min no worker) pra reexecutar a varredura.
-        logger.warn("ledger", "varredura pós-entrada falhou inline — enfileirando job durável", {
+        // banco). O job durável já está enfileirado (backstop), então aqui só
+        // logamos — o worker reexecuta (retry 30s/5min/10min).
+        logger.warn("ledger", "varredura pós-entrada falhou inline — backstop durável já enfileirado", {
           error: err instanceof Error ? err.message : String(err),
-        });
-        const { enfileirarJobManutencao } = await import("./jobs-manutencao");
-        await enfileirarJobManutencao({
-          tipo: "varredura_pos_entrada",
-          payload: {
-            produto_id: tripla.produto_id,
-            galpao_id: tripla.galpao_id,
-            localizacao_id: tripla.localizacao_id,
-          },
         });
       }
     })();
@@ -324,6 +352,11 @@ export async function inserirMovimentacao(input: InserirMovInput): Promise<Movim
  * - estoque dos componentes na MESMA galpao+localizacao da tripla do kit
  *   (limitação: kit "vendido" tem que ter os componentes no mesmo local
  *   físico — ou o chamador passa triplas alternativas)
+ *
+ * NOTA (P3-21): sem callers em produção hoje — a compensação abaixo foi
+ * adicionada preventivamente. Se a baixa de um componente falhar no meio do
+ * loop, os componentes já baixados são estornados (ordem reversa) antes de
+ * relançar — sem isso, um kit ficava meio-baixado (saldo inconsistente).
  */
 export async function venderKit(input: {
   kit: Tripla;
@@ -363,36 +396,67 @@ export async function venderKit(input: {
 
   const origemId = input.origem_id ?? crypto.randomUUID();
   const movs: Movimentacao[] = [];
+  // Usuário do estorno de compensação: o do caller ou o sistema (uuid-zero
+  // seedado em 20260611m) — estornarMovimentacao exige usuario_id uuid (FK).
+  const usuarioCompensacao =
+    input.usuario_id ?? "00000000-0000-0000-0000-000000000000";
   for (const c of composicao as Array<{
     componente_produto_id: string;
     quantidade: number;
   }>) {
-    const mov = await inserirMovimentacao({
-      tripla: {
-        ...input.kit,
-        produto_id: c.componente_produto_id,
-      },
-      tipo: "S",
-      qty: Number(c.quantidade) * input.qtyKits,
-      origem_tipo: input.origem_tipo,
-      origem_id: origemId,
-      origem_detalhes: {
-        ...(input.origem_detalhes ?? {}),
-        kit_produto_id: input.kit.produto_id,
-        kit_sku: (prod as { sku: string }).sku,
-        kit_qty: input.qtyKits,
-        kit_componente: true,
-      },
-      pedido_id: input.pedido_id ?? null,
-      nota_fiscal_id: input.nota_fiscal_id ?? null,
-      empresa_vendedora_id: input.empresa_vendedora_id ?? null,
-      custo_unitario: input.custo_unitario,
-      usuario_id: input.usuario_id,
-      motivo:
-        input.motivo ??
-        `Venda de ${input.qtyKits} kit ${(prod as { sku: string }).sku}`,
-    });
-    movs.push(mov);
+    try {
+      const mov = await inserirMovimentacao({
+        tripla: {
+          ...input.kit,
+          produto_id: c.componente_produto_id,
+        },
+        tipo: "S",
+        qty: Number(c.quantidade) * input.qtyKits,
+        origem_tipo: input.origem_tipo,
+        origem_id: origemId,
+        origem_detalhes: {
+          ...(input.origem_detalhes ?? {}),
+          kit_produto_id: input.kit.produto_id,
+          kit_sku: (prod as { sku: string }).sku,
+          kit_qty: input.qtyKits,
+          kit_componente: true,
+        },
+        pedido_id: input.pedido_id ?? null,
+        nota_fiscal_id: input.nota_fiscal_id ?? null,
+        empresa_vendedora_id: input.empresa_vendedora_id ?? null,
+        custo_unitario: input.custo_unitario,
+        usuario_id: input.usuario_id,
+        motivo:
+          input.motivo ??
+          `Venda de ${input.qtyKits} kit ${(prod as { sku: string }).sku}`,
+      });
+      movs.push(mov);
+    } catch (err) {
+      // Compensação (P3-21): estorna as S já criadas em ordem reversa antes de
+      // relançar — evita kit meio-baixado. Falhas no estorno são absorvidas
+      // (logger.logError) pra não mascarar o erro original que disparou tudo.
+      for (const m of movs.slice().reverse()) {
+        try {
+          await estornarMovimentacao({
+            mov_id: (m as { id: string }).id,
+            usuario_id: usuarioCompensacao,
+            motivo: `Compensação venderKit (falha de componente) ${origemId}`,
+          });
+        } catch (compErr) {
+          logger.logError({
+            error: compErr,
+            source: "wms.ledger.venderKit",
+            message: `Falha ao estornar S de compensação ${(m as { id: string }).id}`,
+            category: "business_logic",
+            metadata: { origem_id: origemId, kit_produto_id: input.kit.produto_id },
+          });
+        }
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `venderKit: falha ao baixar componente ${c.componente_produto_id} — S anteriores estornadas: ${msg}`,
+      );
+    }
   }
   return movs;
 }

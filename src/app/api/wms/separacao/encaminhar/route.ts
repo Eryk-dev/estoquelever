@@ -145,10 +145,32 @@ async function encaminharPedido(
     throw new Error("Não é possível encaminhar para o mesmo galpão");
   }
 
-  // B2. Reverse stock execution
+  // B2. Reverse stock execution (libera R vivas)
   await reverseStockExecution(supabase, pedido, session.id);
 
-  // B3. Reset pedido to pendente
+  // P2-SEP-04: ESTORNAR as S do pick ANTES de mexer no pedido. Antes, o pedido
+  // virava pendente + galpão=null PRIMEIRO; se o reset (estorno das S) falhasse
+  // depois, o pedido ficava re-roteável com S vivas no galpão antigo (saldo
+  // fantasma). Se o reset lançar agora, o catch do caller registra em falhas[]
+  // e o pedido permanece INTACTO no estado atual — nada move.
+  //
+  // (estorna mov_saida_id, cancela realocs, reseta 10 campos do item, registra evento).
+  // Mantém o reset de campos legados (estoque_saida_lancada, empresa_deducao_id, quantidade_bipada)
+  // que o helper não cobre (aplicado após o UPDATE).
+  const { data: pedidoItens } = await supabase
+    .from("siso_pedido_itens")
+    .select("id")
+    .eq("pedido_id", pedidoId);
+  const itemIdsTodos = (pedidoItens ?? []).map((i) => i.id);
+
+  await resetarEstadoSeparacaoItens({
+    supabase,
+    itemIds: itemIdsTodos,
+    usuarioId: session.id,
+    motivo: "encaminhar",
+  });
+
+  // B3. Reset pedido to pendente — só depois das S estornadas.
   // NF fields (nota_fiscal_id, chave_acesso_nf, url_danfe) are intentionally
   // NOT cleared — the NF belongs to the pedido regardless of destination.
   // Shipping artifacts (agrupamento, expedicao, etiqueta ZPL/URL) are PRESERVED —
@@ -185,23 +207,6 @@ async function encaminharPedido(
   if (updateErr) {
     throw new Error(`Falha ao resetar pedido: ${updateErr.message}`);
   }
-
-  // Reset item-level separation state via shared helper
-  // (estorna mov_saida_id, cancela realocs, reseta 10 campos do item, registra evento).
-  // Mantém o reset de campos legados (estoque_saida_lancada, empresa_deducao_id, quantidade_bipada)
-  // que o helper não cobre.
-  const { data: pedidoItens } = await supabase
-    .from("siso_pedido_itens")
-    .select("id")
-    .eq("pedido_id", pedidoId);
-  const itemIdsTodos = (pedidoItens ?? []).map((i) => i.id);
-
-  await resetarEstadoSeparacaoItens({
-    supabase,
-    itemIds: itemIdsTodos,
-    usuarioId: session.id,
-    motivo: "encaminhar",
-  });
 
   // Reset campos legados não cobertos pelo helper
   await supabase

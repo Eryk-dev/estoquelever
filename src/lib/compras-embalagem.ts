@@ -39,6 +39,12 @@ export interface PrepararPedidosParaEmbalagemResult {
 
 export async function prepararPedidosDasOcsParaEmbalagem(params: {
   ordemCompraIds: string[];
+  /**
+   * Quando presente, restringe o efeito a estes pedidos (ex.: cross-dock —
+   * só os pedidos com TODOS os itens OC já recebidos). Sem ele, deriva e
+   * processa todos os pedidos packable das OCs (comportamento original).
+   */
+  pedidoIds?: string[];
   usuarioId?: string | null;
   usuarioNome?: string | null;
 }): Promise<PrepararPedidosParaEmbalagemResult> {
@@ -65,9 +71,15 @@ export async function prepararPedidosDasOcsParaEmbalagem(params: {
     throw new Error(`Erro ao buscar pedidos das OCs: ${linkedError.message}`);
   }
 
+  const pedidoIdsPermitidos = params.pedidoIds
+    ? new Set(params.pedidoIds)
+    : null;
   const pedidoIds = [...new Set(
     ((linkedRows ?? []) as PedidoLinkRow[])
       .filter((row) => row.compra_status !== "cancelado")
+      .filter(
+        (row) => !pedidoIdsPermitidos || pedidoIdsPermitidos.has(row.pedido_id),
+      )
       .map((row) => row.pedido_id),
   )];
 

@@ -22,6 +22,37 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: cross-rpc-cluster-skus-ausente-staging
+    date: "2026-06-10"
+    source: wms.cross
+    category: database
+    message: >
+      módulo cross não funcionava no staging (equivalentes-rápidos, has-cross e
+      busca por cluster retornavam vazio/erro) — funcionava na versão de prod
+    cause: >
+      a RPC siso_cross_cluster_skus (expande cluster de SKUs equivalentes via
+      OEM compartilhado + links manuais, recursiva) existia só no banco de PROD
+      (wrbrbhuhsaaupqsimkqz); o staging (ehbxpbeijofxtsbezwxd) nunca recebeu a
+      function — não havia migration dela no repo. Tabelas e índices do catálogo
+      eram idênticos; só a RPC faltava. De quebra, o staging tinha drift de dados:
+      5.000 linhas de siso_produto_veiculos (cauda do import bulk de 2026-05-07,
+      ids 96948-97948, 111952-113971, 114975-115974, 120985-121987) e 1 linha de
+      siso_produto_oems (id 92944) faltando.
+    fix: >
+      criada migration 20260610e_rpc_siso_cross_cluster_skus.sql portando a
+      definição de prod (pg_get_functiondef) e aplicada no staging. Dados
+      faltantes copiados de prod via Management API (insert por range de id com
+      on conflict do nothing; adicionado_por anulado quando o usuário não existe
+      no staging) + setval das sequences. Contagens conferidas: 118.833 veiculos
+      e 46.385 oems nos dois bancos.
+    files:
+      - supabase/migrations/20260610e_rpc_siso_cross_cluster_skus.sql
+    tags: [cross, rpc, staging, drift, siso_cross_cluster_skus, catalogo]
+    notes: >
+      sintoma clássico de "funciona em prod, quebra em staging" = artefato de
+      banco criado à mão em prod sem migration. Ao portar módulo que depende de
+      RPC, conferir pg_proc nos dois projetos.
+
   - id: dropdown-transparente-var-css-inexistente
     date: "2026-06-10"
     source: wms.separacao
@@ -4562,6 +4593,38 @@ erros:
     - src/app/wms/separacao/checklist/page.tsx
   tags: [separacao, validacao-oc, encontrei, parcial, contagem, concluir, compras]
 
+- id: COMPRAS-COMPRAR-SPLIT-OC-POR-GALPAO-DO-PEDIDO
+  date: 2026-06-10
+  source: compras
+  category: business_logic
+  message: "Compra de 5 un do mesmo fornecedor dividia em 2 OCs (3 CWB + 2 SP) sem o comprador escolher"
+  cause: >
+    POST /compras/comprar resolvia o galpão da OC pelo separacao_galpao_id de
+    cada pedido vinculado (find-or-create por fornecedor+galpão). Pedidos do
+    mesmo SKU roteados pra galpões diferentes fragmentavam a compra em N OCs,
+    cada uma recebendo num galpão que o comprador não escolheu. Preço também
+    não existia na compra — custo só era digitado no recebimento, sem
+    referência do que foi negociado.
+  fix: >
+    Modal de confirmação em /wms/compras (aba Comprar): comprador define
+    galpão destino (default = galpão sugerido do fornecedor) e preço unitário
+    (obrigatório na UI) por item. Backend aceita galpao_id + preco_unitario
+    por item: galpao_id manda no find-or-create da OC (consolida fornecedor+
+    galpão numa OC só) e re-aponta siso_pedidos.separacao_galpao_id quando
+    difere — sem isso o reconciliador-oc (match por separacao_galpao_id)
+    nunca destravaria o pedido quando a entrada chega no galpão escolhido.
+    preco_unitario vai pra coluna nova siso_pedido_itens.compra_preco_unitario
+    (migration 20260610d) e pré-preenche o custo no recebimento da OC
+    (GET /receber/oc/[id] → preco_compra). Payload antigo (sem os campos)
+    segue funcionando — cenários E2E usam o fallback legado.
+  files:
+    - src/app/api/wms/compras/comprar/route.ts
+    - src/app/wms/compras/page.tsx
+    - src/app/api/wms/receber/oc/[id]/route.ts
+    - src/app/wms/receber/oc/[id]/page.tsx
+    - supabase/migrations/20260610d_compra_preco_unitario.sql
+  tags: [compras, oc, galpao, preco, split, reconciliador-oc, recebimento]
+
 - id: ETIQUETA-CHAVE-ACESSO-NF-WEBHOOK-PERDIDO
   date: 2026-06-10
   source: etiquetas
@@ -4600,3 +4663,724 @@ erros:
   files:
     - src/app/api/wms/separacao/bipar-embalagem-oc/route.ts
   tags: [separacao, embalagem-oc, bipar, schema, coluna-inexistente]
+
+# ============================================================
+# LIMPA 2026-06-11 — correções P0/P1 do diagnóstico de módulos
+# (plano: docs/superpowers/plans/2026-06-11-limpa-diagnostico-modulos.md)
+# ============================================================
+
+- id: limpa-p0-01-desmarcar-wave-consolidada-estorna-total
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Desmarcar item coberto por mov S consolidada de wave estornava a mov inteira (E de 5 pra fração de 2)"
+  cause: >
+    parcial (modo item) cria 1 mov S única pro wave com links rateados;
+    wms_desmarcar_item_atomico estornava v_s.quantidade (total da mov), não
+    link.qty. Estoque fantasma = frações dos outros pedidos do wave.
+  fix: >
+    Migration 20260611d: RPC aceita p_qty_link + p_pedido_item_id; quando
+    informados, estorna PARCIALMENTE a fração (E com origem_detalhes.parcial=true
+    + pedido_item_id como chave de idempotência, qty_estornada interop com
+    wms_estornar_parcial_movimentacao) e recria R clampada (semântica D4).
+    marcar-item itera TODOS os links saida passando link.qty. Aplicada no staging.
+  files:
+    - supabase/migrations/20260611d_rpc_desmarcar_item_parcial.sql
+    - src/app/api/wms/separacao/marcar-item/route.ts
+  tags: [separacao, desmarcar, wave, parcial, estorno, ledger, estoque-fantasma]
+
+- id: limpa-p0-02-inventario-recontagem-soma-contagens-abandonadas
+  date: 2026-06-11
+  source: inventario
+  category: business_logic
+  message: "Recontagem de loc devolvida ao pool somava com contagens da tentativa abandonada (ganho falso)"
+  cause: >
+    recovery (cron 30min) e sairParty regrediam a loc pra 'pendente' sem limpar
+    siso_inventario_contagens; reconciliarTemporal soma TODAS as rows da tripla;
+    próximo operador (tela zerada) contava tudo de novo → contado 16 pra 10 físicos.
+  fix: >
+    descartarContagensDeLocsDevolvidas: DELETE das contagens da (sessao, loc)
+    ANTES de regredir pra pendente, nos 4 pontos (sairParty + 3 blocos do cron),
+    com logger.warn de auditoria (rows/operadores/qty). Falha no descarte aborta
+    a liberação (não solta loc com rows fantasma).
+  files:
+    - src/lib/wms/inventario.ts
+    - src/lib/wms/inventario-recovery.ts
+  tags: [inventario, recovery, contagem, soma-dupla, estoque-fantasma, party]
+
+- id: limpa-sep-01-estornar-liberacao-reserva-rejeitada
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "mov já é um estorno (estorno_de=...) — toda recriação de R via estornarMovimentacao falhava silenciosa"
+  cause: >
+    L de liberacao_reserva carrega estorno_de=R.id; ledger.estornarMovimentacao
+    rejeita "já é um estorno". 4 callers (desfazer-parcial, race-losers do parcial
+    item/realoc, marcar-realocacao) faziam warn-and-continue; o helper correto
+    estornarLiberacaoReserva tinha ZERO callers. Reserva perdida pra sempre.
+  fix: >
+    4 callers trocados pra estornarLiberacaoReserva (idempotente, recria R com
+    TTL 30d); falhas viram logger.logError (business_logic) em vez de warn;
+    desfazer-parcial só deleta links de liberação após estorno com sucesso.
+  files:
+    - src/app/api/wms/separacao/desfazer-parcial/route.ts
+    - src/app/api/wms/separacao/parcial/route.ts
+    - src/app/api/wms/separacao/marcar-realocacao/route.ts
+  tags: [separacao, reserva, liberacao, estorno, desfazer-parcial, realocacao]
+
+- id: limpa-sep-02-bipar-checklist-marca-com-pick-falho
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Bipe de checklist marcava item como pego mesmo com baixa de estoque falhando (peça sai sem S no ledger)"
+  cause: >
+    catch do pickMovPicking só fazia logger.warn e o loop marcava todo item com
+    quantidade_pega=pedida sem checar movSaidaIds; null silencioso (sem
+    empresa/galpão) também marcava. marcar-item já era fail-loud; este ficou pra trás.
+  fix: >
+    Mapa pickFalhas (ctx ausente / pick null / exceção) → item NÃO marcado, fica
+    pendente pro re-bipe; resposta 422 com nao_bipados[{item_id,sku,motivo}].
+    logger.logError no lugar de warn. Race de double-tap documentada (permanece;
+    ver P2-SEP-05 do plano).
+  files:
+    - src/app/api/wms/separacao/bipar-checklist/route.ts
+  tags: [separacao, bipar, checklist, pick, fail-loud, overselling]
+
+- id: limpa-sep-03-encontrei-legado-marca-com-pick-falho
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "'Encontrei' legado (validar-oc-item sem qty_contada) marcava item OC como pego com pick falho"
+  cause: >
+    ramo de contagem tinha continue ("Falha de pick NÃO deve marcar"); o caminho
+    legado só logava warn e caía no update compartilhado (separacao_marcado=true,
+    quantidade_pega=pedida, mov_saida_id null).
+  fix: >
+    Mesmo tratamento do ramo de contagem: logger.logError + push em
+    itens_nao_validados + continue; backstop !jaPicado && !movSaidaId antes do
+    update compartilhado; 422 falha_baixa_estoque quando todos os picks falham.
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+  tags: [separacao, validacao-oc, encontrei, pick, fail-loud]
+
+- id: limpa-sep-04-parcial-libera-r-antes-rpc-sem-compensacao
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "falha_pick_parcial 409 deixava reservas do wave liberadas permanentemente (overselling)"
+  cause: >
+    parcial passo 7a emite L (liberarReservaPicking) por pedido ANTES do RPC
+    wms_pick_parcial_atomico; em erro do RPC retornava 409 sem reverter nenhuma L.
+  fix: >
+    Caminho de erro compensa: re-reserva via estornarLiberacaoReserva pra cada L
+    do 7a; falha de compensação → logger.logError com lista + 409 instrutivo com
+    reservas_nao_recriadas. (Mover pra dentro do RPC foi avaliado e descartado —
+    exigiria repassar N reservas do wave como array.)
+  files:
+    - src/app/api/wms/separacao/parcial/route.ts
+  tags: [separacao, parcial, reserva, compensacao, overselling]
+
+- id: limpa-sep-05-parcial-realoc-libera-r-total-sem-residual
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Parcial modo realocação liberava 100% da R cascade de todos os pedidos (mesmo picked=0) e não re-reservava residual"
+  cause: >
+    fix #50144/#50189 (guard picked===0 + re-reserva residual em !loc_zerou) foi
+    aplicado só no modo item; o modo realocação manteve o comportamento antigo.
+  fix: >
+    Portados os dois comportamentos pro modo realocação: distribuição FCFS movida
+    pra antes do 7a, guard picked===0 mantém R intacta, residual re-reservado na
+    mesma tripla via criarReservaCascade (TTL 30d). loc_zerou=true inalterado.
+  files:
+    - src/app/api/wms/separacao/parcial/route.ts
+  tags: [separacao, parcial, realocacao, reserva, residual]
+
+- id: limpa-sep-06-voltar-etapa-reset-nao-recria-reservas
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Voltar etapa de separado pra trás deixava pedido em aguardando_separacao com 0 reservas"
+  cause: >
+    resetarEstadoSeparacaoItens estornava as S ANTES de reverterCutoverSeRetrocedeu;
+    a RPC wms_reverter_cutover_atomico pula S já estornadas (NOT EXISTS) → recriava
+    0 R. Mesmo leak em /reiniciar (onde estoque_lancado=false faz a RPC no-opar).
+  fix: >
+    reset-state ganhou opt-in recriarReservas: ressuscita R de cada link
+    liberacao_reserva via estornarLiberacaoReserva + estorna links reserva_cascade
+    residuais (anti-duplicata). voltar-etapa e reiniciar passam true; encaminhar/
+    esgotado ficam false (pedido sai do galpão). Inverter a ordem era insuficiente:
+    S de realocação (sem origem_id, só realoc.mov_saida_id) escapam da RPC.
+  files:
+    - src/lib/separacao/reset-state.ts
+    - src/app/api/wms/separacao/voltar-etapa/route.ts
+    - src/app/api/wms/separacao/reiniciar/route.ts
+  tags: [separacao, voltar-etapa, reiniciar, reset, reserva, cutover]
+
+- id: limpa-sep-07-job-pos-nf-stale-baixa-dupla
+  date: 2026-06-11
+  source: worker
+  category: business_logic
+  message: "Job lancar_estoque_pos_nf stale convertia R recriada em S fantasma após voltar-etapa (baixa dupla)"
+  cause: >
+    reverterCutoverSeRetrocedeu não cancelava jobs pendentes na fila;
+    executarEstoquePosNfWms não re-checava status do pedido — convertia qualquer
+    R viva em L+S e setava estoque_lancado=true mesmo em pedido regredido.
+  fix: >
+    (a) reverter cancela jobs lancar_estoque_pos_nf status=pendente do pedido
+    (padrão do pedido-cancel-handler); (b) gate no início do executar: pedido
+    cancelado OU status_separacao fora de {aguardando_nf, separado, embalado,
+    expedido} → no-op com logger.warn, job concluido. Caminhos legítimos
+    (aguardando_nf→aguardando_separacao e cutover forward) intactos.
+  files:
+    - src/lib/wms/cutover.ts
+    - src/lib/execution-worker-wms.ts
+  tags: [worker, fila, pos-nf, cutover, voltar-etapa, baixa-dupla]
+
+- id: limpa-sep-08-mover-etapa-ui-transicoes-invalidas
+  date: 2026-06-11
+  source: separacao
+  category: validation
+  message: "'Mover etapa' oferecia aguardando_compra como origem/destino — API retornava 400 sempre"
+  cause: >
+    MOVE_TARGETS da UI incluía aguardando_compra; STATUS_ORDER do voltar-etapa
+    não contém esse status (target inválido OU currentIdx=-1).
+  fix: >
+    Removido aguardando_compra dos MOVE_TARGETS (origem e destino). Botão "Mover…"
+    não renderiza na tab Aguard. OC (mesmo padrão da tab pendente_realocacao).
+    API intocada.
+  files:
+    - src/app/wms/separacao/page.tsx
+  tags: [separacao, ui, mover-etapa, voltar-etapa]
+
+- id: limpa-cmp-01-compra-parcial-dead-end
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Item comprado parcialmente (comprada < solicitada) ficava preso em 'comprado' pra sempre; OC eternamente pendente"
+  cause: >
+    comprar gravava compra_quantidade_comprada=min(...) sem ajustar
+    compra_quantidade_solicitada; flip pra 'recebido' e release usam SOLICITADA;
+    reconciliador não pega item 'comprado'. UI sugere necessidade líquida (< solicitada)
+    naturalmente → dead-end de fábrica.
+  fix: >
+    Quando comprada < solicitada, o mesmo UPDATE ajusta solicitada=comprada;
+    ajuste auditado em detalhes.ajustes_solicitada do evento compra_item_comprado.
+    Necessidade viva re-expõe o restante (emTransito reduz pro comprado real).
+  files:
+    - src/app/api/wms/compras/comprar/route.ts
+  tags: [compras, oc, compra-parcial, recebimento, dead-end]
+
+- id: limpa-cmp-02-repoint-galpao-sem-guarda-status
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Comprar item escolhendo galpão repontava separacao_galpao_id de pedido em separação ativa (pedido sumia da wave)"
+  cause: >
+    UPDATE batch de separacao_galpao_id sem filtrar status_separacao (feature
+    galpão+preço); compras-release faz o mesmo repoint COM guarda. Bônus:
+    last-write-wins pra pedido multi-SKU comprado pra galpões distintos.
+  fix: >
+    Guarda .in(status_separacao, [aguardando_compra, validacao_oc, comprado])
+    no UPDATE; pedidos pulados logados com warn. First-wins determinístico por
+    pedido na rodada, escolha conflitante descartada com warn explícito.
+  files:
+    - src/app/api/wms/compras/comprar/route.ts
+  tags: [compras, comprar, galpao, repoint, separacao, status]
+
+- id: limpa-cmp-03-crossdock-flipa-todos-pedidos-oc
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Cross-dock confirmado flipava TODOS os pedidos packable da OC pra 'separado' sem pick"
+  cause: >
+    crossdock-trigger calculava pedidosSeparados (filtro todosRecebidos) e
+    DESCARTAVA — prepararPedidosDasOcsParaEmbalagem({ordemCompraIds}) re-derivava
+    todos os pedidos da OC e marcava itens sem mov S.
+  fix: >
+    prepararPedidosDasOcsParaEmbalagem ganhou param opcional pedidoIds (filtra os
+    derivados); trigger passa a lista filtrada. Outro caller (preparar-embalagem)
+    sem o param = comportamento preservado.
+  files:
+    - src/lib/wms/crossdock-trigger.ts
+    - src/lib/compras-embalagem.ts
+  tags: [compras, crossdock, embalagem, separado, pick-fantasma]
+
+- id: limpa-cmp-04-trocar-sku-tiny-id-empresa-errada
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "trocar-sku gravava tiny_produto_id da PRIMEIRA empresa do grupo em itens de pedidos de empresas diferentes (OC irrecebível)"
+  cause: >
+    loop setava novoProdutoId da primeira empresa que retornava o produto na API
+    Tiny e aplicava a todos os itemIds. Viola gotcha #1 (produto_id =
+    tiny_produto_id da empresa do pedido); recebimento não resolvia o mapping → rollback.
+  fix: >
+    Resolução via catálogo WMS (siso_produtos por sku → siso_produto_empresas por
+    empresa), agrupando itens por empresa_origem_id do pedido dono; 1 UPDATE por
+    empresa. Fail-loud: empresa sem mapping → itens não trocados reportados em
+    itens_nao_trocados (toast warning na UI); lookup via API Tiny removido (dead code).
+  files:
+    - src/app/api/wms/compras/trocar-sku/route.ts
+    - src/app/wms/compras/page.tsx
+  tags: [compras, trocar-sku, tiny-produto-id, produto-empresas, gotcha-1]
+
+- id: limpa-est-01-guarda-parcial-uq-estorno-unico
+  date: 2026-06-11
+  source: guarda
+  category: database
+  message: "23505 uq_mov_estorno_unico na 2ª confirmação parcial de guarda (e no cancelar pós-parcial)"
+  cause: >
+    L 'liberacao_guarda' inseridos com p_estorno_de=R.id e origem_detalhes NULL;
+    o índice só exclui estorno_de duplicado quando origem_detalhes.parcial='true'
+    → 2º L na MESMA R colidia. Guarda parcial em 2+ locs sempre quebrava.
+  fix: >
+    Migration 20260611g: wms_confirmar_guarda_atomico e
+    wms_cancelar_pendencia_guarda_atomico marcam TODOS os L de liberação com
+    origem_detalhes.parcial=true (proteção contra double-release vem da própria
+    RPC: FOR UPDATE + LEAST recomputado; o índice nunca foi a guarda real).
+    Aplicada no staging.
+  files:
+    - supabase/migrations/20260611g_guarda_liberacao_parcial_marca_indice.sql
+  tags: [guarda, putaway, reserva-forte, estorno, indice-unico, parcial]
+
+- id: limpa-est-02-ajuste-modal-sem-motivo-categoria
+  date: 2026-06-11
+  source: estoque
+  category: validation
+  message: "motivo_categoria é obrigatório... — 100% dos ajustes via AjusteModal global (⌘K/drawer) rejeitados"
+  cause: >
+    campo virou obrigatório na API em 2026-05-27; o modal nunca foi atualizado
+    (só a página /wms/ajuste). Caminho mais acessível de ajuste estava morto.
+  fix: >
+    Select de categoria adicionado ao AjusteModal (mesmas 6 categorias/labels da
+    página), incluído no body e na validação client (botão disabled sem categoria).
+  files:
+    - src/components/wms/ui/modals.tsx
+  tags: [estoque, ajuste, modal, motivo-categoria, ui]
+
+- id: limpa-est-03-cron-reservas-double-release
+  date: 2026-06-11
+  source: estoque
+  category: business_logic
+  message: "Cron de reservas expiradas liberava a MESMA R duas vezes (roubava reservado de outro pedido) ou pulava Rs legítimas"
+  cause: >
+    estornarReservaIndividual inseria L só com estorno_de (sem origem_id); o guard
+    do cron buscava L por origem_id=pedido_id → não enxergava a liberação (double
+    release) e, inverso, 1 L qualquer do pedido fazia pular Rs legítimas (zumbi).
+  fix: >
+    Guard por reserva em batch (L com estorno_de IN ids das R candidatas) +
+    cláusula compat-legado pra L antigas sem estorno_de (liberarReserva por pedido);
+    estornarReservaIndividual agora grava origem_id/pedido_id; cron grava
+    estorno_de nas próprias liberações. De quebra mata o N+1.
+  files:
+    - src/lib/wms/reservas.ts
+  tags: [reservas, cron, cleanup, double-release, expiracao, zumbi]
+
+- id: limpa-cst-01-roteamento-quarentena-vendavel
+  date: 2026-06-11
+  source: roteamento
+  category: business_logic
+  message: "Roteamento contava saldo de quarentena/recebimento/packing/expedição como vendável e reservava lá"
+  cause: >
+    buscarLinha preferia picking no sort mas não EXCLUÍA tipo nenhum; sugestão
+    dinâmica idem; R do pedido nascia na loc retornada. Devolução avariada na
+    quarentena roteava pedido propria e mandava operador expedir peça avariada.
+  fix: >
+    TIPOS_LOC_VENDAVEIS = [picking, overstock] exportado de roteamento.ts e
+    aplicado em: rotearPedidoDoBanco (buscarLinha com !inner + .in), sugestao-dinamica,
+    aprovar (criação de R + gate "OC quando saldo vivo cobre"). Fallback de loc do
+    pick (saída física pós-fato) deliberadamente sem filtro.
+  files:
+    - src/lib/wms/roteamento.ts
+    - src/lib/wms/sugestao-dinamica.ts
+    - src/lib/separacao/wms-mapping.ts
+    - src/app/api/wms/pedidos/aprovar/route.ts
+  tags: [roteamento, quarentena, recebimento, vendavel, reserva, tipos-loc]
+
+- id: limpa-cst-02-cancel-webhook-picks-invisiveis
+  date: 2026-06-11
+  source: webhook
+  category: business_logic
+  message: "Pedido cancelado via webhook/polling com picks feitos sumia sem rastro (peças no carrinho, ledger sem ação)"
+  cause: >
+    handlePedidoCancelamento só liberava R e marcava cancelado; o caminho humano
+    (separacao/cancelar + cancelarVendaManual) classifica itens pegos e devolve
+    itensParaDevolverManual. Webhook não estornava, não alertava, não registrava.
+  fix: >
+    Webhook espelha o humano (D1/P007): S preservada como auditoria (peça saiu
+    fisicamente), classificarItensParaCancelamento identifica pegos,
+    registrarEvento('cancelado') com itens_devolucao_manual[{id,sku,qty}] + tag
+    'cancelado_com_picks' em separacao_tags. separado/embalado com
+    estoque_lancado=true: todos os itens entram na lista (qty=pedida).
+  files:
+    - src/lib/pedido-cancel-handler.ts
+  tags: [webhook, cancelamento, picks, devolucao-manual, separacao-tags]
+
+- id: limpa-cst-03-cancel-nao-limpa-compras-por-item
+  date: 2026-06-11
+  source: webhook
+  category: business_logic
+  message: "Cancelamento não limpava itens de compra de pedido em validacao_oc/em_separacao — comprador comprava pra pedido morto"
+  cause: >
+    gate isInComprasFlow olhava status do PEDIDO (só aguardando_compra/comprado);
+    pedido misto na wave com item aguardando_compra e validacao_oc com oc_pendente
+    escapavam; listagem de compras não filtra status do pedido.
+  fix: >
+    Limpeza baseada nos ITENS: qualquer item com compra_status ativo (oc_pendente,
+    aguardando_compra, comprado, indisponivel, equivalente_pendente,
+    cancelamento_pendente) recebe a limpeza; OC órfã cancelada. Itens
+    recebido/cancelado agora PRESERVADOS (histórico/vínculo de entrega).
+  files:
+    - src/lib/pedido-cancel-handler.ts
+  tags: [webhook, cancelamento, compras, oc, compra-status]
+
+- id: limpa-inv-01-reaplicar-sessao-23505
+  date: 2026-06-11
+  source: inventario
+  category: database
+  message: "23505 uniq_movs_inventario_divergencia ao re-aplicar sessão após estorno — fluxo prometido pelo modal era impossível"
+  cause: >
+    estorno resetava a divergência pro MESMO id; a mov original (estornada)
+    continuava casando o predicado do índice; re-aplicar inseria mov com o mesmo
+    divergencia_id → unique violation → rollback total → sessão presa.
+  fix: >
+    Migration 20260611e: coluna aplicacoes (geração) em siso_inventario_divergencias,
+    bumpada no estorno (RPC e caminho TS); índice recriado sobre (divergencia_id,
+    COALESCE(origem_detalhes->>'aplicacao','0')); wms_aplicar_sessao_inventario
+    grava a geração e o count idempotente exclui movs estornadas. Dupla aplicação
+    na MESMA geração continua bloqueada. Aplicada no staging.
+  files:
+    - supabase/migrations/20260611e_inventario_reaplicacao_geracao.sql
+    - src/lib/wms/inventario.ts
+  tags: [inventario, divergencia, estorno, reaplicacao, indice-unico, geracao]
+
+- id: limpa-inv-02-sessao-presa-aprovada
+  date: 2026-06-11
+  source: inventario
+  category: business_logic
+  message: "Aplicar que falha em 1 divergência (saldo mudou) deixava a sessão presa em 'aprovada' sem caminho de recuperação"
+  cause: >
+    aplicar é tudo-ou-nada; a divergência culpada estava 'aprovada' — PATCH só
+    atualizava 'pendente', computar tinha guard no-op, UI só mostrava Cancelar em
+    planejada/em_andamento. Erro chegava como "[object Object]"/500 genérico.
+  fix: >
+    PATCH aceita aprovada→rejeitada quando a sessão está 'aprovada' (permissão
+    inventario.supervisionar); botão Rejeitar na UI nesse estado; RPC de aplicar
+    agora RAISE nomeando a divergência culpada (id, sku, loc, qty, saldo,
+    reservado); rota extrai message de PostgrestError corretamente.
+  files:
+    - src/app/api/wms/inventario/[id]/divergencias/route.ts
+    - src/app/wms/inventario/[id]/divergencias/page.tsx
+    - src/app/api/wms/inventario/[id]/aplicar/route.ts
+    - supabase/migrations/20260611e_inventario_reaplicacao_geracao.sql
+  tags: [inventario, divergencia, aprovada, rejeitar, sessao-presa]
+
+- id: limpa-inv-03-sessao-continua-encerravel
+  date: 2026-06-11
+  source: inventario
+  category: business_logic
+  message: "Sessão contínua 'Contagens operacionais' aparecia na lista com botão Encerrar — encerrá-la re-aplicava acertos inline históricos como ganho falso"
+  cause: >
+    GET /api/wms/inventario listava todas as sessões; computarDivergencias só
+    guardava por status. Contagens inline acumulam 1 INSERT por evento e as movs
+    de acerto são excluídas da reconstrução ("movs da própria sessão") → agregado
+    somava acertos já aplicados.
+  fix: >
+    Guard hard em computarDivergencias (continua=true → erro instrutivo) + GET
+    da lista filtra .eq(continua,false). Nenhuma tela dependia de ver a contínua.
+  files:
+    - src/lib/wms/inventario.ts
+    - src/app/api/wms/inventario/route.ts
+  tags: [inventario, sessao-continua, contagem-inline, encerrar, ganho-falso]
+
+- id: limpa-inv-04-perda-abaixo-reservado-check
+  date: 2026-06-11
+  source: inventario
+  category: database
+  message: "new row violates check constraint (reservado <= saldo) — 23514 cru em contagem inline/aplicar com perda abaixo do reservado vivo"
+  cause: >
+    branch S da wms_inserir_movimentacao só valida saldo_posterior >= 0; perda de
+    inventário que derruba saldo abaixo do reservado estourava o CHECK do cache
+    com erro críptico (500 genérico no OcEncontrei; sessão presa no aplicar).
+  fix: >
+    Migration 20260611f: pré-check nas RPCs wms_contagem_inline_atomica e
+    wms_aplicar_sessao_inventario (qty_contada < reservado na perda → RAISE
+    orientado com produto/loc/saldo/reservado + "libere ou realoque as reservas");
+    caller (validar-oc-item) mapeia pra 409 contagem_bloqueada_reserva com a
+    mensagem. Branch S universal NÃO alterado (blast radius). Aplicada no staging.
+  files:
+    - supabase/migrations/20260611f_contagem_inline_guard_reservado.sql
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+  tags: [inventario, contagem-inline, reservado, check-constraint, erro-orientado]
+
+# ============================================================
+# LIMPA 2026-06-11 — rodada 2: P2/P3 (spec Fable, exec Opus)
+# ============================================================
+
+- id: limpa-p2-cmp-recebimento-compensacoes
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Race/rollback no recebimento OC deixava mov 'achado' e pendências de guarda órfãs; SELECT de fechamento falho marcava OC 'recebido'; cancelar não achava movs do caminho rico"
+  cause: >
+    (a) caminho perdedor da corrida só estornava movEntradaId; (b) (data ?? []).every()
+    com erro de query = true; (c) caminho rico grava origem_id=ocId (pedido só em
+    origem_detalhes) e o cancelar buscava por origem_id=pedidoId.
+  fix: >
+    (a) rastreio por item + cancelarPendenciasCompensacao (RPC) + estorno do achado
+    nos dois caminhos de compensação; (b) error capturado → não fecha OC; (c) busca
+    dupla (origem_id + origem_detalhes->>pedido_id) com dedup.
+  files:
+    - src/lib/wms/receber-oc.ts
+    - src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts
+  tags: [compras, receber-oc, race, compensacao, achado, pendencia-guarda]
+
+- id: limpa-p2-cmp-reserva-blast-e-permissoes
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Cancelar/trocar item liberava R de TODOS os itens do pedido; operador de doca levava 403 em compra manual; devolver resetava item já recebido"
+  cause: >
+    liberarReserva({pedido_id}) é pedido-scoped; rotas compras-manuais exigiam
+    compras.executar (fluxo OC aceita operacoes.receber); devolver sem guarda de status.
+  fix: >
+    Liberação escopada ao produto do item (uuid via gotcha #1 + estornarReservaIndividual);
+    GET/receber de compras-manuais aceitam userCanAny(compras.executar, operacoes.receber);
+    devolver com guards 409 item_ja_recebido/item_com_pick.
+  files:
+    - src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts
+    - src/app/api/wms/compras/equivalente/confirmar/route.ts
+    - src/app/api/wms/compras-manuais/[id]/route.ts
+    - src/app/api/wms/compras-manuais/[id]/receber/route.ts
+    - src/app/api/wms/compras/itens/[itemId]/devolver/route.ts
+  tags: [compras, reservas, permissoes, devolver, compras-manuais]
+
+- id: limpa-p2-cmp-galpao-id-deprecada
+  date: 2026-06-11
+  source: compras
+  category: business_logic
+  message: "Nenhuma empresa ativa encontrada no galpão / Contexto da empresa incompleto — coluna deprecada siso_empresas.galpao_id bloqueava galpões não-preferenciais"
+  cause: ordens e equivalente/confirmar liam a coluna deprecada (espelho do 1º preferencial).
+  fix: >
+    ordens resolve via siso_empresa_galpoes_preferenciais com fallback todas-ativas;
+    equivalente/confirmar deriva de pedido.separacao_galpao_id → preferencial → 400 claro.
+  files:
+    - src/app/api/wms/compras/ordens/route.ts
+    - src/app/api/wms/compras/equivalente/confirmar/route.ts
+  tags: [compras, galpao-id-deprecada, preferenciais, ordens]
+
+- id: limpa-p2-sep-esgotado-galpao-e-residual
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Produto-esgotado derrubava pedidos de TODOS os galpões e calculava a OC com residual menor que a necessidade"
+  cause: >
+    sem filtro de separacao_galpao_id; residual (pedida−qty_pega) gravado ANTES do
+    reset estornar os picks e zerar qty_pega.
+  fix: >
+    galpão obrigatório (body ?? session.galpaoId, 400 sem) + filtro; reset roda primeiro
+    e o residual é recalculado pós-reset (necessidade cheia), evento instrui devolver
+    as peças estornadas à prateleira.
+  files:
+    - src/app/api/wms/separacao/produto-esgotado/route.ts
+  tags: [separacao, esgotado, galpao, residual, oc]
+
+- id: limpa-p2-sep-claims-e-becos
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Concluir respondia sucesso sem claim; encaminhar deixava pedido pendente com S vivas; expedido era irreversível; desfazer-parcial engolia erro da RPC; double-pick sem idempotency na UI"
+  cause: >
+    UPDATE de concluir só claimava em_separacao sem checar count; encaminhar resetava
+    DEPOIS de virar pendente; STATUS_ORDER sem 'expedido'; rpc sem captura de error;
+    checklist nunca enviava idempotency_key (P072).
+  fix: >
+    concluir claima .in(em_separacao, aguardando_separacao) + nao_concluidos na resposta
+    + toast warn; encaminhar reseta antes do UPDATE (falha → pedido intacto);
+    'expedido' no STATUS_ORDER (hop só-status); desfazer-parcial 409 falha_estorno_parcial
+    sem deletar link; checklist envia crypto.randomUUID() por item.
+  files:
+    - src/app/api/wms/separacao/concluir/route.ts
+    - src/app/api/wms/separacao/encaminhar/route.ts
+    - src/app/api/wms/separacao/voltar-etapa/route.ts
+    - src/app/api/wms/separacao/desfazer-parcial/route.ts
+    - src/app/wms/separacao/checklist/page.tsx
+  tags: [separacao, concluir, encaminhar, expedido, idempotencia, claim]
+
+- id: limpa-p2-sep-parcial-realoc-compensacoes
+  date: 2026-06-11
+  source: separacao
+  category: business_logic
+  message: "Parcial modo realocação: S falha → 500 com L do 7a perdidas; link falho → S órfã (ambos os modos)"
+  cause: caminhos de erro sem compensação (análogo do SEP-04 corrigido de manhã).
+  fix: >
+    helpers de compensação (re-reserva via estornarLiberacaoReserva + estorno da S)
+    nos caminhos de S e de persistência de links dos dois modos → 409 instrutivo.
+  files:
+    - src/app/api/wms/separacao/parcial/route.ts
+  tags: [separacao, parcial, realocacao, compensacao, links]
+
+- id: limpa-p2-inv-unique-locks-force
+  date: 2026-06-11
+  source: inventario
+  category: database
+  message: "Row dupla de contagem travava a tripla (maybeSingle); sessão iniciava com ZERO locks (23505 engolido); encerrar com operador ativo sem botão force; aplicar exigia admin"
+  cause: >
+    check-then-act sem UNIQUE real (JSDoc mentia); insert batch de locks falha
+    inteiro e era ignorado; UI não enviava forceWithActiveOperators; requireAdmin
+    divergia do gate da UI (inventario.supervisionar).
+  fix: >
+    Migration 20260611h: dedup + UNIQUE(sessao,loc,produto,operador) + RPC inline
+    upsert incremental; TS trata 23505 com UPDATE. iniciarSessao: fallback um-a-um,
+    conflito → rollback + 409 locs_bloqueadas; release escopado por iniciado_em.
+    Modal 'Encerrar mesmo assim' → force. Rota aplicar usa inventario.supervisionar.
+  files:
+    - supabase/migrations/20260611h_inventario_contagens_unique.sql
+    - src/lib/wms/inventario.ts
+    - src/app/wms/inventario/[id]/page.tsx
+    - src/app/api/wms/inventario/[id]/aplicar/route.ts
+  tags: [inventario, unique, locks, force, permissoes, 23505]
+
+- id: limpa-p2-inv-enfileirar-kit-estorno
+  date: 2026-06-11
+  source: inventario
+  category: business_logic
+  message: "'Solicitar contagem depois' era no-op em loc 'contada'; kit falho no meio duplicava no retry; estorno individual em sessão aplicada era armadilha"
+  cause: >
+    upsert ignoreDuplicates não reabria status 'contada'; loop de componentes sem
+    compensação; sessão 'aplicada' faz aplicar no-opar (divergência pendente eterna).
+  fix: >
+    enfileirar reabre contada→pendente; falha no kit compensa componentes gravados
+    (kit_contagem_parcial_revertida); estorno individual reabre sessão aplicada→aprovada (CAS).
+  files:
+    - src/lib/wms/contagem-inline.ts
+    - src/lib/wms/inventario.ts
+  tags: [inventario, contagem-inline, kit, estorno, sessao-aplicada]
+
+- id: limpa-p2-est-custo-medio-estorno-parcial
+  date: 2026-06-11
+  source: estoque
+  category: database
+  message: "Estorno PARCIAL de entrada de custo restaurava o custo médio INTEIRO ao pré-entrada (branch P110)"
+  cause: branch P110 setava cm := cm_anterior sem checar se o estorno era total.
+  fix: >
+    Migration 20260611l: parcial usa remoção ponderada
+    (saldo_global*cm − qty*custo_orig)/(saldo_global − qty) com guards (denominador<=0,
+    resultado<0, custo_orig null → mantém cm). Total mantém comportamento antigo.
+  files:
+    - supabase/migrations/20260611l_custo_medio_estorno_parcial.sql
+  tags: [custo-medio, estorno-parcial, p110, retroativo]
+
+- id: limpa-p2-est-cron-transferencias-morto
+  date: 2026-06-11
+  source: estoque
+  category: database
+  message: "Cron de transferências expiradas falhava TODO estorno (FK usuario uuid-zero inexistente) e, se vivo, duplicaria saldo (ignorava legs E)"
+  cause: >
+    SYSTEM_USER uuid-zero sem row em siso_usuarios (FK de siso_movimentacoes.usuario_id);
+    loop bespoke só estornava mov_saida_id.
+  fix: >
+    Migration 20260611m: usuário 'Sistema (automação)' uuid-zero (ativo=false, pin '----').
+    Cleanup reescrito pra chamar cancelarTransferencia() (estorna E antes de S, respeita claims).
+  files:
+    - supabase/migrations/20260611m_system_user.sql
+    - src/app/api/wms/transferencias/cleanup/route.ts
+  tags: [transferencias, cron, system-user, fk, estorno]
+
+- id: limpa-p2-est-guarda-ttl-vinculo-liveness
+  date: 2026-06-11
+  source: guarda
+  category: business_logic
+  message: "R reserva_guarda expirada sem limpador (disponivel travado pra sempre); desfazer pegava mov E de OUTRA pendência; re-guarda pós-liberação total rodava SEM reserva forte"
+  cause: >
+    cleanup filtrava só reserva_pedido; candidates do desfazer por produto+galpão sem
+    vínculo; liveness testava estorno_de IS NULL na R (sempre true).
+  fix: >
+    cleanup ganha passada reserva_guarda (L liberacao_guarda parcial=true + regride
+    pendência em_guarda→pendente); migration 20260611n: confirmar carimba pendencia_id
+    no par S+E (replenishment com p_origem_detalhes) e desfazer filtra por vínculo
+    (fallback legado com NOTICE); iniciar testa NET (SUM R − SUM L) > 0.
+  files:
+    - src/lib/wms/reservas.ts
+    - supabase/migrations/20260611n_guarda_desfazer_vinculo.sql
+  tags: [guarda, reserva-forte, ttl, desfazer, liveness, vinculo]
+
+- id: limpa-p2-est-guarda-ui-aguardar-sem-saldo
+  date: 2026-06-11
+  source: guarda
+  category: business_logic
+  message: "UI sugeria guardar qty_pendente (400 'excede saldo livre'); encerrada_sem_saldo invisível com toast mentindo 'Parcial: faltam N'"
+  cause: >
+    a_guardar calculado mas nenhuma tela usava (obterPendencia nem calculava);
+    STATUS_VALIDOS sem o status; onSuccess não distinguia auto_encerrada.
+  fix: >
+    obterPendencia enriquece; pages pré-preenchem/limitam com a_guardar + hint de picks;
+    status nas listas (tab 'Sem saldo'); auto_encerrada propagado → toast.info correto;
+    desfazer devolve qty_estornada/status_final (P3-22).
+  files:
+    - src/lib/wms/guarda.ts
+    - src/app/wms/guarda/page.tsx
+    - src/app/wms/guarda/[id]/page.tsx
+    - src/app/wms/guarda/rota/page.tsx
+    - src/app/api/wms/guarda/route.ts
+  tags: [guarda, a-guardar, encerrada-sem-saldo, ui, toast]
+
+- id: limpa-p2-est-transferencia-atomicidade-estoque-trunc
+  date: 2026-06-11
+  source: estoque
+  category: business_logic
+  message: "transferirInterGalpao deixava S sem E em falha; receber aceitava loc de galpão errado/tipo recebimento; /wms/estoque truncava em 500 triplas"
+  cause: S e E em chamadas separadas sem compensação; sem validação de loc destino; .limit(500) fixo.
+  fix: >
+    perna E falha → estorna a S do item e aborta; receber valida loc (galpão destino,
+    ativa, tipo picking/overstock — rejeita recebimento/quarentena/packing/expedicao);
+    saldosPorPerspectiva pagina internamente (1000/pág, cap 10 + warn).
+  files:
+    - src/lib/wms/movimentacoes.ts
+    - src/lib/wms/transferencias.ts
+    - src/lib/wms/estoque.ts
+  tags: [transferencias, atomicidade, loc-invalida, estoque, truncamento]
+
+- id: limpa-p2-cst-reconciliador-worker-erro-visivel
+  date: 2026-06-11
+  source: worker
+  category: business_logic
+  message: "E via RPC (devolução íntegra/ganho inventário) não disparava reconciliador-oc; retry da fila sem motor; pedido status=erro invisível na home; cancel no meio da execução deixava S de pé"
+  cause: >
+    gancho do reconciliador vive no TS (inserirMovimentacao); jobs com proximo_retry_em
+    futuro dependiam de kick orgânico; montarExcecoes sem seção de erro; worker só
+    checava cancelado no claim.
+  fix: >
+    devoluções íntegras + ganhos de inventário disparam reconciliarEntradaEstoque
+    fire-and-forget; migration 20260611o: pg_cron wms_worker_kick */2min → POST
+    /api/wms/worker/processar; seção pedidos_erro no quadro de tarefas (card novo);
+    pós-conversão re-checa cancelado → estorna S + estoque_lancado=false + evento.
+  files:
+    - src/app/api/wms/devolucoes/[id]/classificar/route.ts
+    - src/app/api/wms/inventario/[id]/aplicar/route.ts
+    - supabase/migrations/20260611o_cron_worker_retry.sql
+    - src/lib/wms/dashboard-tarefas.ts
+    - src/components/wms/home/exceptions/card-pedidos-erro.tsx
+    - src/lib/execution-worker-wms.ts
+  tags: [reconciliador, worker, cron, retry, pedidos-erro, cancelamento]
+
+- id: limpa-p3-bugs-diversos
+  date: 2026-06-11
+  source: wms
+  category: business_logic
+  message: "Lote P3: qty_picada inexistente (mina armada), tolerância if/else, métrica por uuid, reconciliação mascarando falha, venderKit sem compensação, retroativo aceitando mov de outro produto, snapshot com coluna deprecada, histórico exibindo comprado_em como recebido_em"
+  cause: ver plano docs/superpowers/plans/2026-06-11-limpa-diagnostico-modulos.md seção P3.
+  fix: >
+    P3-01 blocos removidos (comentário anti-double-count); P3-13 OR pct/qty_min + custo
+    via siso_custo_medio; P3-16 métrica por contagem_finalizada_em (migration 20260611h);
+    P3-17 throw + wmsErrorResponse; P3-21 compensação reversa; P3-23 validação da mov
+    (tipo E, mesmo produto, origem whitelisted); P3-24 preferenciais (mais antigo);
+    P3-02 payload/label renomeados pra comprado_em (recebido_em é coluna dead).
+    Demais P3 (UX/perf/dívida): ver plano — flag bidirecional, chave composta
+    fornecedor::sku, item_ids[] em lote, UNIQUE OC aberta (20260611p), pendência no
+    caminho legado, paginação ledger/drawer keyset, estorno de ajuste na UI, piso 60d
+    no cleanup, job durável sempre, locks no reconciliador, JSDoc/labels stale.
+  files:
+    - docs/superpowers/plans/2026-06-11-limpa-diagnostico-modulos.md
+  tags: [limpa, p3, lote, plano]

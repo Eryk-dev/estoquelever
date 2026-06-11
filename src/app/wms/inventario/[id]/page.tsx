@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
+import { sisoFetch } from "@/lib/auth-context";
 import {
   useInventarioRealtime,
   type Operador,
@@ -94,6 +95,13 @@ export default function InventarioSupervisorPage({
   const [cancelarOpen, setCancelarOpen] = useState(false);
   const [estornarOpen, setEstornarOpen] = useState(false);
   const [estornarMotivo, setEstornarMotivo] = useState("");
+  // [P2-INV-03] Modal de confirmação quando o backend recusa o encerramento por
+  // ter operador(es) ainda ativo(s) na party (409 OPERADORES_ATIVOS). Guarda a
+  // lista + o `parcial` da tentativa pra re-disparar com force.
+  const [opsAtivosModal, setOpsAtivosModal] = useState<{
+    operadores: Array<{ usuario_id: string; nome: string | null }>;
+    parcial: boolean;
+  } | null>(null);
   // Admin perm gates "Estornar sessão" (backend requires requireAdmin).
   const podeEstornar = can("sistema.usuarios");
 
@@ -137,20 +145,54 @@ export default function InventarioSupervisorPage({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const encerrar = useMutation({
-    mutationFn: (parcial: boolean = false) =>
-      wmsApi<{
-        ok: true;
-        parcial: boolean;
-        status: "revisao" | "aprovada";
-        divergencias: { total: number; pendentes: number; aprovadas: number };
-      }>(`/api/wms/inventario/${id}/aprovar`, {
+  type EncerrarResp = {
+    ok: true;
+    parcial: boolean;
+    status: "revisao" | "aprovada";
+    divergencias: { total: number; pendentes: number; aprovadas: number };
+  };
+  // Erro estruturado pra propagar o 409 de operadores ativos pro onError.
+  type OperadoresAtivosError = Error & {
+    operadores: Array<{ usuario_id: string; nome: string | null }>;
+    parcial: boolean;
+  };
+
+  const encerrar = useMutation<
+    EncerrarResp,
+    Error,
+    { parcial?: boolean; force?: boolean }
+  >({
+    // [P2-INV-03] usa sisoFetch direto (não wmsApi) pra capturar o corpo do 409
+    // OPERADORES_ATIVOS — wmsApi descarta a lista de operadores e o code.
+    mutationFn: async ({ parcial = false, force = false }) => {
+      const r = await sisoFetch(`/api/wms/inventario/${id}/aprovar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parcial }),
-      }),
+        body: JSON.stringify({ parcial, force }),
+      });
+      const body = (await r.json().catch(() => ({}))) as
+        | EncerrarResp
+        | {
+            error?: string;
+            code?: string;
+            operadores?: Array<{ usuario_id: string; nome: string | null }>;
+          };
+      if (!r.ok) {
+        if (r.status === 409 && (body as { code?: string }).code === "OPERADORES_ATIVOS") {
+          const err = new Error(
+            (body as { error?: string }).error ?? "operadores ativos",
+          ) as OperadoresAtivosError;
+          err.operadores = (body as { operadores?: OperadoresAtivosError["operadores"] }).operadores ?? [];
+          err.parcial = parcial;
+          throw err;
+        }
+        throw new Error((body as { error?: string }).error ?? `HTTP ${r.status}`);
+      }
+      return body as EncerrarResp;
+    },
     onSuccess: (r) => {
       setEncerrarOpen(false);
+      setOpsAtivosModal(null);
       queryClient.invalidateQueries({ queryKey: ["wms-inv", id] });
       queryClient.invalidateQueries({ queryKey: ["wms-inv-div", id] });
       if (r.status === "aprovada") {
@@ -166,7 +208,19 @@ export default function InventarioSupervisorPage({
         toast.success("Contagem encerrada · sem divergências");
       }
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e) => {
+      const ops = (e as Partial<OperadoresAtivosError>).operadores;
+      if (ops) {
+        // Abre modal de confirmação em vez do toast com jargão de API.
+        setEncerrarOpen(false);
+        setOpsAtivosModal({
+          operadores: ops,
+          parcial: (e as OperadoresAtivosError).parcial,
+        });
+        return;
+      }
+      toast.error(e.message);
+    },
   });
 
   const aprovarSessao = useMutation({
@@ -395,7 +449,7 @@ export default function InventarioSupervisorPage({
                   "Encerrar a contagem? Todas as locs foram contadas. As divergências serão computadas.",
                 )
               ) {
-                encerrar.mutate(false);
+                encerrar.mutate({ parcial: false });
               }
             }}
           >
@@ -624,7 +678,7 @@ export default function InventarioSupervisorPage({
                 type="button"
                 className="wms-btn wms-btn-primary"
                 disabled={anyPending}
-                onClick={() => encerrar.mutate(true)}
+                onClick={() => encerrar.mutate({ parcial: true })}
               >
                 <Icon name="check" size={11} />
                 {encerrar.isPending
@@ -750,6 +804,53 @@ export default function InventarioSupervisorPage({
               serão descartados.
             </p>
           ) : null}
+        </Modal>
+      )}
+
+      {/* [P2-INV-03] Confirmação de encerramento com operador(es) ainda ativo(s) */}
+      {opsAtivosModal && (
+        <Modal
+          title="Operadores ainda na party"
+          subtitle="Encerrar agora finaliza a contagem deles automaticamente"
+          width={480}
+          onClose={() => !encerrar.isPending && setOpsAtivosModal(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={encerrar.isPending}
+                onClick={() => setOpsAtivosModal(null)}
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-danger"
+                disabled={encerrar.isPending}
+                onClick={() =>
+                  encerrar.mutate({
+                    parcial: opsAtivosModal.parcial,
+                    force: true,
+                  })
+                }
+              >
+                <Icon name="check" size={11} />
+                {encerrar.isPending ? "Encerrando…" : "Encerrar mesmo assim"}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, marginBottom: 10 }}>
+            Ainda há <strong>{opsAtivosModal.operadores.length}</strong>{" "}
+            operador(es) contando nesta sessão. Encerrar agora vai finalizar a
+            participação deles e computar as divergências com o que já foi bipado.
+          </p>
+          <ul style={{ fontSize: 13, lineHeight: 1.7, paddingLeft: 18, margin: 0 }}>
+            {opsAtivosModal.operadores.map((o) => (
+              <li key={o.usuario_id}>{o.nome ?? o.usuario_id.slice(0, 8)}</li>
+            ))}
+          </ul>
         </Modal>
       )}
     </>

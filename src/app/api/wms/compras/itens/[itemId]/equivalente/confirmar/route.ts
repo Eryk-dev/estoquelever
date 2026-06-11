@@ -5,7 +5,87 @@ import { getSessionUser } from "@/lib/session";
 import { carregarDadosEquivalentePorSku } from "@/lib/compras-equivalencia";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
-import { liberarReserva } from "@/lib/wms/reservas";
+import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * P2-CMP-04: libera APENAS as reservas vivas do PRODUTO do item informado —
+ * `liberarReserva({pedido_id})` derrubava a R de TODOS os itens do pedido.
+ * Resolve o uuid WMS (gotcha #1: siso_produto_empresas por tiny_produto_id +
+ * empresa_origem_id), busca as R vivas (sem L apontando) desse produto e
+ * estorna cada uma. Produto não-resolvível → warn + não libera nada.
+ */
+async function liberarReservasDoProdutoDoItem(
+  supabase: SupabaseClient,
+  args: {
+    pedido_id: string;
+    tiny_produto_id: string;
+    empresa_origem_id: string | null;
+    usuario_id: string;
+    source: string;
+  },
+): Promise<number> {
+  if (!args.empresa_origem_id) {
+    logger.warn(args.source, "sem empresa_origem_id — não libera reserva (conservador)", {
+      pedido_id: args.pedido_id,
+    });
+    return 0;
+  }
+  let produtoWmsId: string;
+  try {
+    produtoWmsId = await resolverProdutoWms(args.empresa_origem_id, args.tiny_produto_id);
+  } catch (e) {
+    logger.warn(args.source, "produto não resolvível — não libera reserva (conservador)", {
+      pedido_id: args.pedido_id,
+      tiny_produto_id: args.tiny_produto_id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return 0;
+  }
+
+  const { data: reservas, error: rErr } = await supabase
+    .from("siso_movimentacoes")
+    .select("id")
+    .eq("tipo", "R")
+    .eq("origem_tipo", "reserva_pedido")
+    .eq("origem_id", args.pedido_id)
+    .eq("produto_id", produtoWmsId);
+  if (rErr) {
+    logger.warn(args.source, "falha buscando R do produto (segue)", {
+      pedido_id: args.pedido_id,
+      error: rErr.message,
+    });
+    return 0;
+  }
+  const ids = (reservas ?? []).map((r) => r.id as string);
+  if (ids.length === 0) return 0;
+
+  // "Viva" = sem L (estorno_de) apontando pra ela.
+  const { data: ls } = await supabase
+    .from("siso_movimentacoes")
+    .select("estorno_de")
+    .eq("tipo", "L")
+    .in("estorno_de", ids);
+  const liberadas = new Set(
+    (ls ?? []).map((l) => l.estorno_de as string | null).filter((x): x is string => !!x),
+  );
+
+  let liberados = 0;
+  for (const id of ids) {
+    if (liberadas.has(id)) continue;
+    try {
+      await estornarReservaIndividual({ reserva_id: id, motivo: "outro", usuario_id: args.usuario_id });
+      liberados++;
+    } catch (e) {
+      logger.warn(args.source, "falha estornando R individual (segue)", {
+        reserva_id: id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  return liberados;
+}
 
 /**
  * POST /api/compras/itens/[itemId]/equivalente/confirmar
@@ -61,7 +141,7 @@ export async function POST(
 
     const { data: pedido, error: pedidoError } = await supabase
       .from("siso_pedidos")
-      .select("empresa_origem_id")
+      .select("empresa_origem_id, separacao_galpao_id")
       .eq("id", item.pedido_id)
       .single();
 
@@ -79,7 +159,7 @@ export async function POST(
 
     const { data: empresa, error: empresaError } = await supabase
       .from("siso_empresas")
-      .select("grupo_id, galpao_id, siso_galpoes!siso_empresas_galpao_id_fkey(nome)")
+      .select("grupo_id")
       .eq("id", empresaOrigemId)
       .single();
 
@@ -87,19 +167,41 @@ export async function POST(
       throw new Error(`Erro ao buscar empresa de origem: ${empresaError.message}`);
     }
 
-    const galpao = empresa?.siso_galpoes as unknown as { nome: string } | null;
-    if (!empresa?.galpao_id || !galpao?.nome) {
+    // P2-CMP-07: NÃO usa mais a coluna deprecada siso_empresas.galpao_id pra
+    // determinar o galpão de origem. Prioridade: galpão do pedido
+    // (separacao_galpao_id) → 1º preferencial da empresa → 400 claro.
+    let galpaoOrigemId =
+      (pedido?.separacao_galpao_id as string | null) ?? null;
+    if (!galpaoOrigemId) {
+      const { data: pref } = await supabase
+        .from("siso_empresa_galpoes_preferenciais")
+        .select("galpao_id")
+        .eq("empresa_id", empresaOrigemId)
+        .limit(1)
+        .maybeSingle();
+      galpaoOrigemId = (pref?.galpao_id as string | null) ?? null;
+    }
+    if (!galpaoOrigemId) {
       return NextResponse.json(
-        { error: "Contexto da empresa de origem está incompleto" },
+        {
+          error:
+            "não foi possível determinar o galpão — defina um galpão preferencial pra empresa",
+        },
         { status: 400 },
       );
     }
+    const { data: galpaoRow } = await supabase
+      .from("siso_galpoes")
+      .select("nome")
+      .eq("id", galpaoOrigemId)
+      .maybeSingle();
+    const galpaoOrigemNome = (galpaoRow?.nome as string | null) ?? "";
 
     const equivalente = await carregarDadosEquivalentePorSku({
       empresaOrigemId,
       grupoId: empresa.grupo_id ?? null,
-      galpaoOrigemId: empresa.galpao_id,
-      galpaoOrigemNome: galpao.nome,
+      galpaoOrigemId,
+      galpaoOrigemNome,
       sku: item.compra_equivalente_sku,
       qtdMinimaAtende: quantidadeNecessariaCompra,
     });
@@ -128,25 +230,22 @@ export async function POST(
       );
     }
 
-    // P2 #3.7: equivalente vira um produto NOVO — a R original (criada pra o
-    // produto antigo) fica órfã consumindo reservado>saldo após o swap.
-    // Liberar Rs do pedido antes de mexer no produto_id.
-    try {
-      const liberadas = await liberarReserva({
-        pedido_id: String(item.pedido_id),
-        motivo: "cancelamento",
-        usuario_id: session.id,
-      });
-      logger.info("compras-equivalente-confirmar", "Rs liberadas pré-swap", {
-        pedido_id: item.pedido_id,
-        item_id: item.id,
-        liberadas,
-      });
-    } catch (e) {
-      logger.warn("compras-equivalente-confirmar", "falha liberando R (segue)", {
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
+    // P2 #3.7 + P2-CMP-04: equivalente vira um produto NOVO — a R original
+    // (criada pro produto ANTIGO) fica órfã consumindo reservado>saldo após o
+    // swap. Libera SÓ a R do produto antigo DESTE item — não a do pedido
+    // inteiro (que derrubaria a R de outros itens do mesmo pedido).
+    const liberadas = await liberarReservasDoProdutoDoItem(supabase, {
+      pedido_id: String(item.pedido_id),
+      tiny_produto_id: String(item.produto_id),
+      empresa_origem_id: empresaOrigemId,
+      usuario_id: session.id,
+      source: "compras-equivalente-confirmar",
+    });
+    logger.info("compras-equivalente-confirmar", "Rs liberadas pré-swap", {
+      pedido_id: item.pedido_id,
+      item_id: item.id,
+      liberadas,
+    });
 
     // (Fase 1.4) REMOVIDO: sync de siso_pedido_item_estoques no swap de SKU
     // equivalente. A tabela foi dropada — estoque do novo SKU é lido vivo de

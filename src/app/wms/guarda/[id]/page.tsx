@@ -118,12 +118,20 @@ export default function GuardaTabletPage() {
     !!pend?.iniciada_em &&
     now - new Date(pend.iniciada_em).getTime() > 30 * 60_000;
 
-  // Quando carregar a pendência, popula o input de qty com qty_pendente
+  // Teto físico real do que dá pra guardar agora: min(qty_pendente, saldo
+  // livre na loc de recebimento). Pode ser < qty_pendente se um pick consumiu
+  // a peça antes da guarda. Fallback pra qty_pendente quando ausente.
+  const aGuardar = pend?.a_guardar ?? pend?.qty_pendente ?? 0;
+  const consumidoPorPicks = pend
+    ? Math.max(0, pend.qty_pendente - aGuardar)
+    : 0;
+
+  // Quando carregar a pendência, popula o input de qty com a_guardar (teto real)
   useEffect(() => {
     if (pend && qtyInput === "") {
-      setQtyInput(String(pend.qty_pendente));
+      setQtyInput(String(aGuardar));
     }
-  }, [pend, qtyInput]);
+  }, [pend, qtyInput, aGuardar]);
 
   const iniciarMut = useMutation({
     mutationFn: async (forcar?: boolean) => {
@@ -195,11 +203,19 @@ export default function GuardaTabletPage() {
       return (await r.json()) as {
         ok: boolean;
         totalmente_guardada: boolean;
+        auto_encerrada?: boolean;
         pendencia: PendenciaJoined;
       };
     },
     onSuccess: (r) => {
-      if (r.totalmente_guardada) {
+      if (r.auto_encerrada) {
+        // Um pick consumiu o saldo da loc de recebimento antes da guarda — a
+        // RPC encerrou a pendência sem mov. Não é parcial: nada a guardar.
+        toast.info("Pick consumiu o saldo — pendência encerrada sem guarda");
+        qc.invalidateQueries({ queryKey: ["wms-guarda"] });
+        qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
+        router.push("/wms/guarda");
+      } else if (r.totalmente_guardada) {
         toast.success("Guarda completa — voltando pra fila");
         qc.invalidateQueries({ queryKey: ["wms-guarda"] });
         qc.invalidateQueries({ queryKey: ["wms-estoque"] });
@@ -212,7 +228,7 @@ export default function GuardaTabletPage() {
         toast.success(
           `Parcial: guardado, faltam ${fmtNum(r.pendencia.qty_pendente)} un`,
         );
-        setQtyInput(String(r.pendencia.qty_pendente));
+        setQtyInput(String(r.pendencia.a_guardar ?? r.pendencia.qty_pendente));
         setDestinoOverride(null);
         qc.invalidateQueries({ queryKey: ["wms-guarda", id] });
       }
@@ -235,14 +251,17 @@ export default function GuardaTabletPage() {
       }
       return (await r.json()) as {
         ok: boolean;
+        qty_estornada?: number;
+        status_final?: string;
         qtyEstornada?: number;
         statusFinal?: string;
       };
     },
     onSuccess: (r) => {
+      const estornada = r.qty_estornada ?? r.qtyEstornada;
       toast.success(
-        r.qtyEstornada != null
-          ? `Guarda desfeita · ${fmtNum(r.qtyEstornada)} un estornada(s)`
+        estornada != null
+          ? `Guarda desfeita · ${fmtNum(estornada)} un estornada(s)`
           : "Guarda desfeita",
       );
       setDesfazerOpen(false);
@@ -318,7 +337,10 @@ export default function GuardaTabletPage() {
   }
   if (!pend) return null;
 
-  const terminal = pend.status === "guardada" || pend.status === "cancelada";
+  const terminal =
+    pend.status === "guardada" ||
+    pend.status === "cancelada" ||
+    pend.status === "encerrada_sem_saldo";
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto" }}>
@@ -440,12 +462,23 @@ export default function GuardaTabletPage() {
       {terminal ? (
         <div className="wms-empty-block">
           <h3>
-            Pendência {pend.status === "guardada" ? "concluída" : "cancelada"}
+            Pendência{" "}
+            {pend.status === "guardada"
+              ? "concluída"
+              : pend.status === "encerrada_sem_saldo"
+                ? "encerrada sem saldo"
+                : "cancelada"}
           </h3>
           {pend.status === "guardada" && (
             <p>
               Toda a quantidade foi guardada em{" "}
               {pend.guardada_em ? fmtRelative(pend.guardada_em) : "—"}.
+            </p>
+          )}
+          {pend.status === "encerrada_sem_saldo" && (
+            <p>
+              Um pick consumiu o saldo da loc de recebimento antes da guarda —
+              não havia mais peça pra guardar. Nada foi movido.
             </p>
           )}
           {pend.status === "cancelada" && (
@@ -599,7 +632,7 @@ export default function GuardaTabletPage() {
                 className="wms-input wms-mono wms-tar"
                 type="number"
                 min="1"
-                max={pend.qty_pendente}
+                max={aGuardar}
                 value={qtyInput}
                 onChange={(e) => setQtyInput(e.target.value)}
                 style={{ width: 110, fontSize: 18 }}
@@ -607,12 +640,22 @@ export default function GuardaTabletPage() {
               <button
                 type="button"
                 className="wms-btn wms-btn-ghost"
-                onClick={() => setQtyInput(String(pend.qty_pendente))}
+                onClick={() => setQtyInput(String(aGuardar))}
                 style={{ fontSize: 11.5 }}
               >
-                = total ({fmtNum(pend.qty_pendente)})
+                = total ({fmtNum(aGuardar)})
               </button>
             </div>
+
+            {consumidoPorPicks > 0 && (
+              <div
+                className="wms-td-mute"
+                style={{ fontSize: 11.5, marginBottom: 10 }}
+              >
+                <Icon name="alert" size={10} /> {fmtNum(consumidoPorPicks)} un
+                consumidas por picks — guarde {fmtNum(aGuardar)}
+              </div>
+            )}
 
             <div
               style={{

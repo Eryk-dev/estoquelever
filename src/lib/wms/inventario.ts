@@ -178,17 +178,82 @@ export async function iniciarSessao(
     }),
   );
   if (lockRows.length > 0) {
-    // ON CONFLICT DO NOTHING via upsert/ignore — locks existentes não duplicam
+    // O índice parcial `uq_loc_lock_ativo` (1 lock ativo por loc) faz o INSERT
+    // em lote estourar 23505 inteiro se UMA loc já estiver travada. Antes esse
+    // erro era ENGOLIDO → a sessão iniciava com ZERO locks (P2-INV-02). Agora:
+    // tenta o lote; em 23505 cai pro fallback um-a-um pra distinguir quais locs
+    // conflitam — se houver QUALQUER conflito, faz rollback manual dos locks que
+    // ESTA chamada inseriu e aborta (a sessão NÃO inicia).
     const { error: errLock } = await sb
       .from("siso_localizacao_locks")
       .insert(lockRows);
-    if (errLock && errLock.code !== "23505") throw errLock;
+    if (errLock) {
+      if (errLock.code !== "23505") throw errLock;
+      await inserirLocksUmAUm(sb, sessaoId, lockRows);
+    }
   }
 
   await sb
     .from("siso_inventario_sessoes")
     .update({ status: "em_andamento", iniciada_em: new Date().toISOString() })
     .eq("id", sessaoId);
+}
+
+/**
+ * [P2-INV-02] Fallback do INSERT em lote de locks: insere um-a-um coletando os
+ * que esta chamada conseguiu inserir e os que colidiram (loc já travada por
+ * outra sessão/operação). Se houver QUALQUER conflito, deleta os locks que ESTA
+ * chamada inseriu (rollback manual — sem transação no client) e lança
+ * `locs_bloqueadas` com os códigos das locs em conflito. A rota mapeia pra 409.
+ */
+async function inserirLocksUmAUm(
+  sb: ReturnType<typeof createServiceClient>,
+  sessaoId: string,
+  lockRows: Array<{ localizacao_id: string; motivo: string; iniciado_por: string }>,
+): Promise<void> {
+  const inseridosIds: string[] = [];
+  const conflitos: string[] = [];
+  for (const row of lockRows) {
+    const { data, error } = await sb
+      .from("siso_localizacao_locks")
+      .insert(row)
+      .select("id")
+      .single();
+    if (!error) {
+      inseridosIds.push((data as { id: string }).id);
+    } else if (error.code === "23505") {
+      conflitos.push(row.localizacao_id);
+    } else {
+      // Erro inesperado: desfaz o que inseriu antes de propagar.
+      if (inseridosIds.length > 0) {
+        await sb.from("siso_localizacao_locks").delete().in("id", inseridosIds);
+      }
+      throw error;
+    }
+  }
+  if (conflitos.length === 0) return;
+
+  // Rollback manual: a sessão não pode iniciar com locks parciais.
+  if (inseridosIds.length > 0) {
+    await sb.from("siso_localizacao_locks").delete().in("id", inseridosIds);
+  }
+  // Resolve os códigos das locs em conflito pra mensagem do operador.
+  const { data: cods } = await sb
+    .from("siso_localizacoes")
+    .select("codigo")
+    .in("id", conflitos);
+  const codigos = ((cods ?? []) as Array<{ codigo: string }>).map((c) => c.codigo);
+  logger.warn(
+    "wms.inventario.iniciar",
+    "locs já bloqueadas — sessão não iniciada, locks desta chamada revertidos",
+    { sessao_id: sessaoId, locs_em_conflito: codigos.length, codigos },
+  );
+  const err = new Error(
+    `${conflitos.length} localização(ões) já estão bloqueadas por outra sessão — libere antes de iniciar`,
+  ) as Error & { code?: string; locs?: string[] };
+  err.code = "locs_bloqueadas";
+  err.locs = codigos;
+  throw err;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -269,6 +334,57 @@ export async function entrarParty(
   return { retomado: false };
 }
 
+/**
+ * [P0-02] Descarta as contagens de locs que REGRIDEM pra 'pendente' (abandono
+ * via sairParty ou recovery cron). Sem isso, o próximo claimer recebe a tela
+ * ZERADA e conta tudo de novo, mas `reconciliarTemporal` SOMA todas as rows da
+ * tripla — a contagem parcial abandonada vira ganho falso (estoque fantasma).
+ *
+ * Só deve ser chamado pra locs devolvidas ao pool — locs finalizadas
+ * ('contada'/'aprovada') mantêm suas contagens. A cooperação viva (op bipando
+ * a loc ATIVA) não passa por aqui: registrarContagem exige
+ * `bloqueada_por === contada_por`, então só o dono do lock acumula rows.
+ *
+ * Lança em erro de DB — o caller decide se aborta (sairParty) ou pula a
+ * liberação da loc e tenta no próximo ciclo (recovery).
+ */
+export async function descartarContagensDeLocsDevolvidas(
+  sb: ReturnType<typeof createServiceClient>,
+  sessaoId: string,
+  localizacaoIds: string[],
+  contexto: string,
+): Promise<number> {
+  if (localizacaoIds.length === 0) return 0;
+  const { data: descartadas, error } = await sb
+    .from("siso_inventario_contagens")
+    .delete()
+    .eq("sessao_id", sessaoId)
+    .in("localizacao_id", localizacaoIds)
+    .select("id, localizacao_id, contada_por, qty_contada");
+  if (error) throw error;
+  const rows = (descartadas ?? []) as Array<{
+    id: string;
+    localizacao_id: string;
+    contada_por: string;
+    qty_contada: number;
+  }>;
+  if (rows.length > 0) {
+    logger.warn(
+      "wms.inventario.contagens-descartadas",
+      "loc devolvida ao pool — contagens da tentativa abandonada descartadas",
+      {
+        sessao_id: sessaoId,
+        contexto,
+        rows_descartadas: rows.length,
+        localizacao_ids: [...new Set(rows.map((r) => r.localizacao_id))],
+        operadores: [...new Set(rows.map((r) => r.contada_por))],
+        qty_total_descartada: rows.reduce((s, r) => s + Number(r.qty_contada), 0),
+      },
+    );
+  }
+  return rows.length;
+}
+
 export async function sairParty(
   sessaoId: string,
   usuarioId: string,
@@ -278,6 +394,26 @@ export async function sairParty(
   // sair da party. Antes dependia do cleanup async (30min) — locks ficavam
   // órfãos bloqueando colegas durante a janela. RPC cleanup continua como
   // safety net pra casos de zumbi (operador some sem chamar sairParty).
+  // [P0-02] ANTES de devolver as locs ao pool, descarta as contagens parciais
+  // delas — senão o próximo claimer conta do zero e o computar SOMA as duas
+  // tentativas. Se o descarte falhar, aborta a saída (melhor o operador
+  // re-tentar do que liberar a loc com rows fantasma).
+  const { data: locsAbandonadas } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("localizacao_id")
+    .eq("sessao_id", sessaoId)
+    .eq("bloqueada_por", usuarioId)
+    .eq("status", "em_contagem");
+  const locIdsAbandonadas = (
+    (locsAbandonadas ?? []) as Array<{ localizacao_id: string }>
+  ).map((l) => l.localizacao_id);
+  await descartarContagensDeLocsDevolvidas(
+    sb,
+    sessaoId,
+    locIdsAbandonadas,
+    "sair_party",
+  );
+
   await sb
     .from("siso_inventario_localizacoes")
     .update({
@@ -501,9 +637,11 @@ export interface RegistrarContagemInput {
  * divergências — não dá pra advinhar qual contagem é "a certa". A
  * divergência fica pendente se o total bater fora da tolerância.
  *
- * UNIQUE constraint na tabela é (sessao_id, localizacao_id, produto_id,
- * contada_por) — múltiplos ops podem ter rows separadas, mas o mesmo op
- * tem 1 row por tripla (a função abaixo trata incremental vs absoluto).
+ * UNIQUE constraint REAL na tabela é (sessao_id, localizacao_id, produto_id,
+ * contada_por) — `uq_inventario_contagens_tripla_operador`, criado em
+ * 20260611h [P2-INV-01]. Múltiplos ops podem ter rows separadas, mas o mesmo
+ * op tem no máximo 1 row por tripla (a função abaixo trata incremental vs
+ * absoluto e usa o índice pra fechar a janela check-then-act via 23505).
  */
 export async function registrarContagem(
   input: RegistrarContagemInput,
@@ -578,15 +716,32 @@ export async function registrarContagem(
         "SKU é um kit sem composição cadastrada — defina os componentes antes",
       );
     }
-    for (const c of comps as Array<{
-      componente_produto_id: string;
-      quantidade: number;
-    }>) {
-      await registrarContagemSimples(sb, {
-        ...input,
-        produto_id: c.componente_produto_id,
-        qty_contada: Number(c.quantidade) * input.qty_contada,
-      });
+    // [P2-INV-06] O bipe de kit grava 1 contagem por componente, sem transação.
+    // Falha no meio + retry duplicaria os componentes já gravados. Rastreamos o
+    // que cada chamada aplicou e, em falha, compensamos (DELETE da row criada
+    // agora / UPDATE decrementando o delta da row pré-existente) — deixando o
+    // estado como antes do bipe pro operador re-bipar limpo.
+    const aplicados: ContagemSimplesResult[] = [];
+    try {
+      for (const c of comps as Array<{
+        componente_produto_id: string;
+        quantidade: number;
+      }>) {
+        const r = await registrarContagemSimples(sb, {
+          ...input,
+          produto_id: c.componente_produto_id,
+          qty_contada: Number(c.quantidade) * input.qty_contada,
+        });
+        aplicados.push(r);
+      }
+    } catch (err) {
+      await compensarContagensDeKit(sb, aplicados);
+      const e = new Error(
+        "falha no meio do kit — contagem revertida, re-bipe",
+      ) as Error & { code?: string; cause?: unknown };
+      e.code = "kit_contagem_parcial_revertida";
+      e.cause = err;
+      throw e;
     }
     return;
   }
@@ -594,10 +749,74 @@ export async function registrarContagem(
   await registrarContagemSimples(sb, input);
 }
 
+/**
+ * [P2-INV-06] Compensa as contagens de componentes já gravadas quando o bipe de
+ * kit falha no meio. Deleta as rows criadas nesta chamada; decrementa o delta
+ * nas pré-existentes. Falha na compensação NÃO é recuperável aqui — só logamos
+ * com detalhes pra reconciliação manual (a falha original já vai propagar).
+ */
+async function compensarContagensDeKit(
+  sb: ReturnType<typeof createServiceClient>,
+  aplicados: ContagemSimplesResult[],
+): Promise<void> {
+  for (const a of aplicados) {
+    try {
+      if (a.criou) {
+        const { error } = await sb
+          .from("siso_inventario_contagens")
+          .delete()
+          .eq("id", a.contagem_id);
+        if (error) throw error;
+      } else if (a.delta_aplicado !== 0) {
+        const { data: row, error: errSel } = await sb
+          .from("siso_inventario_contagens")
+          .select("qty_contada")
+          .eq("id", a.contagem_id)
+          .maybeSingle();
+        if (errSel) throw errSel;
+        if (!row) continue;
+        const novoQty =
+          Number((row as { qty_contada: number }).qty_contada) - a.delta_aplicado;
+        const { error } = await sb
+          .from("siso_inventario_contagens")
+          .update({ qty_contada: Math.max(0, novoQty) })
+          .eq("id", a.contagem_id);
+        if (error) throw error;
+      }
+    } catch (compErr) {
+      logger.logError({
+        source: "wms.inventario.kit-compensacao",
+        message:
+          "falha ao compensar contagem de componente de kit — reconciliar manualmente",
+        category: "database",
+        error: compErr,
+        metadata: {
+          contagem_id: a.contagem_id,
+          criou: a.criou,
+          delta_aplicado: a.delta_aplicado,
+        },
+      });
+    }
+  }
+}
+
+/**
+ * Resultado de UMA escrita de contagem — usado pela compensação do bipe de kit
+ * [P2-INV-06]. `criou` = a row foi INSERTada agora (compensar = DELETE);
+ * `delta_aplicado` = quanto foi somado nesta chamada (compensar row pré-existente
+ * = UPDATE decrementando). `delta_aplicado` só é relevante em modo incremental;
+ * absoluto sobrescreve (compensar perderia o valor antigo — kits usam incremental).
+ */
+interface ContagemSimplesResult {
+  contagem_id: string;
+  criou: boolean;
+  delta_aplicado: number;
+}
+
 async function registrarContagemSimples(
   sb: ReturnType<typeof createServiceClient>,
   input: RegistrarContagemInput,
-): Promise<void> {
+): Promise<ContagemSimplesResult> {
   const modo = input.modo ?? "incremental";
 
   const filtro = {
@@ -627,17 +846,64 @@ async function registrarContagemSimples(
       .update({ qty_contada: novoQty })
       .eq("id", prev.id);
     if (error) throw error;
-    return;
+    return {
+      contagem_id: prev.id,
+      criou: false,
+      delta_aplicado:
+        modo === "incremental"
+          ? input.qty_contada
+          : novoQty - Number(prev.qty_contada),
+    };
   }
 
-  const { error } = await sb.from("siso_inventario_contagens").insert({
-    sessao_id: input.sessao_id,
-    localizacao_id: input.localizacao_id,
-    produto_id: input.produto_id,
-    qty_contada: input.qty_contada,
-    contada_por: input.contada_por,
-  });
-  if (error) throw error;
+  const { data: inserida, error } = await sb
+    .from("siso_inventario_contagens")
+    .insert({
+      sessao_id: input.sessao_id,
+      localizacao_id: input.localizacao_id,
+      produto_id: input.produto_id,
+      qty_contada: input.qty_contada,
+      contada_por: input.contada_por,
+    })
+    .select("id")
+    .single();
+  if (!error) {
+    return {
+      contagem_id: (inserida as { id: string }).id,
+      criou: true,
+      delta_aplicado: input.qty_contada,
+    };
+  }
+  // [P2-INV-01] 23505 = corrida com outra escrita da MESMA tripla+operador
+  // entre o SELECT acima e este INSERT (o índice único
+  // uq_inventario_contagens_tripla_operador fecha a janela check-then-act).
+  // Re-busca a row vencedora e aplica a contagem incrementalmente (1 retry).
+  if ((error as { code?: string }).code !== "23505") throw error;
+  const { data: agora, error: errFetch } = await sb
+    .from("siso_inventario_contagens")
+    .select("id, qty_contada")
+    .match(filtro)
+    .maybeSingle();
+  if (errFetch) throw errFetch;
+  const row = agora as Contagem | null;
+  if (!row) throw error; // sumiu no meio — propaga o 23505 original
+  const novoQty =
+    modo === "incremental"
+      ? Number(row.qty_contada) + input.qty_contada
+      : input.qty_contada;
+  const { error: errUpd } = await sb
+    .from("siso_inventario_contagens")
+    .update({ qty_contada: novoQty })
+    .eq("id", row.id);
+  if (errUpd) throw errUpd;
+  return {
+    contagem_id: row.id,
+    criou: false,
+    delta_aplicado:
+      modo === "incremental"
+        ? input.qty_contada
+        : novoQty - Number(row.qty_contada),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -710,11 +976,25 @@ export async function computarDivergencias(
   // + churn no ledger).
   const { data: sessaoGuard } = await sb
     .from("siso_inventario_sessoes")
-    .select("status")
+    .select("status, continua")
     .eq("id", sessaoId)
     .single();
 
-  const statusAtual = (sessaoGuard as { status: string } | null)?.status;
+  const sessaoInfo = sessaoGuard as {
+    status: string;
+    continua: boolean;
+  } | null;
+
+  // [INV-03] A sessão contínua "Contagens operacionais" acumula acertos inline
+  // JÁ APLICADOS no ledger na hora do pick. Computar/encerrar re-somaria o
+  // histórico inteiro como divergência nova (ganho falso aprovável). Hard guard.
+  if (sessaoInfo?.continua === true) {
+    throw new Error(
+      "sessão contínua de contagens operacionais não pode ser encerrada/computada — os acertos dela já foram aplicados no estoque na hora do pick",
+    );
+  }
+
+  const statusAtual = sessaoInfo?.status;
   if (
     statusAtual === "revisao" ||
     statusAtual === "aprovada" ||
@@ -879,33 +1159,67 @@ export async function computarDivergencias(
     movs,
   });
 
-  // 6. Persiste divergências aplicando tolerância
-  // Primeiro, limpa divergências não-aplicadas pra essas triplas (re-run)
-  for (const d of divergencias) {
-    await sb
-      .from("siso_inventario_divergencias")
-      .delete()
-      .match({
-        sessao_id: sessaoId,
-        localizacao_id: d.localizacao_id,
-        produto_id: d.produto_id,
-      })
-      .neq("status", "aplicada");
+  // [P3-13] valor_financeiro vinha de custoMap derivado SÓ de saldosRaw
+  // (.gt saldo 0): loc que ZEROU (contou 0, saldo agora 0) não entrava no
+  // saldoMap → custo 0 → valor_financeiro 0 → bypassa o gate de valor (a perda
+  // era auto-aprovada). Recarrega o custo médio (global por produto) pra TODOS
+  // os produtos das divergências e recomputa o valor.
+  const produtosDiv = [...new Set(divergencias.map((d) => d.produto_id))];
+  const custoDivMap = new Map<string, number>();
+  if (produtosDiv.length > 0) {
+    const { data: cmDivRaw } = await sb
+      .from("siso_custo_medio")
+      .select("produto_id, custo_medio")
+      .in("produto_id", produtosDiv);
+    for (const r of (cmDivRaw ?? []) as Array<{ produto_id: string; custo_medio: number }>) {
+      custoDivMap.set(r.produto_id, Number(r.custo_medio));
+    }
   }
 
-  for (const d of divergencias) {
+  // 6. Persiste divergências aplicando tolerância
+  // [P3-14] Limpeza: 1 DELETE em LOTE de TODAS as 'pendente' da sessão (em vez
+  // de delete por-divergência, 2×N round-trips). Preserva aprovada/rejeitada/
+  // aplicada. Limpar TODAS as pendentes (não só as triplas recomputadas) elimina
+  // a divergência-fantasma de uma run anterior que crashou no meio do loop.
+  const { error: delErr } = await sb
+    .from("siso_inventario_divergencias")
+    .delete()
+    .eq("sessao_id", sessaoId)
+    .eq("status", "pendente");
+  if (delErr) throw delErr;
+
+  // [P3-14] Bulk upsert em chunks de 200 (em vez de 1 upsert por divergência).
+  const linhas = divergencias.map((d) => {
     const delta_pct =
       d.saldo_esperado === 0 ? null : Math.abs((d.delta / d.saldo_esperado) * 100);
+    // [P3-13] tolerância é OR (não if/else): dentro se passa no % OU no qty_min.
+    // Antes, qty_min só valia quando pct era 0 — agora cada limite vale por si.
+    const pct = s?.tolerancia_pct ?? 0;
+    const qtyMin = s?.tolerancia_qty_min ?? 0;
     const dentroTol =
-      (s?.tolerancia_pct ?? 0) > 0 && delta_pct !== null
-        ? delta_pct <= s!.tolerancia_pct
-        : Math.abs(d.delta) <= (s?.tolerancia_qty_min ?? 0);
+      (pct > 0 && delta_pct !== null && delta_pct <= pct) ||
+      (qtyMin > 0 && Math.abs(d.delta) <= qtyMin);
+    const valorFinanceiro = (custoDivMap.get(d.produto_id) ?? 0) * d.delta;
     const acimaValor =
       s?.exige_aprovacao_acima_valor != null &&
-      Math.abs(d.valor_financeiro) > Number(s.exige_aprovacao_acima_valor);
+      Math.abs(valorFinanceiro) > Number(s.exige_aprovacao_acima_valor);
     const status: "aprovada" | "pendente" =
       dentroTol && !acimaValor ? "aprovada" : "pendente";
+    return {
+      sessao_id: sessaoId,
+      localizacao_id: d.localizacao_id,
+      produto_id: d.produto_id,
+      // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
+      saldo_sistema: d.saldo_esperado,
+      qty_contada_final: d.qty_contada_final,
+      valor_financeiro: valorFinanceiro,
+      status,
+    };
+  });
 
+  const CHUNK = 200;
+  for (let i = 0; i < linhas.length; i += CHUNK) {
+    const lote = linhas.slice(i, i + CHUNK);
     // .select() força supabase-js a expor erro PostgREST — sem isso, falha
     // silenciosa (ex.: ON CONFLICT sem constraint match → erro 42P10
     // descartado e 0 divergências persistidas). Bug histórico: sessão
@@ -913,19 +1227,7 @@ export async function computarDivergencias(
     // junto com empresa_dona_id em 20260520i — corrigido em 20260520j.
     const { error: upErr } = await sb
       .from("siso_inventario_divergencias")
-      .upsert(
-        {
-          sessao_id: sessaoId,
-          localizacao_id: d.localizacao_id,
-          produto_id: d.produto_id,
-          // NOTA: saldo_sistema agora guarda o saldo_esperado_no_bipe (reconciliação temporal) — nome mantido por compat
-          saldo_sistema: d.saldo_esperado,
-          qty_contada_final: d.qty_contada_final,
-          valor_financeiro: d.valor_financeiro,
-          status,
-        },
-        { onConflict: "sessao_id,localizacao_id,produto_id" },
-      )
+      .upsert(lote, { onConflict: "sessao_id,localizacao_id,produto_id" })
       .select("id");
     if (upErr) throw upErr;
   }
@@ -1007,6 +1309,21 @@ export async function aprovarSessao(
   // Libera locks externos SÓ quando a aprovação efetivamente transicionou.
   // Aplicação (gerar movs) é só ato contábil — não precisa segurar lock
   // contra outras sessões.
+  //
+  // [P2-INV-02] siso_localizacao_locks NÃO tem coluna de dono (sessao_id/
+  // origem_id) — só (localizacao_id, motivo, iniciado_em, iniciado_por). Soltar
+  // por localizacao_id puro liberava lock de OUTRA sessão que travou a mesma loc.
+  // Escopamos pelo melhor proxy disponível: locks das locs desta sessão que
+  // foram criados DEPOIS de a sessão iniciar (iniciado_em >= iniciada_em).
+  // LIMITAÇÃO: se duas sessões da mesma loc iniciam no mesmo instante, ainda há
+  // ambiguidade — só uma coluna de dono no schema resolve de vez.
+  const { data: sessRow } = await sb
+    .from("siso_inventario_sessoes")
+    .select("iniciada_em")
+    .eq("id", sessaoId)
+    .maybeSingle();
+  const iniciadaEm = (sessRow as { iniciada_em: string | null } | null)?.iniciada_em ?? null;
+
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -1015,11 +1332,13 @@ export async function aprovarSessao(
     (l) => l.localizacao_id,
   );
   if (locIds.length > 0) {
-    await sb
+    let q = sb
       .from("siso_localizacao_locks")
       .update({ finalizado_em: new Date().toISOString() })
       .in("localizacao_id", locIds)
       .is("finalizado_em", null);
+    if (iniciadaEm) q = q.gte("iniciado_em", iniciadaEm);
+    await q;
   }
 }
 
@@ -1116,8 +1435,12 @@ export async function estornarSessaoInventario(input: {
 /**
  * [P159] Estorna UMA divergência aplicada (não a sessão inteira). Reseta a
  * divergência alvo pra 'pendente' e não toca nas demais. Reusa o guard de
- * double-estorno de estornarMovimentacao. Não força a sessão a recontagem das
- * que continuam corretas; se ainda restarem 'aplicada', a sessão segue 'aplicada'.
+ * double-estorno de estornarMovimentacao.
+ *
+ * [P2-INV-07] Se a sessão estava 'aplicada', reabre pra 'aprovada' após o
+ * estorno — senão a re-aplicação seria no-op (a RPC de aplicar só roda em
+ * status 'aprovada' E é idempotente em 'aplicada'). Com a sessão reaberta o
+ * supervisor pode re-aprovar a divergência (PATCH /divergencias) e re-aplicar.
  */
 export async function estornarDivergenciaInventario(input: {
   divergencia_id: string;
@@ -1130,11 +1453,11 @@ export async function estornarDivergenciaInventario(input: {
   const sb = createServiceClient();
   const { data: div } = await sb
     .from("siso_inventario_divergencias")
-    .select("id, sessao_id, mov_aplicada_id, status")
+    .select("id, sessao_id, mov_aplicada_id, status, aplicacoes")
     .eq("id", input.divergencia_id)
     .maybeSingle();
   if (!div) throw new Error("divergência não encontrada");
-  const d = div as { id: string; sessao_id: string; mov_aplicada_id: string | null; status: string };
+  const d = div as { id: string; sessao_id: string; mov_aplicada_id: string | null; status: string; aplicacoes: number };
   if (d.status !== "aplicada") {
     throw new Error(`divergência em status ${d.status} — apenas 'aplicada' pode ser estornada`);
   }
@@ -1152,12 +1475,44 @@ export async function estornarDivergenciaInventario(input: {
       if (!/já foi estornada|já é um estorno/.test(msg)) throw err;
     }
   }
+  // [INV-01] aplicacoes+1: a re-aplicação grava nova geração em
+  // origem_detalhes.aplicacao — sem o bump, o índice único
+  // uniq_movs_inventario_divergencia colide com a mov estornada (23505).
   const { error: updErr } = await sb
     .from("siso_inventario_divergencias")
-    .update({ status: "pendente", mov_aplicada_id: null })
+    .update({
+      status: "pendente",
+      mov_aplicada_id: null,
+      aplicacoes: (d.aplicacoes ?? 0) + 1,
+    })
     .eq("id", d.id);
   if (updErr) {
     throw new Error(`falha ao resetar divergência ${d.id}: ${updErr.message}`);
   }
+
+  // [P2-INV-07] Reabre a sessão se estava 'aplicada' — destrava a re-aplicação
+  // (a RPC de aplicar exige status 'aprovada'; em 'aplicada' é no-op idempotente,
+  // então a divergência estornada nunca seria re-aplicada). A divergência
+  // estornada fica 'pendente'; o supervisor re-aprova e re-aplica a sessão.
+  // O CAS por status='aplicada' evita corrida com outro estorno concorrente.
+  const { data: reaberta, error: errSess } = await sb
+    .from("siso_inventario_sessoes")
+    .update({ status: "aprovada", aplicada_em: null })
+    .eq("id", d.sessao_id)
+    .eq("status", "aplicada")
+    .select("id");
+  if (errSess) {
+    throw new Error(
+      `divergência estornada mas falha ao reabrir sessão ${d.sessao_id}: ${errSess.message}`,
+    );
+  }
+  if (reaberta && reaberta.length > 0) {
+    logger.info(
+      "wms.inventario.estorno-divergencia",
+      "sessão reaberta pra re-aplicação após estorno de divergência",
+      { sessao_id: d.sessao_id, divergencia_id: d.id },
+    );
+  }
+
   return { movEstornada: estornada };
 }

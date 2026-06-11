@@ -264,15 +264,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Update fully completed pedidos to 'separado' (apenas os com cobertura OK)
+    // P2-SEP-06: o filtro de status agora aceita em_separacao E aguardando_separacao
+    // — o estado "tudo marcado + aguardando_separacao" existe (marcar-item aceita
+    // marcar nesse status). Sem isso, um pedido nesse estado não casava o
+    // `.eq("em_separacao")`, o UPDATE atualizava 0 linhas e a resposta mentia
+    // "separado". `.select("id")` devolve os ids realmente claimados pra detectar
+    // quem ficou de fora.
+    const naoConcluidos: Array<{ pedido_id: string; motivo: string }> = [];
     if (separadosCompletos.length > 0) {
-      const { error: updateError } = await supabase
+      const { data: claimados, error: updateError } = await supabase
         .from("siso_pedidos")
         .update({
           status_separacao: "separado",
           separacao_concluida_em: new Date().toISOString(),
         })
         .in("id", separadosCompletos)
-        .eq("status_separacao", "em_separacao");
+        .in("status_separacao", ["em_separacao", "aguardando_separacao"])
+        .select("id");
 
       if (updateError) {
         logger.logError({
@@ -290,10 +298,26 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         );
       }
+
+      // Pedidos que NÃO foram claimados (status mudou por baixo — outro operador,
+      // race) não viraram 'separado'. Reporta na resposta pra UI avisar.
+      const claimadosSet = new Set((claimados ?? []).map((p) => p.id as string));
+      for (const pid of separadosCompletos) {
+        if (!claimadosSet.has(pid)) {
+          naoConcluidos.push({ pedido_id: pid, motivo: "status_inesperado" });
+        }
+      }
     }
 
+    // Só os que REALMENTE viraram 'separado' disparam cutover/histórico/agrupamento.
+    const naoConcluidosSet = new Set(naoConcluidos.map((n) => n.pedido_id));
+    const separadosConcluidos = separadosCompletos.filter(
+      (pid) => !naoConcluidosSet.has(pid),
+    );
+
     logger.info("separacao-concluir", "Separação concluída", {
-      separados: separadosCompletos,
+      separados: separadosConcluidos,
+      naoConcluidos: naoConcluidos.map((n) => n.pedido_id),
       aguardandoCompra,
       validacaoOc,
       pendentes,
@@ -329,9 +353,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Record history for completed pedidos
-    if (separadosCompletos.length > 0) {
+    if (separadosConcluidos.length > 0) {
       registrarEventos(
-        separadosCompletos.map((pid) => ({
+        separadosConcluidos.map((pid) => ({
           pedidoId: pid,
           evento: "separacao_concluida" as const,
           usuarioId: session.id,
@@ -341,7 +365,7 @@ export async function POST(request: NextRequest) {
 
       // WMS cutover R→L+S: pedido entrou no conjunto forward (separado).
       // Helper é idempotente — dispara se NF já emitida (caso normal).
-      for (const pid of separadosCompletos) {
+      for (const pid of separadosConcluidos) {
         dispararCutoverSePronto(pid).catch((err) => {
           logger.warn("separacao-concluir", "Falha ao disparar cutover", {
             pedidoId: pid,
@@ -353,13 +377,13 @@ export async function POST(request: NextRequest) {
       // Fire-and-forget: ensure agrupamentos exist and ZPL labels are cached.
       // This is a second chance — the first attempt was at iniciar time.
       // 1. Create agrupamentos for any pedidos that don't have one yet
-      preCriarAgrupamentosEmLote(separadosCompletos).catch((err) => {
+      preCriarAgrupamentosEmLote(separadosConcluidos).catch((err) => {
         logger.error("separacao-concluir", "Falha ao pré-criar agrupamentos no concluir", {
           error: err instanceof Error ? err.message : String(err),
         });
       });
       // 2. Re-download ZPL for pedidos that have agrupamento but missing ZPL
-      recarregarEtiquetasFaltantes(separadosCompletos).catch((err) => {
+      recarregarEtiquetasFaltantes(separadosConcluidos).catch((err) => {
         logger.error("separacao-concluir", "Falha ao recarregar etiquetas faltantes", {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -367,10 +391,11 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      separados: separadosCompletos,
+      separados: separadosConcluidos,
       aguardandoCompra,
       validacaoOc,
       pendentes,
+      nao_concluidos: naoConcluidos,
       cobertura_incompleta: coberturaIncompleta,
     });
   } catch (err) {

@@ -160,18 +160,34 @@ export async function reconciliarEntradaEstoque(args: {
 
   // Escolhe a loc de PICKING com maior disponível pra colocar a reserva.
   // Re-consultado a cada item (o disponível cai conforme reservamos).
+  // P3-26: exclui locs com lock ativo (sendo inventariadas) — criar R numa loc
+  // travada conflita com a contagem em curso. Mesmo filtro de
+  // roteamento.ts/sugestao-dinamica.ts (siso_localizacao_locks, finalizado_em IS NULL).
   async function melhorLocPicking(): Promise<string | null> {
-    const { data } = await supabase
-      .from("siso_estoque")
-      .select("localizacao_id, siso_localizacoes!inner(tipo)")
-      .eq("produto_id", produtoId)
-      .eq("galpao_id", galpaoId)
-      .eq("siso_localizacoes.tipo", "picking")
-      .gt("disponivel", 0)
-      .order("disponivel", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return (data?.localizacao_id as string | null | undefined) ?? null;
+    const [estoqueRes, locksRes] = await Promise.all([
+      supabase
+        .from("siso_estoque")
+        .select("localizacao_id, siso_localizacoes!inner(tipo)")
+        .eq("produto_id", produtoId)
+        .eq("galpao_id", galpaoId)
+        .eq("siso_localizacoes.tipo", "picking")
+        .gt("disponivel", 0)
+        .order("disponivel", { ascending: false })
+        .limit(20),
+      supabase
+        .from("siso_localizacao_locks")
+        .select("localizacao_id")
+        .is("finalizado_em", null),
+    ]);
+    const blocked = new Set(
+      (locksRes.data ?? []).map(
+        (l) => (l as { localizacao_id: string }).localizacao_id,
+      ),
+    );
+    const livre = (estoqueRes.data ?? []).find(
+      (row) => !blocked.has((row as { localizacao_id: string }).localizacao_id),
+    );
+    return (livre as { localizacao_id?: string } | undefined)?.localizacao_id ?? null;
   }
 
   // 5. seleção FIFO estrita (função pura já no arquivo)

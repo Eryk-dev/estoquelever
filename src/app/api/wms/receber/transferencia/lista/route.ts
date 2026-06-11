@@ -22,10 +22,11 @@ export async function GET(request: NextRequest) {
 
   const { data: user } = await supabase
     .from("siso_usuarios")
-    .select("galpao_id, cargo")
+    .select("galpao_id")
     .eq("id", session.id)
     .single();
-  const isAdmin = user?.cargo === "admin";
+  // P3-10: gate por permissão (RBAC dinâmico), não por cargo legado.
+  const isAdmin = userCan(session, "sistema.usuarios");
 
   let q = supabase
     .from("siso_transferencias_galpao")

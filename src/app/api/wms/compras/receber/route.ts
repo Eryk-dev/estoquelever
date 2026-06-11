@@ -5,7 +5,8 @@ import { getSessionUser } from "@/lib/session";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
 import { userCan } from "@/lib/permissions";
 import { registrarEventos } from "@/lib/historico-service";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import { criarPendencia } from "@/lib/wms/guarda";
 import { resolverCustoEntrada } from "@/lib/wms/custo-fallback";
 
 /**
@@ -432,7 +433,7 @@ async function gravarMovEntradaCompra(args: {
   // rejeitaria via assertUuidLike. Passamos via `origem_id` (que é text por
   // design no ledger) + `origem_detalhes.pedido_id_tiny` pra preservar
   // rastreabilidade.
-  await inserirMovimentacao({
+  const mov = await inserirMovimentacao({
     tripla: {
       produto_id: produtoId,
       galpao_id: galpaoId,
@@ -455,4 +456,40 @@ async function gravarMovEntradaCompra(args: {
     motivo: `Recebimento OC — pedido ${pedido_id}`,
     usuario_id,
   });
+
+  // 6) P3-07: cria pendência de put-away (igual ao caminho rico de receber-oc
+  // e compras-manuais). Sem ela o saldo fica preso na loc RECEBIMENTO — o
+  // reconciliador-oc só conta tipo='picking', então a peça fica invisível no
+  // dock. Se a pendência falhar, ESTORNA a E pra não deixar saldo órfão.
+  try {
+    await criarPendencia({
+      produto_id: produtoId,
+      galpao_id: galpaoId,
+      localizacao_origem_id: locId,
+      mov_entrada_id: mov.id,
+      qty_inicial: qty,
+      origem_tipo: "nf_compra",
+      custo_unitario: custoResolvido,
+      criada_por: usuario_id,
+    });
+  } catch (pendErr) {
+    try {
+      await estornarMovimentacao({
+        mov_id: mov.id,
+        usuario_id,
+        motivo: `Estorno automático: criação de pendência de guarda falhou (${pendErr instanceof Error ? pendErr.message : String(pendErr)})`,
+      });
+    } catch (estornoErr) {
+      logger.error(
+        "compras-receber",
+        "FALHA AO ESTORNAR mov E após erro na pendência — mov órfã",
+        {
+          movId: mov.id,
+          errOriginal: String(pendErr),
+          errEstorno: String(estornoErr),
+        },
+      );
+    }
+    throw pendErr;
+  }
 }

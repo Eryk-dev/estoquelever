@@ -89,6 +89,9 @@ export async function POST(request: NextRequest) {
     if (etapa === "separacao") {
       // Helper estorna mov_saida_id, cancela realocs, reseta 10 campos do item
       // e registra evento `separacao_resetada` por pedido.
+      // recriarReservas (SEP-06): o pedido fica em_separacao aguardando
+      // re-pick no MESMO galpão — sem ressuscitar as R's das S's estornadas,
+      // outro pedido roteava em cima do saldo devolvido (re-pick → 409).
       const { data: items } = await supabase
         .from("siso_pedido_itens")
         .select("id")
@@ -99,6 +102,7 @@ export async function POST(request: NextRequest) {
         itemIds: (items ?? []).map((i) => i.id),
         usuarioId: session.id,
         motivo: "reiniciar",
+        recriarReservas: true,
       });
     } else {
       // etapa === 'embalagem'

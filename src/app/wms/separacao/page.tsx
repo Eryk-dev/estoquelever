@@ -749,16 +749,7 @@ export default function WmsSeparacaoPage() {
         subtitle="Wave picking, embalagem e expedição"
         backHref="/wms"
         backLabel="Voltar ao WMS"
-      >
-        <button
-          className="wms-btn wms-btn-ghost wms-btn-sm"
-          type="button"
-          onClick={() => router.push("/wms/separacao/conferencia")}
-        >
-          <Icon name="check" size={12} />
-          Conferência
-        </button>
-      </PageHeader>
+      />
 
       <TabsStatusSeparacao
         active={tab}
@@ -881,6 +872,7 @@ export default function WmsSeparacaoPage() {
               onRetryEtiqueta={(ids) =>
                 retryEtiquetaMut.mutate(ids ?? effectiveIds)
               }
+              onConferir={() => router.push("/wms/separacao/conferencia")}
             />
           </div>
         )}
@@ -1431,6 +1423,7 @@ interface PrimaryTabActionsProps {
   onSepararChecklist: (modo?: string) => void;
   onEmbalar: (modo?: string, idsOverride?: string[]) => void;
   onRetryEtiqueta: (ids?: string[]) => void;
+  onConferir: () => void;
 }
 
 function PrimaryTabActions({
@@ -1445,6 +1438,7 @@ function PrimaryTabActions({
   onSepararChecklist,
   onEmbalar,
   onRetryEtiqueta,
+  onConferir,
 }: PrimaryTabActionsProps) {
   // Indicador "operando em todos" vs "operando em selection" (texto consistente)
   const countLabel = hasSelection
@@ -1577,7 +1571,23 @@ function PrimaryTabActions({
     );
   }
 
-  // aguardando_nf e embalado: ação principal requer selection — só aparece na
+  // Embalados: bancada de conferência (scan-driven — não depende de selection).
+  // Mesmo modelo do botão "Embalar" da aba separados.
+  if (tab === "embalado") {
+    return (
+      <button
+        className="wms-btn wms-btn-primary wms-btn-sm"
+        onClick={() => onConferir()}
+        type="button"
+        title="Abrir a bancada de conferência (bipar etiqueta de envio)"
+      >
+        <Icon name="check" size={11} />
+        Conferir
+      </button>
+    );
+  }
+
+  // aguardando_nf: ação principal requer selection — só aparece na
   // selection bar. Retorna nada na toolbar.
   return null;
 }

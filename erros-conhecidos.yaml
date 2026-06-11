@@ -5398,3 +5398,26 @@ erros:
     - supabase/migrations/20260611c_status_conferido_check.sql
     - src/app/api/wms/separacao/conferencia/bipar/route.ts
   tags: [separacao, conferencia, status, check-constraint, claim-atomico, postgrest]
+- id: MOBILE-PWA-ORIENTATION-TABELA-CLIP
+  date: 2026-06-11
+  source: wms
+  category: business_logic
+  message: "PWA instalado do Chrome ficava travado de lado no tablet em landscape; tabelas largas eram cortadas sem pan horizontal no mobile; rodapé sumia atrás da barra de URL"
+  cause: >
+    Três causas independentes: (1) manifest.webmanifest com
+    orientation: portrait trava a orientação do app instalado — tablet
+    usado em landscape renderiza a tela rotacionada; (2) .wms-tbl com
+    overflow: hidden (pra clipar border-radius) cortava tabelas mais
+    largas que a viewport sem criar scroll — o conteúdo ficava
+    inalcançável e arrastar não fazia nada; (3) .wms-app com
+    height: 100vh — no Chrome mobile 100vh inclui a barra de URL
+    recolhida, então o rodapé fica atrás dela.
+  fix: >
+    orientation: any no manifest (segue o sensor; reinstalar o PWA pra
+    pegar); .wms-tbl ganha overflow-x: auto (+ -webkit-overflow-scrolling)
+    mantendo o hidden vertical pro radius; .wms-app usa height: 100dvh
+    com fallback 100vh.
+  files:
+    - public/manifest.webmanifest
+    - src/app/wms/wms.css
+  tags: [mobile, pwa, manifest, orientation, overflow, dvh, tabela]

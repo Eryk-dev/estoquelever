@@ -8,7 +8,7 @@
   "background_color": "#23d8d3",
   "theme_color": "#23d8d3",
   "lang": "pt-BR",
-  "orientation": "portrait",
+  "orientation": "any",
   "icons": [
     {
       "src": "/pwa-192.png",

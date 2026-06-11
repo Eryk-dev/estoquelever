@@ -97,6 +97,7 @@ export async function GET(request: NextRequest) {
         "em_separacao",
         "separado",
         "embalado",
+        "conferido",
       ]);
       break;
     case "baixados":

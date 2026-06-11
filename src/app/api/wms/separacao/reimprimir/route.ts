@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "acesso_negado" }, { status: 403 });
   }
 
-  if (pedido.status_separacao !== "embalado") {
+  if (pedido.status_separacao !== "embalado" && pedido.status_separacao !== "conferido") {
     return NextResponse.json(
       { error: "pedido_nao_embalado", status_separacao: pedido.status_separacao },
       { status: 400 },

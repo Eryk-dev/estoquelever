@@ -66,7 +66,7 @@ export async function cancelarVendaManual(input: {
   // consumidas no pick (R→L+S), então estornarReservaIndividual é idempotente-no-op
   // nelas; efetivamente só as R dos não-pegos são liberadas. A S dos pegos NÃO é
   // estornada (auditoria preservada); pegos viram pendência de devolução manual.
-  if (["em_separacao", "separado", "embalado"].includes(p.status_separacao ?? "")) {
+  if (["em_separacao", "separado", "embalado", "conferido"].includes(p.status_separacao ?? "")) {
     const { data: itensRaw } = await sb
       .from("siso_pedido_itens")
       .select("id, sku, mov_saida_id, quantidade_pega")

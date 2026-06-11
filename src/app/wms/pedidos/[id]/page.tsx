@@ -101,6 +101,7 @@ type StatusSeparacao =
   | "em_separacao"
   | "separado"
   | "embalado"
+  | "conferido"
   | "expedido";
 
 interface PedidoDetalhe {
@@ -149,6 +150,7 @@ const STATUS_SEPARACAO_LABELS: Record<string, string> = {
   em_separacao: "Em separação",
   separado: "Separado",
   embalado: "Embalado",
+  conferido: "Conferido",
   expedido: "Expedido",
 };
 

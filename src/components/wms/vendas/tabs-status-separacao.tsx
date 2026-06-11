@@ -11,6 +11,7 @@ type TabId =
   | "em_separacao"
   | "separado"
   | "embalado"
+  | "conferido"
   | "pendente_realocacao";
 
 interface TabsStatusSeparacaoProps {
@@ -24,6 +25,7 @@ interface TabsStatusSeparacaoProps {
     em_separacao: number;
     separado: number;
     embalado: number;
+    conferido: number;
     pendente_realocacao: number;
   };
 }
@@ -35,6 +37,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "em_separacao", label: "Em separação" },
   { id: "separado", label: "Separados" },
   { id: "embalado", label: "Embalados" },
+  { id: "conferido", label: "Conferidos" },
   { id: "pendente_realocacao", label: "Realocação" },
 ];
 

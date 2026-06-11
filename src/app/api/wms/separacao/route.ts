@@ -179,7 +179,7 @@ export async function GET(request: NextRequest) {
     if (tagFilter) {
       pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
     }
-    if (statusFilters.includes("embalado")) {
+    if (statusFilters.includes("embalado") || statusFilters.includes("conferido")) {
       pedidosQuery = pedidosQuery
         .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
         .order("data", { ascending: true });

@@ -135,7 +135,7 @@ export default function VendaDetalhePage({
 
   const { pedido, itens, historico } = data;
   const podeCancelarStatus = pedido.status !== "cancelado";
-  const statusSeparacaoAtivo = ["em_separacao", "separado", "embalado"].includes(
+  const statusSeparacaoAtivo = ["em_separacao", "separado", "embalado", "conferido"].includes(
     pedido.status_separacao ?? "",
   );
   const origemLabel =

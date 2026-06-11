@@ -51,6 +51,7 @@ type StatusServer =
   | "em_separacao"
   | "separado"
   | "embalado"
+  | "conferido"
   | "pendente_realocacao";
 
 interface CompraStatsItem {
@@ -120,6 +121,7 @@ const TAB_TO_STATUS: Record<Tab, StatusServer[]> = {
   em_separacao: ["em_separacao"],
   separado: ["separado"],
   embalado: ["embalado"],
+  conferido: ["conferido"],
   pendente_realocacao: ["pendente_realocacao"],
 };
 
@@ -147,6 +149,10 @@ const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
   embalado: {
     title: "Nenhum pedido embalado",
     body: "Pedidos embalados e prontos pra expedição aparecem aqui.",
+  },
+  conferido: {
+    title: "Nenhum pedido conferido",
+    body: "Pedidos com a embalagem conferida (bip da etiqueta de envio) aparecem aqui.",
   },
   pendente_realocacao: {
     title: "Nenhum pedido aguardando realocação",
@@ -215,6 +221,13 @@ const MOVE_TARGETS: Partial<
       { value: "separado", label: "Separado" },
       { value: "aguardando_separacao", label: "Aguard. separação" },
     ],
+    forward: [{ value: "conferido", label: "Conferido" }],
+  },
+  conferido: {
+    back: [
+      { value: "embalado", label: "Embalado" },
+      { value: "separado", label: "Separado" },
+    ],
     forward: [],
   },
 };
@@ -227,6 +240,7 @@ function parseTab(value: string | null | undefined): Tab {
     "em_separacao",
     "separado",
     "embalado",
+    "conferido",
     "pendente_realocacao",
   ];
   return valid.includes(value as Tab)
@@ -386,6 +400,7 @@ export default function WmsSeparacaoPage() {
       em_separacao: data?.counts.em_separacao ?? 0,
       separado: data?.counts.separado ?? 0,
       embalado: data?.counts.embalado ?? 0,
+      conferido: data?.counts.conferido ?? 0,
       pendente_realocacao: data?.counts.pendente_realocacao ?? 0,
     }),
     [data?.counts],
@@ -734,7 +749,16 @@ export default function WmsSeparacaoPage() {
         subtitle="Wave picking, embalagem e expedição"
         backHref="/wms"
         backLabel="Voltar ao WMS"
-      />
+      >
+        <button
+          className="wms-btn wms-btn-ghost wms-btn-sm"
+          type="button"
+          onClick={() => router.push("/wms/separacao/conferencia")}
+        >
+          <Icon name="check" size={12} />
+          Conferência
+        </button>
+      </PageHeader>
 
       <TabsStatusSeparacao
         active={tab}
@@ -1047,7 +1071,7 @@ export default function WmsSeparacaoPage() {
                 Forçar pendente · {selectedArr.length}
               </button>
             )}
-            {tab === "embalado" && (
+            {(tab === "embalado" || tab === "conferido") && (
               <>
                 <button
                   className="wms-btn wms-btn-ghost wms-btn-sm"

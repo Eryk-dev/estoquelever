@@ -7,10 +7,10 @@ import {
 } from "./permissions";
 
 describe("PERMISSIONS registry", () => {
-  it("tem exatamente 38 permissões em 8 módulos", () => {
-    expect(PERMISSAO_CODIGOS).toHaveLength(38);
+  it("tem exatamente 34 permissões em 6 módulos", () => {
+    expect(PERMISSAO_CODIGOS).toHaveLength(34);
     const modulos = new Set(Object.values(PERMISSIONS).map((p) => p.modulo));
-    expect(modulos.size).toBe(8);
+    expect(modulos.size).toBe(6);
   });
 
   it("toda permissão tem modulo e label não-vazios", () => {

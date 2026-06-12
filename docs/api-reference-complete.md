@@ -5564,7 +5564,7 @@ Registra entrada de estoque. Dois modos:
 }
 ```
 
-> Body **não tem mais `empresa_dona_id`** desde 2026-05-20 — empresa não é coordenada física. `empresa_compradora_id` e `fornecedor_id` viajam como tags na mov (lookup via `/api/wms/relatorios/movs-por-empresa`).
+> Body **não tem mais `empresa_dona_id`** desde 2026-05-20 — empresa não é coordenada física. `empresa_compradora_id` e `fornecedor_id` viajam como tags na mov.
 > `localizacao_destino_id` por item é opcional no modo padrão (tablet decide depois) e **obrigatório** no modo entrada direta.
 
 **Side effects:**
@@ -5930,7 +5930,7 @@ Atualiza/desativa.
 
 ### Empréstimos API (REMOVIDA em 2026-05-20)
 
-> Os endpoints `/api/wms/emprestimo-regras/*` e `/api/wms/emprestimos/saldos` foram **removidos** com o ledger simplificado 3D. Empresa não é mais coordenada física, não há débito/crédito entre empresas. Para apuração por empresa, use os reports em `/api/wms/relatorios/*` (ver seção "WMS — Relatórios" abaixo).
+> Os endpoints `/api/wms/emprestimo-regras/*` e `/api/wms/emprestimos/saldos` foram **removidos** com o ledger simplificado 3D. Empresa não é mais coordenada física, não há débito/crédito entre empresas. Os reports `/api/wms/relatorios/*` que cobriam apuração por empresa também foram removidos em 2026-06-12.
 
 ### POST /api/wms/rotear
 Testa o algoritmo (debug + integração futura).
@@ -6081,9 +6081,6 @@ Atualiza status de divergências em lote (single-id é caso particular com `[id]
 Defesas: o UPDATE filtra por `sessao_id` (impede IDs de outra sessão) e `status='pendente'` (idempotente — re-aplicar é no-op). `atualizadas` pode ser menor que `divergencia_ids.length` se algum ID já não estava pendente.
 
 **Exceção (2026-06-11, fix INV-02):** com a SESSÃO em `aprovada`, `acao='rejeitar'` também aceita divergências em status `aprovada` (exige `inventario.supervisionar`; senão 403) — destrava sessão presa quando o Aplicar falha numa divergência cujo saldo mudou (pick entre aprovação e aplicação). A UI expõe o botão Rejeitar nesse estado.
-
-### GET /api/wms/inventario/metricas
-RPCs: acuracidade por operador (30d) + por localização (5000 últimas).
 
 ### GET /api/wms/inventario/[id]/eventos
 
@@ -6331,140 +6328,9 @@ Retorna o estado das 6 filas operacionais que o quadro de tarefas pendentes da h
 
 ---
 
-## WMS — Relatórios (novo em 2026-05-20)
+## WMS — Relatórios (REMOVIDO em 2026-06-12)
 
-Com o ledger simplificado, apuração por empresa virou **report sobre tags em movs** em vez de coordenada física. 3 endpoints novos, todos read-only.
-
-### GET /api/wms/relatorios/movs-por-empresa
-
-**File:** `src/app/api/wms/relatorios/movs-por-empresa/route.ts`
-
-**Purpose:** Lista movs filtradas por uma das três tags de empresa.
-
-**Auth:** X-Session-Id (required)
-
-**Query params:**
-- `empresa_id` (required) — empresa alvo
-- `tipo` (required) — `compradora` | `vendedora` | `referencia` (qual coluna FK filtrar)
-- `desde`, `ate` — intervalo ISO 8601
-- `origem_tipo` — filtra por enum de origem
-- `limit` (default 200, max 1000)
-
-**Response (200):**
-```json
-{
-  "rows": [
-    {
-      "id": "uuid",
-      "criado_em": "ISO",
-      "tipo": "E|S|R|L",
-      "origem_tipo": "string",
-      "produto_sku": "string",
-      "produto_descricao": "string",
-      "galpao_nome": "string",
-      "localizacao_codigo": "string",
-      "quantidade": 10,
-      "custo_unitario": 12.5,
-      "empresa_compradora_nome": "string|null",
-      "empresa_vendedora_nome": "string|null",
-      "empresa_referencia_nome": "string|null",
-      "fornecedor_nome": "string|null"
-    }
-  ]
-}
-```
-
-**Side Effects:** None.
-
----
-
-### GET /api/wms/relatorios/historico-custo
-
-**File:** `src/app/api/wms/relatorios/historico-custo/route.ts`
-
-**Purpose:** Série temporal de custo médio por produto, reconstruída a partir de `custo_medio_anterior` → `custo_medio_posterior` nas movs de entrada com `custo_unitario`.
-
-**Auth:** X-Session-Id (required)
-
-**Query params:**
-- `produto_id` (required)
-- `desde`, `ate` — intervalo ISO 8601 (default últimos 90 dias)
-
-**Response (200):**
-```json
-{
-  "produto": { "id": "uuid", "sku": "string", "descricao": "string" },
-  "custo_atual": 12.5,
-  "atualizado_em": "ISO",
-  "serie": [
-    {
-      "mov_id": "uuid",
-      "criado_em": "ISO",
-      "origem_tipo": "nf_compra",
-      "quantidade": 50,
-      "custo_unitario": 11.0,
-      "custo_medio_anterior": 10.0,
-      "custo_medio_posterior": 10.8,
-      "empresa_compradora_nome": "string|null",
-      "fornecedor_nome": "string|null"
-    }
-  ]
-}
-```
-
-**Side Effects:** None.
-
----
-
-### GET /api/wms/relatorios/conferencia
-
-**File:** `src/app/api/wms/relatorios/conferencia/route.ts`
-
-**Purpose:** Métricas da conferência de embalagem no período: KPIs gerais (% rastreado, % conferido, divergências), taxa de acerto por embalador (breakdown por tipo de erro) e volume por conferente.
-
-**Auth:** X-Session-Id (required)
-
-**Query params:** `de` (ISO date, default 7d atrás) · `ate` (ISO date, inclusivo, default hoje) · `galpao_id` (opcional)
-
-**Response (200):** `{ periodo, geral: { embalados_periodo, com_embalador, conferidos, divergencias, pct_rastreado, pct_conferido }, por_embalador: [...], por_conferente: [...] }`
-
----
-
-### GET /api/wms/relatorios/saldos-por-empresa
-
-**File:** `src/app/api/wms/relatorios/saldos-por-empresa/route.ts`
-
-**Purpose:** Recompõe saldo "virtual" por empresa a partir das tags em movs. **Não é coordenada física** — é um corte contábil pra apuração de NF: Σ entradas com `empresa_compradora_id=X` − Σ saídas com `empresa_vendedora_id=X` (estornos descontados).
-
-**Auth:** X-Session-Id (required)
-
-**Query params:**
-- `empresa_id` (required) — empresa alvo
-- `galpao_id` — opcional, filtra por galpão
-- `produto_id` — opcional, filtra por produto
-
-**Response (200):**
-```json
-{
-  "rows": [
-    {
-      "produto_id": "uuid",
-      "produto_sku": "string",
-      "produto_descricao": "string",
-      "saldo_virtual": 42,
-      "entradas": 100,
-      "saidas": 58
-    }
-  ],
-  "total_skus": 1
-}
-```
-
-**Side Effects:** None.
-
-**Notes:**
-- Cálculo é caro (full scan filtrado de `siso_movimentacoes`). Limit no client/UI.
-- Saldo virtual ≠ saldo físico (que é em `siso_estoque` por galpão+loc). Útil pra contabilidade fiscal.
+> Os endpoints `/api/wms/relatorios/movs-por-empresa`, `/api/wms/relatorios/historico-custo`, `/api/wms/relatorios/conferencia` e `/api/wms/relatorios/saldos-por-empresa` foram **removidos** junto com o módulo Relatórios (frontend `/wms/relatorios/*` e permissão `relatorios.ver` também). O módulo Insights (`/api/wms/insights/*`, frontend `/wms/insights/*`, permissões `insights.*`, motor em `src/lib/wms/insights/`) foi removido na mesma data. Tabelas e RPCs de insights permanecem no banco (mortos); o cron `wms_insights_refresh` foi desagendado (migration `20260612_unschedule_insights_cron.sql`).
 
 ---
 

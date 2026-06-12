@@ -10,7 +10,7 @@ import { userCan } from "@/lib/permissions";
  * com saldo Tiny. Divergências > threshold (default 1 unidade) entram no
  * resultado.
  *
- * Auth: WORKER_SECRET (cron) OU admin/insights.ver.
+ * Auth: WORKER_SECRET (cron) OU admin (sistema.usuarios).
  *
  * Query params:
  *   - empresa_id (opcional)
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     if (!session) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
-    if (!userCan(session, "insights.ver")) {
+    if (!userCan(session, "sistema.usuarios")) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
   }

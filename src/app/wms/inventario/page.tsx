@@ -58,10 +58,6 @@ export default function InventarioListaPage() {
         title="Inventários"
         subtitle="Pool compartilhado · party dinâmica de operadores · sugestão inteligente"
       >
-        <Link href="/wms/inventario/metricas" className="wms-btn wms-btn-ghost">
-          <Icon name="gauge" size={12} />
-          Métricas
-        </Link>
         {podeSupervisar && (
           <button
             type="button"

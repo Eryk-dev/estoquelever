@@ -116,7 +116,7 @@ Conjunto: `propria | transferencia | oc` (sem empréstimo/swap no 3D).
 ### Status
 
 - **Pedido** (`StatusPedido`): `pendente · executando · concluido · cancelado · erro`. `decisao_final`: `propria | transferencia | oc | rejeitado`.
-- **Separação** (`StatusSeparacao`): `aguardando_compra → aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → separado → embalado → conferido` (+ `pendente_realocacao`). `expedido` é escrito na coluna mas não está no type. Ordem canônica de `voltar-etapa`: `aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → pendente_realocacao → separado → embalado → conferido`. **Conferência de embalagem (2026-06-11):** bip da etiqueta de envio em `/wms/separacao/conferencia` — modo embalar grava `embalado_real_por` (status não muda); modo conferir move `embalado→conferido` (visual, zero-clique, auto-conferência permitida); divergência (4 tipos) conta contra o embalador; expedir NÃO exige conferido. Barcodes da etiqueta em `siso_pedidos.etiqueta_barcodes` (ZPL + codigoRastreio Tiny; Shopee é raster — só rastreio). Métricas em `/wms/relatorios/conferencia`.
+- **Separação** (`StatusSeparacao`): `aguardando_compra → aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → separado → embalado → conferido` (+ `pendente_realocacao`). `expedido` é escrito na coluna mas não está no type. Ordem canônica de `voltar-etapa`: `aguardando_nf → validacao_oc → aguardando_separacao → em_separacao → pendente_realocacao → separado → embalado → conferido`. **Conferência de embalagem (2026-06-11):** bip da etiqueta de envio em `/wms/separacao/conferencia` — modo embalar grava `embalado_real_por` (status não muda); modo conferir move `embalado→conferido` (visual, zero-clique, auto-conferência permitida); divergência (4 tipos) conta contra o embalador; expedir NÃO exige conferido. Barcodes da etiqueta em `siso_pedidos.etiqueta_barcodes` (ZPL + codigoRastreio Tiny; Shopee é raster — só rastreio).
 
 ---
 
@@ -138,17 +138,17 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 214 rotas — TODO o backend
-    wms/**                              # 60 pages (+layout) — TODO o frontend, todas "use client"
+    api/wms/**/route.ts                 # 197 rotas — TODO o backend
+    wms/**                              # 46 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
   components/
     providers.tsx                       # QueryClient + AuthProvider + Toaster + SW
     ui/                                 # genéricos (loading-spinner, error-banner usados; resto legado)
     wms/
-      wms-shell.tsx                     # sidebar (8 grupos perm-gated) + CommandK (⌘K) + modal context
+      wms-shell.tsx                     # sidebar (5 grupos perm-gated) + CommandK (⌘K) + modal context
       home/quadro-tarefas.tsx           # home /wms: pipeline + kanban + exceções
-      {separacao,cross,insights,inventario,vendas,configuracoes,home}/  # por feature
+      {separacao,cross,inventario,vendas,configuracoes,home}/  # por feature
       recebimento/{receber-lote.tsx,receber-lote-types.ts,receber-lote-adapters.ts}  # UI rica compartilhada de recebimento (config-driven; TODOS os fluxos — OC/manual/transferência/avulso — renderizam a mesma página completa pré-preenchida; extras OC/manual viram ajuste_manual; transferência sem custo/extras; criação de compra em /wms/compras/nova)
       ui/{wms-ui.tsx,modals.tsx,avatar.tsx}   # PageHeader, StatusBadge, Modal, formatters...
   hooks/                                # 5 realtime hooks (postgres_changes + Presence → invalidate React Query)
@@ -180,7 +180,6 @@ src/
       fornecedores.ts · compras-manuais.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
-      insights/{motor,queries,types}.ts
       separacao/{pick-mov,distribuir-qty-pega,reset-state,alocacao-contagem}.ts
       _archive/                         # código 4D morto — excluído do typecheck, NÃO ressuscitar
 supabase/migrations/                    # 184 .sql — YYYYMMDD_description.sql (sufixo b/c p/ mesmo dia)
@@ -189,9 +188,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (214 rotas em `/api/wms`)
+### API — grupos por domínio (197 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `inventario` (16) · `cross` (14) · `compras` (14) · `insights` (12) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `relatorios` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (33) · `admin` (21) · `inventario` (15) · `cross` (14) · `compras` (14) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 
@@ -247,7 +246,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### Permissões (RBAC dinâmico)
 
-- **38 códigos em 8 módulos** (`vendas, visibilidade, operacoes, inventario, insights, relatorios, cadastros, sistema`) no registry `src/lib/permissions.ts` (formato `"modulo.acao"`).
+- **34 códigos em 6 módulos** (`vendas, visibilidade, operacoes, inventario, cadastros, sistema`) no registry `src/lib/permissions.ts` (formato `"modulo.acao"`).
 - Roles em `siso_roles`/`siso_role_permissoes` (editáveis em `/wms/configuracoes/roles`). 6 system roles: `admin, operador, operador_cwb, operador_sp, comprador, vendedor`.
 - **Checagem:**
   - Backend registry: `userCan(session, ...)` (TODAS; lista vazia ⇒ true) · `userCanAny(session, ...)` (PELO MENOS uma; lista vazia ⇒ false).

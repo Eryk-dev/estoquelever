@@ -3,8 +3,6 @@ export const MODULOS_ORDEM = [
   "visibilidade",
   "operacoes",
   "inventario",
-  "insights",
-  "relatorios",
   "cadastros",
   "sistema",
 ] as const;
@@ -48,12 +46,6 @@ export const PERMISSIONS = {
   "inventario.executar":       { modulo: "inventario", label: "Contar (handheld)" },
   "inventario.supervisionar":  { modulo: "inventario", label: "Criar/aprovar/aplicar sessão" },
   "inventario.iniciar_sessao": { modulo: "inventario", label: "Auto-iniciar sessão (ao entrar party)" },
-
-  // ── Insights & Relatórios ──
-  "insights.ver":          { modulo: "insights",    label: "Ver insights" },
-  "insights.financeiro":   { modulo: "insights",    label: "Ver insights financeiros" },
-  "insights.regras":       { modulo: "insights",    label: "Gerenciar regras" },
-  "relatorios.ver":        { modulo: "relatorios",  label: "Ver relatórios" },
 
   // ── Cadastros ──
   "produtos.editar":       { modulo: "cadastros",   label: "Editar produtos/Cross" },
@@ -112,8 +104,6 @@ export const MODULOS_LABEL: Record<ModuloId, string> = {
   visibilidade: "Visibilidade",
   operacoes: "Operações",
   inventario: "Inventário",
-  insights: "Insights",
-  relatorios: "Relatórios",
   cadastros: "Cadastros",
   sistema: "Sistema",
 };

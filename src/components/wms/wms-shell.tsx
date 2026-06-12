@@ -105,7 +105,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: "operacoes",
     label: "Operações",
-    requires: ["operacoes.transferir", "operacoes.replenishment", "operacoes.devolucoes", "operacoes.receber", "operacoes.guarda", "operacoes.imprimir"],
+    requires: ["operacoes.transferir", "operacoes.replenishment", "operacoes.devolucoes", "operacoes.receber", "operacoes.guarda", "operacoes.imprimir", "inventario.ver"],
     itens: [
       { href: "/wms/transferir", icon: "arrows", label: "Transferências", requires: ["operacoes.transferir"] },
       { href: "/wms/replenishment", icon: "shuffle", label: "Realocar", requires: ["operacoes.replenishment"] },
@@ -113,41 +113,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/receber", icon: "plus", label: "Receber", requires: ["operacoes.receber"] },
       { href: "/wms/guarda", icon: "box", label: "Guarda", requires: ["operacoes.guarda"] },
       { href: "/wms/etiquetas", icon: "box", label: "Etiquetas", requires: ["operacoes.imprimir"] },
-    ],
-  },
-  {
-    id: "inventario",
-    label: "Inventário",
-    requires: ["inventario.ver"],
-    itens: [
-      { href: "/wms/inventario", icon: "clipboard", label: "Sessões", requires: ["inventario.ver"] },
-      { href: "/wms/inventario/metricas", icon: "gauge", label: "Métricas", requires: ["inventario.ver"] },
-    ],
-  },
-  {
-    id: "insights",
-    label: "Insights",
-    requires: ["insights.ver"],
-    itens: [
-      { href: "/wms/insights", icon: "sparkle", label: "Hub", requires: ["insights.ver"] },
-      { href: "/wms/insights/pessoas", icon: "handshake", label: "Pessoas", requires: ["insights.ver"] },
-      { href: "/wms/insights/fluxo", icon: "arrows", label: "Fluxo", requires: ["insights.ver"] },
-      { href: "/wms/insights/estoque", icon: "gauge", label: "Estoque", requires: ["insights.ver"] },
-      { href: "/wms/insights/financeiro", icon: "building", label: "Financeiro", requires: ["insights.financeiro"] },
-      { href: "/wms/insights/devolucoes", icon: "rotate", label: "Devoluções", requires: ["insights.ver"] },
-      { href: "/wms/insights/regras", icon: "sliders", label: "Regras", requires: ["insights.regras"] },
-    ],
-  },
-  {
-    id: "relatorios",
-    label: "Relatórios",
-    requires: ["relatorios.ver"],
-    itens: [
-      { href: "/wms/relatorios/movs-por-empresa", icon: "columns", label: "Movs por Empresa", requires: ["relatorios.ver"] },
-      { href: "/wms/relatorios/historico-custo", icon: "history", label: "Histórico de Custo", requires: ["relatorios.ver"] },
-      { href: "/wms/relatorios/saldos-por-empresa", icon: "box", label: "Saldos por Empresa", requires: ["relatorios.ver"] },
-      { href: "/wms/relatorios/conferencia", icon: "check", label: "Conferência", requires: ["relatorios.ver"] },
-      { href: "/wms/relatorios/reconciliacao-tiny", icon: "shuffle", label: "Reconciliação Tiny", requires: ["insights.ver"] },
+      { href: "/wms/inventario", icon: "clipboard", label: "Inventário", requires: ["inventario.ver"] },
     ],
   },
   {
@@ -186,12 +152,6 @@ function filterNavForUser(permissoes: Set<string>): NavSection[] {
 
 function isActive(pathname: string, href: string): boolean {
   if (pathname === href) return true;
-  if (href === "/wms/inventario") {
-    return (
-      pathname.startsWith("/wms/inventario/") &&
-      !pathname.startsWith("/wms/inventario/metricas")
-    );
-  }
   // /wms/separacao casa checklist + embalagem (sub-rotas)
   // /wms/pedidos casa /wms/pedidos/[id]
   // /wms/cross casa /wms/cross/[sku]

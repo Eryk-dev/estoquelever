@@ -103,6 +103,7 @@ embalado             → embalagem concluída, pronto pra expedir
 | `em_separacao` | `separado` | `POST /api/wms/separacao/concluir` | todos `separacao_marcado=true` |
 | `em_separacao` | `aguardando_compra` | `POST /api/wms/separacao/concluir` | partial pause: tem itens `aguardando_compra`/`comprado`/`oc_pendente` |
 | `em_separacao` | `pendente_realocacao` | `POST /api/wms/separacao/parcial` | short pick + galpão sem cobertura pra qty restante |
+| `em_separacao` | `validacao_oc` | `POST /api/wms/separacao/parcial` (loc_zerou) | **2026-06-12:** cascade esgotou sem cobertura de sistema em galpão nenhum → vai pro pick OC pra busca física antes de comprar (loc cadastrada pode estar errada); item vira `compra_status='oc_pendente'`. Só "esgotado" no pick OC → Compras. |
 | `pendente_realocacao` | `em_separacao` | `POST /api/wms/separacao/desfazer-parcial` | operador desfaz o short pick |
 | `em_separacao` | `aguardando_separacao` | `POST /api/wms/separacao/cancelar` | reset de todos os checks + estorno de movs WMS |
 | `em_separacao` | `aguardando_separacao` | `POST /api/wms/separacao/desfazer-bip` | só se total de bipados zerar |
@@ -746,9 +747,9 @@ flowchart TD
     K --> L["Response: {status: 'realocado', realocacoes: [...]}"]
     L --> M["UI exibe linhas de realocação<br/>Operador vai buscar nas localizações indicadas"]
 
-    J -->|nao| N["Transita pedido → pendente_realocacao"]
-    N --> O["Response: {status: 'aguardando_supervisor'}"]
-    O --> P["Supervisor visualiza e<br/>decide próxima ação"]
+    J -->|nao, mas há saldo VIVO em outro galpão| N["Response: {status: 'sem_cobertura_outro_galpao'}<br/>UI: modal encaminhar-first"]
+    J -->|nao, sem saldo em galpão nenhum| N2["2026-06-12: Transita pedido → validacao_oc (pick OC)<br/>item compra_status='oc_pendente'<br/>Response: {status: 'enviado_validacao_oc'}"]
+    N2 --> P["Busca física no pick OC<br/>(validar-oc-item: encontrei | esgotado→Compras)"]
 
     M --> Q["Operador clica 'Peguei' em cada realocação"]
     Q --> R["POST /api/wms/separacao/marcar-realocacao<br/>{realocacao_id}"]

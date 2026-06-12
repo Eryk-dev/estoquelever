@@ -19,7 +19,7 @@ import {
 } from "@/lib/separacao/wms-mapping";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
 import { distribuirQtyPega } from "@/lib/separacao/distribuir-qty-pega";
-import { mandarItensParaCompras } from "@/lib/wms/mandar-compras";
+import { mandarItensParaValidacaoOC } from "@/lib/wms/mandar-compras";
 import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
 
 /**
@@ -1092,12 +1092,14 @@ async function processarParcialItem(
     }
 
     // Mudança 1 (Fase 1.5): cascade esgotou no galpão atual e nenhuma realoc
-    // criada. ANTES de mandar pra Compras, checa saldo VIVO (siso_estoque) em
-    // OUTRO galpão. Se houver, NÃO auto-manda pra Compras — deixa o pedido
-    // em_separacao e devolve `tem_em_outro_galpao` + lista de galpões, pro
-    // frontend abrir modal "Encaminhar p/ Galpão X" como 1ª opção (encaminhar-
-    // first). Só vai DIRETO pra Compras quando não há saldo em galpão nenhum
-    // (caso do cenário 61).
+    // criada. ANTES de mandar pro pick OC, checa saldo VIVO (siso_estoque) em
+    // OUTRO galpão. Se houver, NÃO transita — deixa o pedido em_separacao e
+    // devolve `tem_em_outro_galpao` + lista de galpões, pro frontend abrir modal
+    // "Encaminhar p/ Galpão X" como 1ª opção (encaminhar-first).
+    // Decisão 2026-06-12: quando não há saldo de SISTEMA em galpão nenhum, a loc
+    // cadastrada pode estar errada e a peça existir fisicamente noutra prateleira
+    // → o pedido vai pra validacao_oc (pick OC) pra busca física ANTES de comprar
+    // (caso do cenário 61). Só "esgotado" no pick OC → Compras.
     if (semCoberturaParcial && linhasInsertTotais.length === 0) {
       const alternativos = await galpoesComSaldo(produtoWmsId, galpaoId);
       if (alternativos.length > 0) {
@@ -1113,7 +1115,7 @@ async function processarParcialItem(
           item_ids: semCoberturaPayload.item_ids,
         });
       }
-      const result = await mandarItensParaCompras({
+      const result = await mandarItensParaValidacaoOC({
         supabase,
         pedido_ids: semCoberturaPayload.pedido_ids,
         item_ids: semCoberturaPayload.item_ids,
@@ -1121,7 +1123,7 @@ async function processarParcialItem(
         usuario_nome: session.nome,
       });
       return NextResponse.json({
-        status: "mandado_pra_compras",
+        status: "enviado_validacao_oc",
         tem_em_outro_galpao: false,
         itens_atualizados: result.itens_atualizados,
         pedidos_atualizados: result.pedidos_atualizados,
@@ -1220,12 +1222,13 @@ async function processarParcialItem(
       }
     }
 
-    // Decisão (28/05 v2): caso misto — alguns itens foram realocados, outros
-    // ficaram sem cobertura. Transita os sem_cobertura pra aguardando_compra
-    // automaticamente (sem modal). Mesma intenção do bloco 100% sem cobertura.
+    // Decisão 2026-06-12: caso misto — alguns itens foram realocados, outros
+    // ficaram sem cobertura de sistema. Transita os sem_cobertura pra
+    // validacao_oc (pick OC) automaticamente (sem modal), pra busca física antes
+    // de comprar. Mesma intenção do bloco 100% sem cobertura.
     let resumoCompras: { itens_atualizados: number; pedidos_atualizados: number } | null = null;
     if (semCoberturaParcial && semCoberturaPayload.item_ids.length > 0) {
-      resumoCompras = await mandarItensParaCompras({
+      resumoCompras = await mandarItensParaValidacaoOC({
         supabase,
         pedido_ids: semCoberturaPayload.pedido_ids,
         item_ids: semCoberturaPayload.item_ids,
@@ -1246,8 +1249,8 @@ async function processarParcialItem(
         is_emprestimo: c.is_emprestimo,
       })),
       sem_cobertura_parcial: semCoberturaParcial ? true : undefined,
-      itens_mandados_pra_compras: resumoCompras?.itens_atualizados ?? 0,
-      pedidos_mandados_pra_compras: resumoCompras?.pedidos_atualizados ?? 0,
+      itens_enviados_validacao_oc: resumoCompras?.itens_atualizados ?? 0,
+      pedidos_enviados_validacao_oc: resumoCompras?.pedidos_atualizados ?? 0,
     });
   } catch (err) {
     const { id: erro_id, timestamp: erro_em } = logger.logError({

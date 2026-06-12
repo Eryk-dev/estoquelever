@@ -1,13 +1,13 @@
 import type { Cenario, Ctx } from "../_harness/types";
 
 export default {
-  nome: "61 — Cascade esgotado oferece Mandar pra Compras",
+  nome: "61 — Cascade esgotado vai pra validação OC (busca física)",
   descricao:
-    "Mudança A (28/05): cascade sem cobertura retorna payload no parcial " +
-    "em vez de transitar pra pendente_realocacao automaticamente. Cliente " +
-    "chama /mandar-pra-compras → pedido vira aguardando_compra. Sem loop " +
-    "infinito via Pendentes.",
-  tags: ["separacao", "cascade", "compras", "fase1"],
+    "Decisão 2026-06-12: cascade sem cobertura de sistema em galpão nenhum " +
+    "transita o pedido pra validacao_oc (pick OC) automaticamente no /parcial, " +
+    "pra busca física antes de comprar (loc cadastrada pode estar errada). " +
+    "Item vira compra_status='oc_pendente'. Sem chamada manual a /mandar-pra-compras.",
+  tags: ["separacao", "cascade", "validacao_oc", "compras", "fase1"],
 
   setup: async (ctx: Ctx) => {
     const sku = ctx.skuUnico("61");
@@ -28,22 +28,10 @@ export default {
 
     // Simula loc fantasma: ajusta -1 antes do operador parcial-loc-zerou
     // (saldo cache 0, mas snapshot do pedido ainda diz "tinha 1").
-    // O operador chega na loc, vê vazia → parcial qty=0 loc_zerou=true
+    // O operador chega na loc, vê vazia → parcial qty=0 loc_zerou=true.
+    // Sem cobertura de sistema em galpão nenhum → /parcial auto-transita pra
+    // validacao_oc (pick OC) sozinho — sem chamada manual a /mandar-pra-compras.
     await ctx.parcial({ pedido: pedido.id, item: sku, qty: 0, loc_zerou: true });
-
-    // O endpoint /parcial retorna sem_cobertura+payload. O cliente
-    // chamaria /mandar-pra-compras. Aqui simulamos diretamente via http.
-    const { data: itemRow } = await ctx.sb
-      .from("siso_pedido_itens")
-      .select("id")
-      .eq("pedido_id", pedido.id)
-      .eq("sku", sku)
-      .single();
-
-    await ctx.http.post("/api/wms/separacao/mandar-pra-compras", {
-      pedido_ids: [pedido.id],
-      item_ids: [String(itemRow!.id)],
-    });
   },
 
   assertEsperado: async (ctx: Ctx, { sku }: { sku: string }) => {
@@ -60,14 +48,14 @@ export default {
       .eq("id", itemRow.pedido_id)
       .single();
 
-    if (pedRow?.status_separacao !== "aguardando_compra") {
+    if (pedRow?.status_separacao !== "validacao_oc") {
       throw new Error(
-        `esperava status_separacao=aguardando_compra, recebi ${pedRow?.status_separacao}`,
+        `esperava status_separacao=validacao_oc, recebi ${pedRow?.status_separacao}`,
       );
     }
-    if (itemRow.compra_status !== "aguardando_compra") {
+    if (itemRow.compra_status !== "oc_pendente") {
       throw new Error(
-        `esperava compra_status=aguardando_compra, recebi ${itemRow.compra_status}`,
+        `esperava compra_status=oc_pendente, recebi ${itemRow.compra_status}`,
       );
     }
   },

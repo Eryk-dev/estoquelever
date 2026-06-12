@@ -880,23 +880,25 @@ export default function WmsChecklistPage() {
         toast.success(
           `${data.realocacoes?.length ?? 0} loc(s) encontrada(s): ${locs}`,
         );
-        // Decisão (28/05 v2): caso misto — alguns realocaram, outros sem cobertura.
-        // Backend já transitou os sem_cobertura pra Compras automaticamente.
-        if ((data.itens_mandados_pra_compras ?? 0) > 0) {
+        // Decisão 2026-06-12: caso misto — alguns realocaram, outros sem cobertura
+        // de sistema. Backend já transitou os sem_cobertura pro pick OC pra busca
+        // física antes de comprar.
+        if ((data.itens_enviados_validacao_oc ?? 0) > 0) {
           toast.success(
-            `${data.itens_mandados_pra_compras} item(s) sem cobertura enviado(s) pra Compras`,
+            `${data.itens_enviados_validacao_oc} item(s) sem cobertura enviado(s) pro Pick OC pra busca física`,
             { duration: 5000 },
           );
         }
-      } else if (data.status === "mandado_pra_compras") {
-        // Decisão (28/05 v2): cascade esgotou 100% — backend transitou o(s)
-        // item(s) sem cobertura pra Compras automaticamente.
+      } else if (data.status === "enviado_validacao_oc") {
+        // Decisão 2026-06-12: cascade esgotou 100% sem cobertura de sistema —
+        // backend transitou o(s) item(s) pro pick OC (validacao_oc) pra busca
+        // física antes de comprar.
         // Fix (01/06): NÃO navega de volta pra /wms/separacao — fica no checklist
-        // (igual ao branch `realocado`). O item vai pra Compras e some da lista no
+        // (igual ao branch `realocado`). O item vai pro pick OC e some da lista no
         // refetch (checklist-items filtra compra_status!=null em pedido
-        // aguardando_compra); o operador segue pickando o resto do wave.
+        // validacao_oc); o operador segue pickando o resto do wave.
         toast.success(
-          `${data.itens_atualizados ?? 0} item(s) sem cobertura enviado(s) pra Compras`,
+          `${data.itens_atualizados ?? 0} item(s) sem saldo no sistema — enviados pro Pick OC pra busca física`,
           { duration: 5000 },
         );
       } else if (data.status === "sem_cobertura_outro_galpao") {

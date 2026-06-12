@@ -99,6 +99,7 @@ export type EventoPedido =
   | "estorno_manual_admin"
   | "liberar_reservas_admin"
   | "mandado_pra_compras_via_cascade"
+  | "enviado_validacao_oc_pos_zerou"
   | "recebimento_item_zero"
   | "recebimento_via_oc"
   | "oc_item_saldo_reconciliado"

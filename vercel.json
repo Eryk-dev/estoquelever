@@ -1,3 +1,9 @@
 {
-  "regions": ["pdx1"]
+  "regions": ["pdx1"],
+  "crons": [
+    {
+      "path": "/api/wms/worker/processar",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }

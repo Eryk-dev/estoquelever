@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { processQueue, kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 
+// Janela de drain do kick disparado pelo cron (GET abaixo). Sem isso a função
+// morre no default da plataforma e a fila só anda em fatias minúsculas.
+export const maxDuration = 300;
+
 /**
  * POST /api/worker/processar
  *
@@ -56,11 +60,30 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** GET for health check */
-export async function GET() {
-  return NextResponse.json({
-    status: "ok",
-    service: "SISO Execution Worker",
-    usage: "POST to process pending jobs from siso_fila_execucao",
+/**
+ * GET — alvo do Vercel Cron (crons só fazem GET). Kicka o drain loop e
+ * retorna imediatamente; o drain roda em background até maxDuration.
+ *
+ * Auth: aceita Bearer CRON_SECRET/WORKER_SECRET OU user-agent do Vercel Cron
+ * (`vercel-cron/`). O bypass por user-agent é aceitável porque o kick é
+ * inofensivo: não recebe input, só processa jobs já enfileirados (idempotente).
+ */
+export async function GET(request: NextRequest) {
+  const secret = process.env.CRON_SECRET || process.env.WORKER_SECRET;
+  const auth = request.headers.get("authorization");
+  const isVercelCron = request.headers
+    .get("user-agent")
+    ?.startsWith("vercel-cron/");
+
+  if (secret && auth !== `Bearer ${secret}` && !isVercelCron) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  kickWorker().catch((err) => {
+    logger.error("worker-api", "kickWorker (cron) failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   });
+
+  return NextResponse.json({ status: "kicked" });
 }

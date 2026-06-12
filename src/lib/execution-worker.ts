@@ -135,18 +135,44 @@ export async function processQueue(limit: number = 5): Promise<ProcessResult> {
     .eq("status", "executando")
     .lt("atualizado_em", cincoMinAtras);
 
-  const { data: jobs, error } = await supabase
+  // Claim em duas fases: jobs de pedido (lancar_estoque*) SEMPRE antes dos de
+  // manutenção (varredura/reconciliar). Sem isso, um flood de varreduras (ex:
+  // snapshot inicial = ~900 jobs) segura pedidos novos atrás da fila por horas.
+  const PEDIDO_TIPOS = ["lancar_estoque", "lancar_estoque_pos_nf"];
+  const selectCols =
+    "id, pedido_id, tipo, empresa_id, decisao, tentativas, max_tentativas, payload";
+
+  const { data: pedidoJobs, error } = await supabase
     .from("siso_fila_execucao")
-    .select(
-      "id, pedido_id, tipo, empresa_id, decisao, tentativas, max_tentativas, payload",
-    )
+    .select(selectCols)
     .eq("status", "pendente")
     .or(`proximo_retry_em.is.null,proximo_retry_em.lte.${now}`)
+    .in("tipo", PEDIDO_TIPOS)
     .order("prioridade", { ascending: false })
     .order("criado_em", { ascending: true })
     .limit(limit);
 
-  if (error || !jobs?.length) {
+  if (error) {
+    return result;
+  }
+
+  let jobs = pedidoJobs ?? [];
+
+  if (jobs.length < limit) {
+    const { data: maintJobs } = await supabase
+      .from("siso_fila_execucao")
+      .select(selectCols)
+      .eq("status", "pendente")
+      .or(`proximo_retry_em.is.null,proximo_retry_em.lte.${now}`)
+      .not("tipo", "in", `(${PEDIDO_TIPOS.join(",")})`)
+      .order("prioridade", { ascending: false })
+      .order("criado_em", { ascending: true })
+      .limit(limit - jobs.length);
+
+    jobs = jobs.concat(maintJobs ?? []);
+  }
+
+  if (!jobs.length) {
     return result;
   }
 

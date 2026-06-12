@@ -5699,3 +5699,35 @@ erros:
     - src/app/api/wms/separacao/validar-oc-item/encontrei-nao-pre-bipa-embalagem.test.ts
     - src/app/api/wms/separacao/cancelar/cancelar-recria-reserva.test.ts
   tags: [embalagem, bipado_completo, etiqueta, validacao-oc, encontrei, cancelar, bip-fantasma, separados]
+
+- id: FILA-WORKER-FLOOD-VARREDURA
+  date: 2026-06-12
+  source: staging
+  category: infrastructure
+  message: "Pedidos auto-aprovados (OC) somem da separação: status=executando mas status_separacao=NULL; jobs lancar_estoque parados em 'pendente' com 0 tentativas por horas (pedidos #145528/#145529/#145530 + 5 outros)"
+  cause: >
+    Duas causas combinadas. (a) Snapshot inicial de inventário do CWB
+    gerou 906 movs E (inventario_inicial) em ~30s; cada entrada
+    enfileira backstop varredura_pos_entrada (dedup é por produto —
+    906 produtos distintos = ~900 jobs). O claim do worker ordenava só
+    por prioridade+criado_em (FIFO), então os lancar_estoque dos
+    pedidos novos ficaram atrás de ~300 varreduras. (b) Não existia
+    cron: kickWorker() só dispara em webhook, e o drain loop roda
+    dentro da lambda do webhook, morta aos 5min (maxDuration=300).
+    Fila andava em bursts de ~26 jobs/min por 5min, depois congelava
+    16-34min até o próximo webhook. Flood de 906 jobs precisava de
+    ~35min de CPU e levou 2,5h+ sem terminar.
+  fix: >
+    (a) Claim em duas fases no processQueue: jobs de pedido
+    (lancar_estoque, lancar_estoque_pos_nf) sempre claimados antes dos
+    de manutenção — flood de varredura nunca mais atrasa pedido.
+    (b) Vercel Cron a cada 5min (vercel.json) chamando GET
+    /api/wms/worker/processar, que kicka o drain loop (maxDuration=300
+    na rota); auth por CRON_SECRET/WORKER_SECRET ou user-agent
+    vercel-cron. Destrave imediato: UPDATE prioridade=true nos 8 jobs
+    presos no staging.
+  files:
+    - src/lib/execution-worker.ts
+    - src/app/api/wms/worker/processar/route.ts
+    - vercel.json
+  tags: [fila, worker, varredura_pos_entrada, lancar_estoque, cron, snapshot-inicial, separacao, validacao_oc]

@@ -4757,6 +4757,23 @@ Erros são isolados por empresa e por item (uma falha não derruba a varredura).
 - If limit = 0: kicks worker singleton (drains entire queue asynchronously)
 - Otherwise: processes up to `limit` jobs (capped at 20)
 - Each job: fetches order, enriches stock, calculates suggestion, posts to Tiny, updates DB
+- Claim em duas fases: jobs de pedido (`lancar_estoque`, `lancar_estoque_pos_nf`) sempre antes dos de manutenção (`varredura_pos_entrada`, `reconciliar_oc_retry`) — flood de manutenção não atrasa pedido
+- `maxDuration = 300`
+
+### GET /api/wms/worker/processar
+
+**File:** `src/app/api/wms/worker/processar/route.ts`
+
+**Purpose:** Alvo do Vercel Cron (`vercel.json`, `*/5 * * * *`). Kicka o drain loop (fire-and-forget) e retorna imediatamente; o drain roda em background até `maxDuration` (300s).
+
+**Auth:** Bearer `CRON_SECRET` ou `WORKER_SECRET`, OU user-agent `vercel-cron/*`. Bypass por user-agent é aceitável: kick não recebe input, só processa jobs já enfileirados (idempotente). Sem nenhum secret configurado: aberto.
+
+**Response (200):**
+```json
+{
+  "status": "kicked"
+}
+```
 - Handles rate limiting per empresa
 - Three worker flows per decision type:
   - `propria`: marcadores → NF → stock posting → `criarAgrupamentoFase1` (fire-and-forget after stock persisted)

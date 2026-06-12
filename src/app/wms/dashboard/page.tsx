@@ -2,7 +2,6 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { wmsApi } from "@/lib/wms/api-client";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import type { DashboardGeralResult } from "@/lib/wms/dashboard-geral";
 
@@ -62,7 +61,31 @@ export default function DashboardPage() {
     refetchInterval: 30000,
   });
 
-  if (isLoading) return <LoadingSpinner />;
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-line bg-paper p-4">
+            <div
+              className="wms-skel wms-skel-line"
+              style={{ width: "40%", marginBottom: 12 }}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {Array.from({ length: 3 }).map((_, j) => (
+                <div
+                  key={j}
+                  style={{ display: "flex", justifyContent: "space-between" }}
+                >
+                  <div className="wms-skel wms-skel-line" style={{ width: "55%" }} />
+                  <div className="wms-skel wms-skel-line" style={{ width: "15%" }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (isError) {
     return (
       <ErrorBanner

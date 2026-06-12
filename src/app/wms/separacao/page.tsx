@@ -291,6 +291,13 @@ export default function WmsSeparacaoPage() {
   // Realtime: auto-refresh quando outros operadores mudam status (paridade legado)
   useRealtimeSeparacao();
 
+  // Aquece as rotas quentes do fluxo de separação (só código, sem dados —
+  // os dados mudam com o status no server e ficariam stale).
+  useEffect(() => {
+    router.prefetch("/wms/separacao/checklist");
+    router.prefetch("/wms/separacao/embalagem");
+  }, [router]);
+
   const updateParam = useCallback(
     (key: string, value: string) => {
       const params = new URLSearchParams(
@@ -1129,8 +1136,10 @@ export default function WmsSeparacaoPage() {
 
       {/* Lista */}
       {isLoading ? (
-        <div className="wms-loading-pane">
-          <Loader2 className="animate-spin" size={14} /> Carregando pedidos…
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="wms-skel wms-skel-row" />
+          ))}
         </div>
       ) : isError ? (
         <div className="wms-empty-block">

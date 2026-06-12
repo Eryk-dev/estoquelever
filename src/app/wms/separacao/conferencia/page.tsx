@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X, Loader2, AlertTriangle } from "lucide-react";
@@ -98,7 +98,7 @@ export default function WmsConferenciaPage() {
   }
 
   const biparMut = useMutation({
-    mutationFn: async (codigo: string) => {
+    mutationFn: async ({ codigo, modo }: { codigo: string; modo: Modo }) => {
       const r = await sisoFetch("/api/wms/separacao/conferencia/bipar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,9 +106,9 @@ export default function WmsConferenciaPage() {
       });
       const json = await r.json();
       if (!r.ok) throw Object.assign(new Error(json.mensagem ?? json.error ?? "Erro"), { codigo });
-      return { json: json as BipResposta, codigo };
+      return { json: json as BipResposta, codigo, modo };
     },
-    onSuccess: ({ json, codigo }) => {
+    onSuccess: ({ json, codigo, modo }) => {
       setUltimo(json);
       const num = json.pedido.numero ?? json.pedido.id;
       if (json.aviso === "ja_conferido") {
@@ -132,6 +132,28 @@ export default function WmsConferenciaPage() {
       pushHistorico({ codigo: err.codigo ?? "?", resultado: err.message, tone: "error" });
     },
   });
+
+  // Fila local de bips processada serial — operador bipa em ritmo sem
+  // perder leituras (input nunca desabilita). O `modo` é capturado no
+  // momento do bip, não no momento do processamento.
+  const filaRef = useRef<Array<{ codigo: string; modo: Modo }>>([]);
+  const [filaLen, setFilaLen] = useState(0);
+  const drainingRef = useRef(false);
+
+  async function drainFila() {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    while (filaRef.current.length > 0) {
+      const item = filaRef.current.shift()!;
+      setFilaLen(filaRef.current.length);
+      try {
+        await biparMut.mutateAsync(item);
+      } catch {
+        /* onError já tratou feedback */
+      }
+    }
+    drainingRef.current = false;
+  }
 
   const divergenciaMut = useMutation({
     mutationFn: async (params: { pedido_id: string; tipo: string; observacao: string }) => {
@@ -190,10 +212,20 @@ export default function WmsConferenciaPage() {
             : "Bipe a etiqueta de envio pra registrar que VOCÊ embalou"
         }
         placeholder="Bipe ou digite e Enter…"
-        onSubmit={(code) => biparMut.mutate(code)}
+        onSubmit={(code) => {
+          filaRef.current.push({ codigo: code, modo });
+          setFilaLen(filaRef.current.length);
+          void drainFila();
+        }}
         feedback={scanFeedback}
-        pending={biparMut.isPending}
+        pending={false}
       />
+
+      {filaLen > 0 && (
+        <div className="wms-td-mute" style={{ marginTop: 6, fontSize: 12 }}>
+          +{filaLen} na fila
+        </div>
+      )}
 
       {/* Card do último pedido bipado */}
       {pedido && (

@@ -1,6 +1,10 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useSearchParams, useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import type { Produto } from "@/lib/wms/types";
@@ -81,6 +85,27 @@ export default function EstoquePage() {
       router.push(`?${params.toString()}`, { scroll: false });
     },
     [router, searchParams],
+  );
+
+  // Prefetch das queries do drawer no hover (uma vez por id). Keys/fns idênticas
+  // às do ProdutoDrawer pra o open() acertar o cache.
+  const queryClient = useQueryClient();
+  const prefetchedProduto = useRef(new Set<string>());
+  const prefetchProduto = useCallback(
+    (id: string) => {
+      if (prefetchedProduto.current.has(id)) return;
+      prefetchedProduto.current.add(id);
+      void queryClient.prefetchQuery({
+        queryKey: ["wms-produto", id],
+        queryFn: () => wmsApi(`/api/wms/produtos/${id}`),
+      });
+      void queryClient.prefetchQuery({
+        queryKey: ["wms-produto-estoque", id],
+        queryFn: () =>
+          wmsApi(`/api/wms/estoque?view=produto&produto_id=${id}`),
+      });
+    },
+    [queryClient],
   );
 
   const closeDrawer = useCallback(() => {
@@ -405,13 +430,14 @@ export default function EstoquePage() {
             </tr>
           </thead>
           <tbody>
-            {estoqueQuery.isLoading && (
-              <tr>
-                <td colSpan={11} className="wms-td-empty">
-                  Carregando estoque…
-                </td>
-              </tr>
-            )}
+            {estoqueQuery.isLoading &&
+              Array.from({ length: 8 }).map((_, i) => (
+                <tr key={`skel-${i}`}>
+                  <td colSpan={11} style={{ padding: "4px 8px" }}>
+                    <div className="wms-skel wms-skel-row" />
+                  </td>
+                </tr>
+              ))}
             {estoqueQuery.isError && (
               <tr>
                 <td colSpan={11} className="wms-td-empty wms-td-danger">
@@ -436,6 +462,7 @@ export default function EstoquePage() {
                     key={`kit-direct-${kit.id}`}
                     kit={kit}
                     onOpenDrawer={openDrawer}
+                    onHover={prefetchProduto}
                   />
                 ))}
               </>
@@ -450,6 +477,7 @@ export default function EstoquePage() {
                   onToggle={() =>
                     setExpanded(isExpanded ? null : r.produtoId)
                   }
+                  onHover={() => prefetchProduto(r.produtoId)}
                   onOpenProduto={() => openDrawer(r.produtoId)}
                   onOpenLightbox={() => {
                     const imgs =
@@ -499,6 +527,7 @@ export default function EstoquePage() {
                     key={`zero-${p.id}`}
                     produto={p}
                     onOpenDrawer={openDrawer}
+                    onHover={prefetchProduto}
                   />
                 ))}
               </>
@@ -513,6 +542,7 @@ export default function EstoquePage() {
                     key={`kit-comp-${kit.id}`}
                     kit={kit}
                     onOpenDrawer={openDrawer}
+                    onHover={prefetchProduto}
                   />
                 ))}
               </>
@@ -549,6 +579,7 @@ function ExpandableRow({
   row,
   expanded,
   onToggle,
+  onHover,
   onOpenProduto,
   onOpenLightbox,
   onAction,
@@ -569,6 +600,7 @@ function ExpandableRow({
   };
   expanded: boolean;
   onToggle: () => void;
+  onHover: () => void;
   onOpenProduto: () => void;
   onOpenLightbox: () => void;
   onAction: (kind: "receber" | "ajuste" | "transferir") => void;
@@ -578,6 +610,7 @@ function ExpandableRow({
       <tr
         className={`wms-tr-clickable ${expanded ? "is-expanded" : ""}`}
         onClick={onToggle}
+        onMouseEnter={onHover}
       >
         <td>
           <button
@@ -829,12 +862,18 @@ function SectionHeaderRow({ children }: { children: React.ReactNode }) {
 function KitLiteRow({
   kit,
   onOpenDrawer,
+  onHover,
 }: {
   kit: Produto;
   onOpenDrawer: (id: string) => void;
+  onHover?: (id: string) => void;
 }) {
   return (
-    <tr className="wms-tr-clickable" onClick={() => onOpenDrawer(kit.id)}>
+    <tr
+      className="wms-tr-clickable"
+      onClick={() => onOpenDrawer(kit.id)}
+      onMouseEnter={() => onHover?.(kit.id)}
+    >
       <td></td>
       <td>
         {kit.imagem_url && (
@@ -892,14 +931,17 @@ function KitLiteRow({
 function SemEstoqueRow({
   produto,
   onOpenDrawer,
+  onHover,
 }: {
   produto: Produto;
   onOpenDrawer: (id: string) => void;
+  onHover?: (id: string) => void;
 }) {
   return (
     <tr
       className="wms-tr-clickable"
       onClick={() => onOpenDrawer(produto.id)}
+      onMouseEnter={() => onHover?.(produto.id)}
     >
       <td></td>
       <td>

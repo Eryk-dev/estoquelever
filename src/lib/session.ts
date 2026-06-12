@@ -94,6 +94,66 @@ export async function getSessionUser(
 
   const supabase = createServiceClient();
 
+  // Caminho rápido: 1 RPC consolida sessão+roles+permissões+galpão.
+  const { data: rpcData, error: rpcError } = await supabase.rpc("wms_session_load", {
+    p_session_id: sessionId,
+    p_galpao_id: galpaoIdHeader,
+  });
+
+  // Fallback ao caminho legado (queries separadas) se a RPC falhar.
+  if (rpcError) {
+    logger.warn("session", "wms_session_load falhou — fallback legado", {
+      error: rpcError.message,
+    });
+    return loadSessionLegacy(supabase, sessionId, galpaoIdHeader, cacheKey);
+  }
+
+  // RPC ok com data null → sessão não encontrada/expirada (mesma message de hoje).
+  if (!rpcData) {
+    logger.warn("session", "Session not found or expired", { sessionId });
+    return null;
+  }
+
+  const loaded = rpcData as {
+    usuario: { id: string; nome: string; cargo: string | null; cargos: string[] | null };
+    roles: Array<{ id: string; codigo: string; nome: string }>;
+    permissoes: string[];
+    galpao_valido: boolean;
+    galpao_cargo_id: string | null;
+  };
+
+  const usuario = loaded.usuario;
+  const rolesAtivas = loaded.roles ?? [];
+  const cargosOut = rolesAtivas.map((r) => r.codigo);
+  const cargoOut = cargosOut[0] ?? usuario.cargo ?? "";
+  // Prioridade de galpão: header válido > cargo legado (operador_cwb/sp) > null.
+  const galpaoId = galpaoIdHeader && loaded.galpao_valido
+    ? galpaoIdHeader
+    : (loaded.galpao_cargo_id ?? null);
+
+  const result: SessionUser = {
+    id: usuario.id,
+    nome: usuario.nome,
+    cargo: cargoOut,
+    cargos: cargosOut,
+    roles: rolesAtivas,
+    permissoes: new Set(loaded.permissoes ?? []),
+    galpaoId,
+  };
+  setCachedSession(cacheKey, result);
+  return result;
+}
+
+/**
+ * Caminho legado de carga de sessão (queries separadas). Mantido intacto como
+ * fallback de getSessionUser se a RPC wms_session_load falhar.
+ */
+async function loadSessionLegacy(
+  supabase: ReturnType<typeof createServiceClient>,
+  sessionId: string,
+  galpaoIdHeader: string | null,
+  cacheKey: string,
+): Promise<SessionUser | null> {
   const { data, error } = await supabase
     .from("siso_sessoes")
     .select("usuario_id, siso_usuarios(id, nome, cargo, cargos)")

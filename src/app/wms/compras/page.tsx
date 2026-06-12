@@ -313,6 +313,7 @@ function TabComprar({
   onMutated: () => void;
   podeExecutar: boolean;
 }) {
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [qtyOverrides, setQtyOverrides] = useState<Map<string, number>>(
@@ -436,18 +437,53 @@ function TabComprar({
         throw new Error(b.error || `HTTP ${r.status}`);
       }
     },
+    // Remoção otimista: o POST + refetch da lista levam ~1-2s. Tira os itens
+    // comprados na hora; reconcilia no servidor em background e faz rollback
+    // se a compra falhar.
+    onMutate: async (vars) => {
+      await queryClient.cancelQueries({ queryKey: ["wms-compras"] });
+      const snapshot = queryClient.getQueryData<ComprarResponse>([
+        "wms-compras",
+        "comprar",
+      ]);
+      const skusComprados = new Set(vars.map((v) => v.sku));
+      queryClient.setQueryData<ComprarResponse>(
+        ["wms-compras", "comprar"],
+        (old) =>
+          old
+            ? {
+                ...old,
+                fornecedores: old.fornecedores
+                  .map((f) => {
+                    const itens = f.itens.filter(
+                      (it) => !skusComprados.has(it.sku),
+                    );
+                    return { ...f, itens, skus_count: itens.length };
+                  })
+                  .filter((f) => f.itens.length > 0),
+              }
+            : old,
+      );
+      setSelected(new Set());
+      setQtyOverrides(new Map());
+      setConfirmItens(null);
+      return { snapshot };
+    },
     onSuccess: (_d, vars) => {
       toast.success(
         `${vars.length} ite${vars.length === 1 ? "m" : "ns"} marcado${
           vars.length === 1 ? "" : "s"
         } como comprado${vars.length === 1 ? "" : "s"}`,
       );
-      setSelected(new Set());
-      setQtyOverrides(new Map());
-      setConfirmItens(null);
-      onMutated();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _vars, ctx) => {
+      if (ctx?.snapshot)
+        queryClient.setQueryData(["wms-compras", "comprar"], ctx.snapshot);
+      toast.error(e.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
+    },
   });
 
   const trocarSkuMut = useMutation({
@@ -498,12 +534,46 @@ function TabComprar({
         throw new Error(b.error || `HTTP ${r.status}`);
       }
     },
+    // Remoção otimista: descobre os itens via item_id em pedidos[] e remove já;
+    // reconcilia no servidor em background, rollback no erro.
+    onMutate: async (itemIds) => {
+      await queryClient.cancelQueries({ queryKey: ["wms-compras"] });
+      const snapshot = queryClient.getQueryData<ComprarResponse>([
+        "wms-compras",
+        "comprar",
+      ]);
+      const ids = new Set(itemIds);
+      queryClient.setQueryData<ComprarResponse>(
+        ["wms-compras", "comprar"],
+        (old) =>
+          old
+            ? {
+                ...old,
+                fornecedores: old.fornecedores
+                  .map((f) => {
+                    const itens = f.itens.filter(
+                      (it) => !it.pedidos.some((p) => ids.has(p.item_id)),
+                    );
+                    return { ...f, itens, skus_count: itens.length };
+                  })
+                  .filter((f) => f.itens.length > 0),
+              }
+            : old,
+      );
+      setIndisponivelAlvo(null);
+      return { snapshot };
+    },
     onSuccess: () => {
       toast.success("Itens marcados como indisponível");
-      setIndisponivelAlvo(null);
-      onMutated();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error, _vars, ctx) => {
+      if (ctx?.snapshot)
+        queryClient.setQueryData(["wms-compras", "comprar"], ctx.snapshot);
+      toast.error(e.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
+    },
   });
 
   const cancelamentoMut = useMutation({

@@ -121,19 +121,33 @@ export async function GET(request: NextRequest) {
       return q.or(parts.join(","));
     }
 
-    // 1. Counts — parallel HEAD queries per status (affected by all active filters)
+    // 1. Counts — antes 9 HEAD-counts paralelos, agora 1 RPC (wms_separacao_counts).
     // aguardando_compra skips separacao_galpao_id — filtered by supplier destination instead (post-filter)
-    const countPromises = COUNT_STATUSES.map((status) => {
-      let q = supabase
-        .from("siso_pedidos")
-        .select("*", { count: "exact", head: true })
-        .eq("status_separacao", status);
-      if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
-      if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
-      if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
-      q = applyBuscaFilter(q);
-      if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
-      return q;
+    // legacyCounts() é o caminho antigo, intacto — usado só no fallback se a RPC falhar.
+    function legacyCounts() {
+      return Promise.all(
+        COUNT_STATUSES.map((status) => {
+          let q = supabase
+            .from("siso_pedidos")
+            .select("*", { count: "exact", head: true })
+            .eq("status_separacao", status);
+          if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
+          if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
+          if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+          q = applyBuscaFilter(q);
+          if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
+          return q;
+        }),
+      );
+    }
+
+    const countsRpcPromise = supabase.rpc("wms_separacao_counts", {
+      p_galpao_id: activeGalpaoId ?? null,
+      p_empresa_id: empresaFilter ?? null,
+      p_marketplace: marketplaceFilter ?? null,
+      p_tag: tagFilter ?? null,
+      p_busca: busca ?? null,
+      p_busca_pedido_ids: buscaItemPedidoIds,
     });
 
     // 1b. Fetch distinct origin empresas inside the current separation context
@@ -217,9 +231,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Execute counts + pedidos + empresas + galpoes + ocItems in parallel
-    const [countResults, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }, ocItems] =
+    const [countsRpc, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }, ocItems] =
       await Promise.all([
-        Promise.all(countPromises),
+        countsRpcPromise,
         pedidosQuery,
         empresasPromise,
         galpoesPromise,
@@ -236,9 +250,42 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Build counts
+    // Build raw counts from the RPC (jsonb {status: count}); fallback ao caminho
+    // legado (9 HEAD-counts) se a RPC falhar — comportamento final idêntico.
+    let rawCounts: SeparacaoCounts;
+    if (countsRpc.error) {
+      logger.warn("separacao-list", "RPC counts falhou — fallback legado", {
+        error: countsRpc.error.message,
+      });
+      const legacy = await legacyCounts();
+      rawCounts = {
+        aguardando_compra: legacy[0].count ?? 0,
+        aguardando_nf: legacy[1].count ?? 0,
+        validacao_oc: legacy[2].count ?? 0,
+        aguardando_separacao: legacy[3].count ?? 0,
+        em_separacao: legacy[4].count ?? 0,
+        separado: legacy[5].count ?? 0,
+        embalado: legacy[6].count ?? 0,
+        conferido: legacy[7].count ?? 0,
+        pendente_realocacao: legacy[8].count ?? 0,
+      };
+    } else {
+      const d = (countsRpc.data ?? {}) as Record<string, number>;
+      rawCounts = {
+        aguardando_compra: Number(d.aguardando_compra ?? 0),
+        aguardando_nf: Number(d.aguardando_nf ?? 0),
+        validacao_oc: Number(d.validacao_oc ?? 0),
+        aguardando_separacao: Number(d.aguardando_separacao ?? 0),
+        em_separacao: Number(d.em_separacao ?? 0),
+        separado: Number(d.separado ?? 0),
+        embalado: Number(d.embalado ?? 0),
+        conferido: Number(d.conferido ?? 0),
+        pendente_realocacao: Number(d.pendente_realocacao ?? 0),
+      };
+    }
+
     // For aguardando_compra with active galpão: compute filtered count from item SKUs
-    let aguardandoCompraCount = countResults[0].count ?? 0;
+    let aguardandoCompraCount = rawCounts.aguardando_compra;
     if (activeGalpaoId && ocItems.length > 0) {
       const activeGalpao = (galpoesList ?? []).find((g) => g.id === activeGalpaoId);
       const galpaoNome = activeGalpao?.nome ?? null;
@@ -260,15 +307,8 @@ export async function GET(request: NextRequest) {
     }
 
     const counts: SeparacaoCounts = {
+      ...rawCounts,
       aguardando_compra: aguardandoCompraCount,
-      aguardando_nf: countResults[1].count ?? 0,
-      validacao_oc: countResults[2].count ?? 0,
-      aguardando_separacao: countResults[3].count ?? 0,
-      em_separacao: countResults[4].count ?? 0,
-      separado: countResults[5].count ?? 0,
-      embalado: countResults[6].count ?? 0,
-      conferido: countResults[7].count ?? 0,
-      pendente_realocacao: countResults[8].count ?? 0,
     };
 
     // 3. Fetch item stats for progress display (separation + packing counts)

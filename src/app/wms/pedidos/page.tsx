@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -74,6 +74,26 @@ export default function WmsPedidosPage() {
   const { can } = usePermissoes();
   const podeAprovar = can("pedidos.aprovar");
   const queryClient = useQueryClient();
+
+  // Prefetch do detalhe no hover (aquece rota + cache; uma vez por id)
+  const prefetched = useRef(new Set<string>());
+  const prefetchPedido = useCallback(
+    (id: string) => {
+      if (prefetched.current.has(id)) return;
+      prefetched.current.add(id);
+      router.prefetch(`/wms/pedidos/${id}`);
+      void queryClient.prefetchQuery({
+        queryKey: ["wms-pedido-detalhe", id],
+        queryFn: async () => {
+          const r = await sisoFetch(`/api/wms/pedidos/${id}/detalhe`);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        },
+        staleTime: 15_000,
+      });
+    },
+    [router, queryClient],
+  );
 
   const cargos = useMemo(
     () => user?.cargos ?? (user?.cargo ? [user.cargo] : []),
@@ -494,7 +514,15 @@ export default function WmsPedidosPage() {
       </div>
 
       {currentLoading && (
-        <div className="wms-loading-pane">Carregando pedidos…</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div
+              key={i}
+              className="wms-skel"
+              style={{ height: 116, borderRadius: "var(--wms-r-3)" }}
+            />
+          ))}
+        </div>
       )}
 
       {currentError && !currentLoading && (
@@ -521,6 +549,7 @@ export default function WmsPedidosPage() {
                 toCardPedido={toCardPedido}
                 onAprovar={aprovarPedido}
                 onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+                onHoverPedido={prefetchPedido}
                 podeAprovar={podeAprovar}
               />
               <Pagination
@@ -539,6 +568,7 @@ export default function WmsPedidosPage() {
                 pedidos={concluidosPage}
                 toCardConcluido={toCardConcluido}
                 onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+                onHoverPedido={prefetchPedido}
               />
               <Pagination
                 total={concluidos.length}
@@ -556,6 +586,7 @@ export default function WmsPedidosPage() {
                 pedidos={autoResolvidosPage}
                 toCardConcluido={toCardConcluido}
                 onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+                onHoverPedido={prefetchPedido}
                 ocultarOperador
               />
               <Pagination
@@ -575,6 +606,7 @@ export default function WmsPedidosPage() {
               page={page}
               onPageChange={setPage}
               onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
+              onHoverPedido={prefetchPedido}
               onReimprimir={reimprimirEtiqueta}
             />
           )}
@@ -591,12 +623,14 @@ function TabPendente({
   toCardPedido,
   onAprovar,
   onClickPedido,
+  onHoverPedido,
   podeAprovar,
 }: {
   pedidos: Pedido[];
   toCardPedido: (p: Pedido) => Parameters<typeof PedidoCardWms>[0]["pedido"];
   onAprovar: (p: Pedido, decisao: Decisao) => Promise<void> | void;
   onClickPedido: (id: string) => void;
+  onHoverPedido: (id: string) => void;
   podeAprovar: boolean;
 }) {
   // Estado local de loading por pedido (impede aprovações duplas)
@@ -616,7 +650,7 @@ function TabPendente({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {pedidos.map((p) => (
-        <div key={p.id}>
+        <div key={p.id} onMouseEnter={() => onHoverPedido(p.id)}>
           <PedidoCardWms
             pedido={toCardPedido(p)}
             onClick={() => onClickPedido(p.id)}
@@ -654,11 +688,13 @@ function TabConcluidos({
   pedidos,
   toCardConcluido,
   onClickPedido,
+  onHoverPedido,
   ocultarOperador = false,
 }: {
   pedidos: Pedido[];
   toCardConcluido: (p: Pedido) => PedidoConcluidoData;
   onClickPedido: (id: string) => void;
+  onHoverPedido: (id: string) => void;
   ocultarOperador?: boolean;
 }) {
   if (pedidos.length === 0) {
@@ -676,12 +712,13 @@ function TabConcluidos({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {pedidos.map((p) => (
-        <PedidoCardConcluidoWms
-          key={p.id}
-          pedido={toCardConcluido(p)}
-          onClick={() => onClickPedido(p.id)}
-          ocultarOperador={ocultarOperador}
-        />
+        <div key={p.id} onMouseEnter={() => onHoverPedido(p.id)}>
+          <PedidoCardConcluidoWms
+            pedido={toCardConcluido(p)}
+            onClick={() => onClickPedido(p.id)}
+            ocultarOperador={ocultarOperador}
+          />
+        </div>
       ))}
     </div>
   );
@@ -695,6 +732,7 @@ function TabExpedidos({
   page,
   onPageChange,
   onClickPedido,
+  onHoverPedido,
   onReimprimir,
 }: {
   pedidos: TrackingPedido[];
@@ -702,6 +740,7 @@ function TabExpedidos({
   page: number;
   onPageChange: (p: number) => void;
   onClickPedido: (id: string) => void;
+  onHoverPedido: (id: string) => void;
   onReimprimir: (id: string) => void;
 }) {
   if (pedidos.length === 0) {
@@ -738,6 +777,7 @@ function TabExpedidos({
                 key={p.id}
                 className="wms-tr-clickable"
                 onClick={() => onClickPedido(p.id)}
+                onMouseEnter={() => onHoverPedido(p.id)}
               >
                 <td className="wms-mono">
                   <a className="wms-link-row">

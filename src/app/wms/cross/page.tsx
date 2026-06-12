@@ -47,9 +47,10 @@ export default function WmsCrossPage() {
 
   const { data, isLoading, isError, error } = useQuery<RespostaBusca>({
     queryKey: ["wms-cross-search", debouncedQuery, tipo],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const r = await sisoFetch(
         `/api/wms/cross/search?q=${encodeURIComponent(debouncedQuery)}&tipo=${tipo}`,
+        { signal },
       );
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();

@@ -3448,3 +3448,21 @@
   color: var(--wms-c-mute-2);
   text-align: center;
 }
+
+/* ============================================================
+   Skeletons (shimmer) — percepção de velocidade no carregamento
+   ============================================================ */
+@keyframes wms-skel {
+  0%   { opacity: 0.55; }
+  50%  { opacity: 1; }
+  100% { opacity: 0.55; }
+}
+.wms-skel {
+  display: block;
+  background: var(--wms-c-faint);
+  border: 1px solid var(--wms-c-border);
+  border-radius: var(--wms-r-2);
+  animation: wms-skel 1.2s ease-in-out infinite;
+}
+.wms-skel-line { height: 12px; }
+.wms-skel-row  { height: 36px; }

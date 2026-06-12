@@ -5540,3 +5540,33 @@ erros:
     - src/lib/separacao/wms-mapping.ts
     - src/app/wms/separacao/checklist/page.tsx
   tags: [separacao, validacao-oc, localizacao, loc-inativa, 422, modal, keypad, ux]
+
+- id: CANCELAR-SEPARACAO-NAO-RECRIA-RESERVA
+  date: 2026-06-12
+  source: /api/wms/separacao/cancelar
+  category: business_logic
+  message: "Cancelar separação estornava a S do pick mas não recriava a R consumida — pedido voltava pra fila sem reserva"
+  cause: >
+    O pick converte R em L+S (pick-mov grava os dois em
+    siso_pedido_item_mov_links). O cancelar coletava só os links
+    tipo_link='saida', estornava as S e DELETAVA os links de
+    liberacao_reserva sem usá-los. Resultado: saldo voltava mas a
+    reserva não — disponivel inflado, roteamento podia prometer o
+    saldo pra outro pedido (overselling no re-pick). Pior: o pick
+    seguinte do mesmo item caía no ramo sem-reserva (S sem L), então
+    o desmarcar (wms_desmarcar_item_atomico, que só recria R a partir
+    da L par) também não recriava — a perda virava permanente.
+    voltar-etapa/reiniciar já tinham o fix (SEP-06 em reset-state.ts,
+    recriarReservas); cancelar era o caminho divergente que vazava.
+  fix: >
+    cancelar/route.ts (ramo não-D1) espelha reset-state 3b/3c após os
+    estornos de S: ressuscita a R de cada link liberacao_reserva via
+    estornarLiberacaoReserva (idempotente — R com estorno_de=L
+    existente não duplica) e estorna R cascade residual. Deleção dos
+    links movida pra depois. D1 (cancelar_pedido=true) intacto — lá
+    liberar as R é correto, o pedido morre. Itens sem L (OC puro, que
+    não reserva por design) seguem só estornando a S.
+  files:
+    - src/app/api/wms/separacao/cancelar/route.ts
+    - src/app/api/wms/separacao/cancelar/cancelar-recria-reserva.test.ts
+  tags: [separacao, cancelar, reserva, estorno, overselling, sep-06, ledger]

@@ -6,6 +6,7 @@ import { estornarMovimentacao } from "@/lib/wms/ledger";
 import { registrarEventos } from "@/lib/historico-service";
 import { classificarItensParaCancelamento } from "@/lib/wms/cancelamento-parcial";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { estornarLiberacaoReserva } from "@/lib/wms/reservas-picking";
 
 const MAX_MOVS_LOG = 50;
 
@@ -127,7 +128,7 @@ export async function POST(request: NextRequest) {
     // 1. Carrega itens com movs para estornar
     const { data: itensComMovs } = await supabase
       .from("siso_pedido_itens")
-      .select("id, mov_saida_id, mov_ajuste_loc_zerou_id, separacao_parcial")
+      .select("id, pedido_id, mov_saida_id, mov_ajuste_loc_zerou_id, separacao_parcial")
       .in("pedido_id", pedido_ids);
 
     const itemIds = (itensComMovs ?? []).map((i) => i.id);
@@ -169,14 +170,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Apaga links do(s) item(s) (estornados acima + ajuste_loc_zerou)
-    if (itemIds.length > 0) {
-      await supabase
-        .from("siso_pedido_item_mov_links")
-        .delete()
-        .in("pedido_item_id", itemIds);
-    }
-
     // Realocações: estorna picadas, cancela aguardando_picking e demais
     const { data: realocs } = itemIds.length > 0
       ? await supabase
@@ -208,6 +201,73 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    }
+
+    // SEP-06 (espelha reset-state 3b): o pick converteu R→L+S; o estorno da S
+    // acima devolve o saldo mas NÃO recria a reserva — sem isso o pedido volta
+    // pra fila com 0 R's e o roteamento promete o saldo pra outro pedido
+    // (overselling no re-pick). Ressuscita a R de cada L de pick — idempotente
+    // (R existente com estorno_de=L é retornada sem duplicar). Itens que nunca
+    // tiveram R (OC puro) não têm L → nada a recriar.
+    const pedidoPorItem = new Map<number, string>(
+      (itensComMovs ?? []).map((i) => [Number(i.id), String(i.pedido_id)]),
+    );
+    let reservasRecriadas = 0;
+    for (const l of links ?? []) {
+      if (l.tipo_link !== "liberacao_reserva") continue;
+      const pedidoIdDoItem = pedidoPorItem.get(Number(l.pedido_item_id));
+      if (!pedidoIdDoItem) continue;
+      try {
+        await estornarLiberacaoReserva({
+          liberacao_mov_id: l.mov_id as string,
+          pedido_id: pedidoIdDoItem,
+          usuario_id: session.id,
+          motivo: "Cancelar separação — recria reserva",
+        });
+        reservasRecriadas++;
+      } catch (e) {
+        // LOUD: sem a R recriada o saldo fica livre e outro pedido pode rotear
+        // em cima. O cancelamento segue (S já estornada), mas registra erro real.
+        logger.logError({
+          error: e instanceof Error ? e : new Error(String(e)),
+          source: "separacao-cancelar",
+          message: "Falhou recriar reserva (estorno de L) — item fica sem R",
+          category: "business_logic",
+          metadata: { mov_id: l.mov_id, pedido_item_id: l.pedido_item_id },
+        });
+      }
+    }
+
+    // Espelha reset-state 3c: a R original ressuscitada acima já cobre a
+    // quantidade do item — cascade residual viva duplicaria reserva. Cascade
+    // já consumida por pick de realoc cai no ramo "já estornada" (idempotência).
+    for (const l of links ?? []) {
+      if (l.tipo_link !== "reserva_cascade") continue;
+      try {
+        await estornarMovimentacao({
+          mov_id: l.mov_id as string,
+          usuario_id: session.id,
+          motivo: "Cancelar separação — estorna R cascade",
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!/já\s+(é\s+um\s+estorno|foi\s+estornada)/i.test(msg)) {
+          // Falha deixa reserva EXTRA viva (over-reserve, TTL 30d) — direção
+          // conservadora, não bloqueia o cancelamento.
+          logger.warn("separacao-cancelar", "Falha ao estornar R cascade (segue)", {
+            mov_id: l.mov_id,
+            error: msg,
+          });
+        }
+      }
+    }
+
+    // Apaga links do(s) item(s) (estornados/ressuscitados acima + ajuste_loc_zerou)
+    if (itemIds.length > 0) {
+      await supabase
+        .from("siso_pedido_item_mov_links")
+        .delete()
+        .in("pedido_item_id", itemIds);
     }
 
     if (itemIds.length > 0) {
@@ -345,6 +405,7 @@ export async function POST(request: NextRequest) {
       validacao_oc: ocPendenteIds,
       aguardando_compra: compraIds,
       aguardando_separacao: nonCompraIds,
+      reservas_recriadas: reservasRecriadas,
     });
 
     // Registra evento de cancelamento por pedido (fire-and-forget)
@@ -363,6 +424,7 @@ export async function POST(request: NextRequest) {
           movs_estornadas: movsEstornadasTruncadas,
           movs_estornadas_total: movsEstornadasTotal,
           movs_estornadas_truncado: movsEstornadasTotal > MAX_MOVS_LOG,
+          reservas_recriadas: reservasRecriadas,
         },
       })),
     );

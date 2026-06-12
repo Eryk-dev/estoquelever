@@ -1781,7 +1781,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 
 **File:** `src/app/api/wms/separacao/cancelar/route.ts`
 
-**Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements (proportional via bridge table), cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
+**Purpose:** Cancel an in-progress separation. Resets all item checkmarks, estorna WMS movements (proportional via bridge table), ressuscita as reservas R consumidas pelos picks (estorno das L pares — SEP-06, espelha reset-state 3b/3c; R cascades residuais são estornadas), cancels pending re-allocations, and moves pedidos back to 'aguardando_separacao'.
 
 **Auth:** X-Session-Id (required) — usuarioId é usado no evento de histórico `separacao_cancelada`.
 

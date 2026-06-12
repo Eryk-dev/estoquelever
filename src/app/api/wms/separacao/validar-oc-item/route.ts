@@ -6,7 +6,7 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
 import { alocarContagem, type PlanoAlocacao } from "@/lib/wms/separacao/alocacao-contagem";
 
@@ -235,15 +235,13 @@ export async function POST(request: NextRequest) {
         if (primeiro) {
           const ctx = ctxMap.get(primeiro.pedido_id as string)!;
           // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
+          // Loc bipada que não existe é criada na hora (resolverLocalizacaoWms)
+          // — operador pode guardar o achado numa prateleira nova.
           let locAlvoId: string | null = locManualBody;
           if (!locAlvoId && locCodigoBody) {
-            const { data: locByCod } = await supabase
-              .from("siso_localizacoes")
-              .select("id")
-              .eq("galpao_id", ctx.galpao!)
-              .eq("codigo", locCodigoBody)
-              .maybeSingle();
-            locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
+            locAlvoId = await resolverLocalizacaoWms(ctx.galpao!, locCodigoBody).catch(
+              () => null,
+            );
           }
           if (!locAlvoId) {
             return NextResponse.json(
@@ -463,15 +461,12 @@ export async function POST(request: NextRequest) {
             // idempotência quando ambos os caminhos chegam pro mesmo item.
 
             // Resolve loc-alvo: localizacao_id (uuid) OU localizacao_codigo (string).
+            // Loc bipada que não existe é criada na hora (resolverLocalizacaoWms).
             let locAlvoId: string | null = locManualBody;
             if (!locAlvoId && locCodigoBody) {
-              const { data: locByCod } = await supabase
-                .from("siso_localizacoes")
-                .select("id")
-                .eq("galpao_id", ctx.galpao)
-                .eq("codigo", locCodigoBody)
-                .maybeSingle();
-              locAlvoId = (locByCod as { id?: string } | null)?.id ?? null;
+              locAlvoId = await resolverLocalizacaoWms(ctx.galpao!, locCodigoBody).catch(
+                () => null,
+              );
             }
             if (!locAlvoId) {
               return NextResponse.json(

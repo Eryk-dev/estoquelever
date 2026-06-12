@@ -168,6 +168,19 @@ function defaultDeps(): MappingDeps {
         .select("id")
         .single();
       if (error) {
+        // UNIQUE(galpao_id, codigo): a loc existe mas está inativa
+        // (buscarLocalizacaoId filtra ativo=true) — reativa em vez de
+        // cair pro fallback DEFAULT-PICKING.
+        if (error.code === "23505") {
+          const { data: reativada } = await supabase
+            .from("siso_localizacoes")
+            .update({ ativo: true })
+            .eq("galpao_id", galpaoId)
+            .eq("codigo", codigo)
+            .select("id")
+            .maybeSingle();
+          if (reativada?.id) return reativada.id as string;
+        }
         logger.error("wms-mapping", "Falhou criar loc", {
           error: error.message,
           galpaoId,

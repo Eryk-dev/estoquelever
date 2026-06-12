@@ -2144,6 +2144,32 @@
   color: var(--wms-c-danger);
   border-color: var(--wms-c-danger-bd);
 }
+/* Teclado numérico touch (modal Encontrei — contagem de prateleira) */
+.wms-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+.wms-keypad button {
+  height: 54px;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: var(--wms-font-mono);
+  border: 1px solid var(--wms-c-border-2);
+  border-radius: var(--wms-r-3);
+  background: var(--wms-c-panel);
+  color: var(--wms-c-fg);
+  cursor: pointer;
+}
+.wms-keypad button:active { background: var(--wms-c-panel-2); }
+.wms-keypad button:disabled { opacity: .45; cursor: default; }
+.wms-keypad button.is-ok {
+  background: var(--wms-c-fg);
+  color: var(--wms-c-panel);
+  border-color: var(--wms-c-fg);
+}
+
 /* Conferência — banner grande de resultado do bip (visível da bancada) */
 .wms-conf-banner {
   display: flex;

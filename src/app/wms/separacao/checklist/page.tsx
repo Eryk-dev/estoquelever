@@ -2025,8 +2025,12 @@ function OcEncontreiModal({
   onConfirmar: (codigoLoc: string, qtyContada: number) => void;
   onSolicitarContagem: (codigoLoc: string) => void;
 }) {
+  // Fluxo em 2 etapas: 1) contar unidades (teclado numérico na tela),
+  // 2) bipar a localização. A contagem vem PRIMEIRO — bipar a loc sem
+  // contagem era o erro mais comum do fluxo antigo.
+  const [etapa, setEtapa] = useState<"qty" | "loc">("qty");
   const [feedback, setFeedback] = useState<ScanFeedback>({
-    text: `Conte as unidades e bipe a localização onde encontrou ${produto.sku}`,
+    text: `Bipe a localização onde encontrou ${produto.sku} — loc nova é criada na hora`,
     tone: "neutral",
   });
   const [qtdContada, setQtdContada] = useState("");
@@ -2035,27 +2039,35 @@ function OcEncontreiModal({
   // Contagem menor que o total é permitida (parcial): libera o que cobrir e
   // manda o restante pra compras — avisa antes do operador confirmar.
   const nContada = Number(qtdContada);
-  const contagemParcial =
-    qtdContada.trim() !== "" &&
-    Number.isFinite(nContada) &&
-    nContada > 0 &&
-    nContada < produto.quantidade_total;
+  const qtdValida =
+    qtdContada.trim() !== "" && Number.isFinite(nContada) && nContada > 0;
+  const contagemParcial = qtdValida && nContada < produto.quantidade_total;
+
+  function keypadPress(tecla: string) {
+    if (bipando) return;
+    if (tecla === "back") {
+      setQtdContada((q) => q.slice(0, -1));
+    } else {
+      setQtdContada((q) => (q + tecla).replace(/^0+(?=\d)/, "").slice(0, 4));
+    }
+  }
+
+  function handleQtdOk() {
+    if (!qtdValida) return;
+    setEtapa("loc");
+  }
 
   function handleSubmit(codigo: string) {
     if (!codigo.trim()) {
       setFeedback({ text: "Código vazio", tone: "warn" });
       return;
     }
-    const n = Number(qtdContada);
-    if (qtdContada.trim() === "" || !Number.isFinite(n) || n <= 0) {
-      setFeedback({
-        text: "Informe quantas unidades tem na prateleira (maior que zero).",
-        tone: "warn",
-      });
+    if (!qtdValida) {
+      setEtapa("qty");
       return;
     }
     setFeedback({ text: `Salvando ${codigo.trim()}…`, tone: "neutral" });
-    onConfirmar(codigo.trim(), n);
+    onConfirmar(codigo.trim(), nContada);
   }
 
   function handleSolicitarContagem() {
@@ -2114,49 +2126,120 @@ function OcEncontreiModal({
               {produto.quantidade_total}
             </div>
           </div>
-          <div style={{ marginBottom: 12 }}>
-            <label
-              className="wms-td-mute"
-              style={{
-                display: "block",
-                fontSize: 10.5,
-                letterSpacing: 1,
-                marginBottom: 6,
-              }}
-            >
-              QUANTAS UNIDADES TEM NESSA PRATELEIRA?
-            </label>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              className="wms-input"
-              value={qtdContada}
-              onChange={(e) => setQtdContada(e.target.value)}
-              placeholder={`Ex: ${produto.quantidade_total}`}
-              disabled={bipando}
-              autoFocus
-            />
-            {contagemParcial && (
-              <p
+          {etapa === "qty" ? (
+            <div style={{ marginBottom: 4 }}>
+              <label
                 className="wms-td-mute"
-                style={{ fontSize: 12, marginTop: 6, lineHeight: 1.4 }}
+                style={{
+                  display: "block",
+                  fontSize: 10.5,
+                  letterSpacing: 1,
+                  marginBottom: 6,
+                }}
               >
-                Menos que o total ({produto.quantidade_total}): libera os
-                pedidos que a contagem cobrir e manda o restante pra compras
-                automaticamente.
-              </p>
-            )}
-          </div>
-          <HandheldScan
-            label="Bipe a localização do item encontrado"
-            placeholder="Ex: A1-02 ou QR da loc..."
-            onSubmit={handleSubmit}
-            onValueChange={setLocInput}
-            feedback={feedback}
-            pending={bipando}
-          />
+                QUANTAS UNIDADES TEM NESSA PRATELEIRA?
+              </label>
+              <input
+                type="text"
+                inputMode="none"
+                className="wms-input wms-mono"
+                style={{
+                  fontSize: 32,
+                  fontWeight: 700,
+                  textAlign: "center",
+                  height: 56,
+                }}
+                value={qtdContada}
+                onChange={(e) =>
+                  setQtdContada(
+                    e.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 4),
+                  )
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleQtdOk();
+                  }
+                }}
+                placeholder="0"
+                disabled={bipando}
+                autoFocus
+              />
+              <div className="wms-keypad">
+                {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+                  <button key={d} type="button" disabled={bipando} onClick={() => keypadPress(d)}>
+                    {d}
+                  </button>
+                ))}
+                <button type="button" disabled={bipando} onClick={() => keypadPress("back")} aria-label="Apagar">
+                  ⌫
+                </button>
+                <button type="button" disabled={bipando} onClick={() => keypadPress("0")}>
+                  0
+                </button>
+                <button
+                  type="button"
+                  className="is-ok"
+                  disabled={bipando || !qtdValida}
+                  onClick={handleQtdOk}
+                >
+                  OK
+                </button>
+              </div>
+              {contagemParcial && (
+                <p
+                  className="wms-td-mute"
+                  style={{ fontSize: 12, marginTop: 8, lineHeight: 1.4 }}
+                >
+                  Menos que o total ({produto.quantidade_total}): libera os
+                  pedidos que a contagem cobrir e manda o restante pra compras
+                  automaticamente.
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  padding: "8px 12px",
+                  border: "1px solid var(--wms-c-border)",
+                  borderRadius: "var(--wms-r-3)",
+                  marginBottom: 12,
+                }}
+              >
+                <span style={{ fontSize: 13 }}>
+                  Na prateleira:{" "}
+                  <strong className="wms-mono" style={{ fontSize: 16 }}>
+                    {nContada}
+                  </strong>{" "}
+                  un.
+                  {contagemParcial && (
+                    <span className="wms-td-mute"> (parcial — resto vai pra compras)</span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-sm wms-btn-ghost"
+                  onClick={() => setEtapa("qty")}
+                  disabled={bipando}
+                >
+                  Corrigir
+                </button>
+              </div>
+              <HandheldScan
+                label="Bipe a localização do item encontrado"
+                placeholder="Ex: A1-02 ou QR da loc..."
+                onSubmit={handleSubmit}
+                onValueChange={setLocInput}
+                feedback={feedback}
+                pending={bipando}
+              />
+            </>
+          )}
         </div>
         <div className="wms-md-ft">
           <button
@@ -2167,23 +2250,27 @@ function OcEncontreiModal({
           >
             Cancelar
           </button>
-          <button
-            type="button"
-            className="wms-btn wms-btn-ghost"
-            onClick={handleSolicitarContagem}
-            disabled={bipando || !locInput.trim()}
-            title="Pega a qty do pedido agora e agenda a contagem da localização para depois"
-          >
-            Solicitar contagem depois
-          </button>
-          <button
-            type="button"
-            className="wms-btn wms-btn-primary"
-            onClick={() => handleSubmit(locInput)}
-            disabled={bipando}
-          >
-            {bipando ? "Salvando…" : "Confirmar"}
-          </button>
+          {etapa === "loc" && (
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                onClick={handleSolicitarContagem}
+                disabled={bipando || !locInput.trim()}
+                title="Pega a qty do pedido agora e agenda a contagem da localização para depois"
+              >
+                Solicitar contagem depois
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                onClick={() => handleSubmit(locInput)}
+                disabled={bipando}
+              >
+                {bipando ? "Salvando…" : "Confirmar"}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

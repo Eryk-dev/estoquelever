@@ -5513,3 +5513,30 @@ erros:
   files:
     - supabase/migrations/20260612c_mv_refresh_concurrently.sql
   tags: [materialized-view, pg_cron, lock, concurrently, cobertura, curva-abc, performance]
+
+- id: ENCONTREI-LOC-NOVA-422
+  date: 2026-06-12
+  source: /api/wms/separacao/validar-oc-item + modal Encontrei
+  category: business_logic
+  message: "Bipar loc nova no Encontrei dava 422 loc_obrigatoria; loc inativa caía silenciosamente em DEFAULT-PICKING"
+  cause: >
+    validar-oc-item resolvia localizacao_codigo por query direta em
+    siso_localizacoes (sem criar) em 2 pontos — loc que não existia
+    virava 422. No caminho que cria (resolverLocalizacaoWms), o
+    buscarLocalizacaoId filtra ativo=true e o criarLocalizacao falhava
+    no UNIQUE(galpao_id,codigo) quando a loc existia inativa, caindo
+    no fallback DEFAULT-PICKING sem avisar. UX agravava: modal pedia o
+    bip da loc com a contagem ainda vazia ("Informe quantas unidades
+    tem na prateleira").
+  fix: >
+    validar-oc-item passa a resolver localizacao_codigo via
+    resolverLocalizacaoWms (cria loc nova na hora) nos 2 pontos.
+    criarLocalizacao trata erro 23505 reativando a loc (update
+    ativo=true) em vez de retornar null. Modal Encontrei virou 2
+    etapas: contagem primeiro (teclado numérico touch, OK avança) e
+    só depois o scan da localização, com botão Corrigir.
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+    - src/lib/separacao/wms-mapping.ts
+    - src/app/wms/separacao/checklist/page.tsx
+  tags: [separacao, validacao-oc, localizacao, loc-inativa, 422, modal, keypad, ux]

@@ -7,8 +7,12 @@
  * o que escapou, com janela máxima de 7 dias pra trás (não puxa pedidos
  * antigos):
  *
+ *   - Webhooks de aprovação ENTREGUES cujo processamento falhou ou morreu
+ *     no meio → re-tenta reutilizando o próprio log (retryWebhooksFalhos;
+ *     independe da listagem do Tiny, cobre pedido de qualquer idade).
  *   - Pedidos APROVADOS (situacao=3) que não existem em siso_pedidos nem
  *     em siso_webhook_logs → mesmos efeitos do webhook (processWebhook).
+ *     Janela própria de 30d (a listagem filtra por data de CRIAÇÃO).
  *   - Pedidos CANCELADOS (situacao=2) no Tiny mas ainda ativos no SISO →
  *     mesma lógica do webhook (handlePedidoCancelamento).
  *   - NFs AUTORIZADAS (situacao=6) e EMITIDA DANFE (7 — NF autorizada cuja
@@ -49,6 +53,10 @@ import { logger } from "./logger";
 
 const LOG_SOURCE = "tiny-polling";
 const DIAS_JANELA = 7;
+// Aprovados: janela maior — a listagem do Tiny filtra por data de CRIAÇÃO,
+// e pedido criado semanas atrás pode ser aprovado só agora (incidente
+// 2026-06-12: pedidos de 21/05 aprovados em 11/06, invisíveis aos 7d).
+const DIAS_JANELA_APROVADOS = 30;
 const PAGE_LIMIT = 100;
 // Backstop contra paginação infinita (7d × ~500 pedidos/dia << 30 páginas)
 const MAX_PAGES = 30;
@@ -59,6 +67,14 @@ const SITUACOES_NF = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
 
 // Log 'processando' mais velho que isso = run morto (maxDuration) → retry
 const STUCK_PROCESSANDO_MS = 60 * 60 * 1000;
+
+// Retry de webhooks falhos: cap por empresa por run (protege o rate-limit;
+// backlog drena em runs sucessivos do cron de 10min).
+const RETRY_FALHOS_MAX = 20;
+// Não re-tenta logs mais velhos que isso: a situação no Tiny pode ter mudado
+// faz tempo (faturado/cancelado manualmente) e o reprocesso cego recriaria
+// um pedido já tratado fora do SISO.
+const RETRY_FALHOS_JANELA_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface WebhookLogResumo {
   tiny_pedido_id: string;
@@ -97,6 +113,7 @@ export interface PollingResumoEmpresa {
   cancelamentos_aplicados: number;
   notas_vistas: number;
   notas_processadas: number;
+  webhooks_retentados: number;
   erros: string[];
 }
 
@@ -107,8 +124,8 @@ export interface PollingResult {
   executado_em: string;
 }
 
-function dataInicialJanela(): string {
-  return new Date(Date.now() - DIAS_JANELA * 24 * 60 * 60 * 1000)
+function dataInicialJanela(dias: number = DIAS_JANELA): string {
+  return new Date(Date.now() - dias * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
 }
@@ -131,6 +148,100 @@ async function listarTodasPaginas<T>(
     if (lote.length < PAGE_LIMIT) break;
   }
   return todos;
+}
+
+// ─── Retry de webhooks falhos ───────────────────────────────────────────────
+
+interface WebhookLogRetry extends WebhookLogResumo {
+  id: string;
+}
+
+/**
+ * Re-tenta webhooks de aprovação ENTREGUES cujo processamento falhou
+ * (status='erro') ou morreu no meio ('processando'/'recebido' preso >1h).
+ * Independe da listagem do Tiny — a varredura de aprovados filtra por data
+ * de CRIAÇÃO do pedido no Tiny, então um pedido criado semanas atrás e
+ * aprovado agora fica invisível pra ela; aqui a fonte é o próprio log do
+ * webhook. Reusa o MESMO log (processWebhook seta processando →
+ * concluido/erro nele), sem criar duplicata.
+ */
+async function retryWebhooksFalhos(
+  empresa: EmpresaInfo,
+  resumo: PollingResumoEmpresa,
+): Promise<void> {
+  const sb = createServiceClient();
+  const agora = Date.now();
+  const stuckCutoff = new Date(agora - STUCK_PROCESSANDO_MS).toISOString();
+  const janelaCutoff = new Date(agora - RETRY_FALHOS_JANELA_MS).toISOString();
+
+  const { data } = await sb
+    .from("siso_webhook_logs")
+    .select("id, tiny_pedido_id, tipo, status, criado_em")
+    .eq("empresa_id", empresa.empresaId)
+    .eq("codigo_situacao", "aprovado")
+    .gte("criado_em", janelaCutoff)
+    .or(`status.eq.erro,and(status.in.(processando,recebido),criado_em.lt.${stuckCutoff})`)
+    .order("criado_em", { ascending: true })
+    .limit(RETRY_FALHOS_MAX);
+
+  const candidatos = (data ?? []) as WebhookLogRetry[];
+  if (candidatos.length === 0) return;
+
+  // 1 retry por pedido por run (pode haver inclusao+atualizacao falhos)
+  const porPedido = new Map<string, WebhookLogRetry>();
+  for (const log of candidatos) {
+    if (!porPedido.has(log.tiny_pedido_id)) porPedido.set(log.tiny_pedido_id, log);
+  }
+  const ids = [...porPedido.keys()];
+
+  // Pula pedidos que já existem ou com outro log que bloqueia (concluido/
+  // ignorado/fresco em voo — mesma régua da varredura de aprovados).
+  const conhecidos = new Set<string>();
+  for (const lote of chunk(ids, 200)) {
+    const [{ data: pedidos }, { data: logs }] = await Promise.all([
+      sb.from("siso_pedidos").select("id").in("id", lote),
+      sb
+        .from("siso_webhook_logs")
+        .select("tiny_pedido_id, tipo, status, criado_em")
+        .eq("codigo_situacao", "aprovado")
+        .in("tiny_pedido_id", lote),
+    ]);
+    for (const p of (pedidos ?? []) as Array<{ id: string }>) conhecidos.add(p.id);
+    for (const l of (logs ?? []) as WebhookLogResumo[]) {
+      if (logBloqueiaReprocesso(l)) conhecidos.add(l.tiny_pedido_id);
+    }
+  }
+
+  const alvos = ids.filter((id) => !conhecidos.has(id));
+  if (alvos.length === 0) return;
+
+  logger.info(LOG_SOURCE, "Webhooks falhos detectados pra retry", {
+    empresaId: empresa.empresaId,
+    quantidade: alvos.length,
+    ids: alvos.slice(0, 50),
+  });
+
+  for (const pedidoId of alvos) {
+    const log = porPedido.get(pedidoId)!;
+    try {
+      await processWebhook(
+        log.id,
+        pedidoId,
+        empresa.empresaId,
+        empresa.galpaoId,
+        empresa.grupoId,
+      );
+      resumo.webhooks_retentados++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(`retry ${pedidoId}: ${msg}`);
+      logger.warn(LOG_SOURCE, "Retry de webhook falhou (segue)", {
+        pedidoId,
+        empresaId: empresa.empresaId,
+        error: msg,
+      });
+    }
+  }
 }
 
 // ─── Pedidos aprovados ──────────────────────────────────────────────────────
@@ -476,6 +587,7 @@ async function pollNotasAutorizadas(
 export async function pollTiny(): Promise<PollingResult> {
   const sb = createServiceClient();
   const dataInicial = dataInicialJanela();
+  const dataInicialAprovados = dataInicialJanela(DIAS_JANELA_APROVADOS);
 
   const { data: connections, error } = await sb
     .from("siso_tiny_connections")
@@ -535,6 +647,7 @@ export async function pollTiny(): Promise<PollingResult> {
       cancelamentos_aplicados: 0,
       notas_vistas: 0,
       notas_processadas: 0,
+      webhooks_retentados: 0,
       erros: [],
     };
     resultado.empresas.push(resumo);
@@ -554,7 +667,8 @@ export async function pollTiny(): Promise<PollingResult> {
       // cancelados) não derruba as demais da mesma empresa.
       await runWithEmpresa(empresa.empresaId, async () => {
         const varreduras: Array<[string, () => Promise<void>]> = [
-          ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["retry-falhos", () => retryWebhooksFalhos(empresa, resumo)],
+          ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicialAprovados, resumo)],
           ["cancelados", () => pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo)],
           ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo)],
         ];

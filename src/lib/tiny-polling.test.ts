@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ─── Estado configurável por teste ──────────────────────────────────────────
 
 interface LogAprovado {
+  id?: string;
   tiny_pedido_id: string;
   tipo: string;
   status: string;
@@ -66,6 +67,11 @@ function makeBuilder(table: string) {
       );
       const inOp = ops.find((o) => o.m === "in");
       const ids = (inOp?.args[1] as string[]) ?? [];
+      // Query do retryWebhooksFalhos (única com .or): devolve só fixtures
+      // com `id` setado (testes antigos sem id ficam invisíveis pro retry)
+      if (ops.some((o) => o.m === "or")) {
+        return { data: state.logsAprovados.filter((l) => l.id), error: null };
+      }
       if (isNf) {
         return pick(
           state.logsNf.filter((id) => ids.includes(id)).map((id) => ({ tiny_pedido_id: id })),
@@ -87,7 +93,7 @@ function makeBuilder(table: string) {
     return { data: null, error: null };
   };
 
-  for (const m of ["select", "insert", "eq", "neq", "in", "not", "update"]) {
+  for (const m of ["select", "insert", "eq", "neq", "in", "not", "update", "or", "gte", "order", "limit"]) {
     builder[m] = (...args: unknown[]) => {
       ops.push({ m, args });
       return builder;
@@ -197,10 +203,10 @@ describe("pollTiny — pedidos aprovados", () => {
     expect(result.empresas[0].pedidos_processados).toBe(1);
   });
 
-  it("passa janela de 7 dias como dataInicial", async () => {
+  it("passa janela de 30 dias como dataInicial (aprovados filtram por data de CRIAÇÃO)", async () => {
     await pollTiny();
 
-    const esperado = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const esperado = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
     expect(listarPedidosMock).toHaveBeenCalledWith(
@@ -359,6 +365,98 @@ describe("pollTiny — pedidos aprovados", () => {
     const result = await pollTiny();
 
     expect(result.empresas[0].pedidos_aprovados_vistos).toBe(101);
+  });
+});
+
+describe("pollTiny — retry de webhooks falhos", () => {
+  it("reprocessa log de webhook real com erro reutilizando o MESMO log (sem listagem Tiny)", async () => {
+    // Tiny não lista nada (pedido velho, fora da janela) — só o log existe
+    state.logsAprovados = [
+      {
+        id: "log-real-1",
+        tiny_pedido_id: "999",
+        tipo: "inclusao_pedido",
+        status: "erro",
+        criado_em: new Date().toISOString(),
+      },
+    ];
+
+    const result = await pollTiny();
+
+    expect(processWebhookMock).toHaveBeenCalledTimes(1);
+    expect(processWebhookMock).toHaveBeenCalledWith(
+      "log-real-1",
+      "999",
+      "emp-1",
+      "galpao-1",
+      "grupo-1",
+    );
+    expect(result.empresas[0].webhooks_retentados).toBe(1);
+    // não cria log novo — reusa o existente
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it("re-tenta log preso em 'processando' >1h reutilizando o log", async () => {
+    state.logsAprovados = [
+      {
+        id: "log-real-2",
+        tiny_pedido_id: "888",
+        tipo: "atualizacao_pedido",
+        status: "processando",
+        criado_em: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      },
+    ];
+
+    const result = await pollTiny();
+
+    expect(processWebhookMock).toHaveBeenCalledWith(
+      "log-real-2",
+      "888",
+      "emp-1",
+      "galpao-1",
+      "grupo-1",
+    );
+    expect(result.empresas[0].webhooks_retentados).toBe(1);
+  });
+
+  it("não re-tenta quando o pedido já existe no SISO", async () => {
+    state.pedidosExistentes = [{ id: "999", status: "executando" }];
+    state.logsAprovados = [
+      {
+        id: "log-real-1",
+        tiny_pedido_id: "999",
+        tipo: "inclusao_pedido",
+        status: "erro",
+        criado_em: new Date().toISOString(),
+      },
+    ];
+
+    await pollTiny();
+
+    expect(processWebhookMock).not.toHaveBeenCalled();
+  });
+
+  it("não re-tenta quando outro log do mesmo pedido está concluido", async () => {
+    state.logsAprovados = [
+      {
+        id: "log-real-1",
+        tiny_pedido_id: "999",
+        tipo: "atualizacao_pedido",
+        status: "erro",
+        criado_em: new Date().toISOString(),
+      },
+      {
+        id: "log-real-0",
+        tiny_pedido_id: "999",
+        tipo: "polling_pedido",
+        status: "concluido",
+        criado_em: new Date().toISOString(),
+      },
+    ];
+
+    await pollTiny();
+
+    expect(processWebhookMock).not.toHaveBeenCalled();
   });
 });
 

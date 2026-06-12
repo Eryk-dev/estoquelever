@@ -5468,3 +5468,26 @@ erros:
     - src/app/api/wms/webhook/tiny/route.ts
     - src/lib/tiny-polling.ts
   tags: [webhook, polling, vercel, fire-and-forget, after, serverless, tiny, easypeasy, venda-perdida]
+
+- id: CLAIM-AGRUPAMENTO-REGRESSAO-NOTA-FISCAL
+  date: 2026-06-12
+  source: agrupamento-service
+  category: database
+  message: "Nenhum agrupamento fase-1 era criado no staging — criarAgrupamentoFase1 desfazia o claim em silêncio pra todo pedido"
+  cause: >
+    A migration 20260611q (fix da ambiguidade 42702 do claim) partiu da
+    versão ERRADA da RPC (20260316_etiqueta_status_rpc_functions, sem
+    nota_fiscal_id no RETURNING) em vez da corrigida
+    (20260316_fix_agrupamento_use_nf_ids). O claim voltou a retornar sem
+    nota_fiscal_id; o guard pós-claim do fase-1 via undefined, resetava
+    agrupamento_expedicao_id pra null e retornava SEM logar nada.
+  fix: >
+    Migration 20260612_fix_claim_agrupamento_nota_fiscal: DROP + CREATE
+    (return type mudou — 42P13) com referências qualificadas, tipos
+    casados com as colunas (empresa_origem_id uuid, nota_fiscal_id
+    bigint) e nota_fiscal_id de volta. Ao mexer em RPC com múltiplas
+    migrations, partir SEMPRE da definição viva (pg_get_functiondef),
+    não de um arquivo antigo.
+  files:
+    - supabase/migrations/20260612_fix_claim_agrupamento_nota_fiscal.sql
+  tags: [agrupamento, rpc, claim, migration, regressao, nota_fiscal_id, silencio]

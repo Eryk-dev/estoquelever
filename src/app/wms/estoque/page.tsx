@@ -603,7 +603,7 @@ function ExpandableRow({
   onHover: () => void;
   onOpenProduto: () => void;
   onOpenLightbox: () => void;
-  onAction: (kind: "receber" | "ajuste" | "transferir") => void;
+  onAction: (kind: "receber" | "ajuste" | "transferir" | "etiquetas") => void;
 }) {
   return (
     <>
@@ -792,6 +792,13 @@ function ExpandableRow({
                       onClick={() => onAction("transferir")}
                     >
                       Transferir
+                    </button>
+                    <button
+                      className="wms-btn wms-btn-sm wms-btn-ghost"
+                      onClick={() => onAction("etiquetas")}
+                    >
+                      <Icon name="printer" size={11} />
+                      Imprimir etiquetas
                     </button>
                   </div>
                   <div

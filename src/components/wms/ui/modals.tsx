@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
 import { wmsApi } from "@/lib/wms/api-client";
-import { sisoFetch } from "@/lib/auth-context";
+import { sisoFetch, useAuth } from "@/lib/auth-context";
 import type { Produto, Localizacao, TipoLocalizacao } from "@/lib/wms/types";
 
 // ──────────────────────────────────────────────────────────────────
@@ -1631,6 +1631,218 @@ export function RealocarModal({
           placeholder="Motivo / contexto (gravado no ledger)…"
         />
       </Field>
+    </Modal>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Etiquetas de produto (imprime via /api/wms/guarda/imprimir-lote modo linhas)
+
+export function EtiquetasModal({
+  seed,
+  onClose,
+}: {
+  seed?: ModalProdutoSeed;
+  onClose: () => void;
+}) {
+  const { data: galpoes } = useGalpoes();
+  const galpoesList = useMemo(() => galpoes ?? [], [galpoes]);
+  const { activeGalpaoId } = useAuth();
+
+  const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
+  const [qty, setQty] = useState("1");
+  const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
+  const [locIdUser, setLocIdUser] = useState<string | null>(null);
+
+  // Galpão decide a impressora: escolha manual > galpão ativo da sidebar > 1º.
+  const galpaoId =
+    galpaoIdUser ??
+    (activeGalpaoId && galpoesList.some((g) => g.id === activeGalpaoId)
+      ? activeGalpaoId
+      : (galpoesList[0]?.id ?? ""));
+
+  // Locs com saldo do produto no galpão — a loc impressa orienta a guarda.
+  // Reusa o endpoint do receber (picking primeiro, saldo desc).
+  const locaisQuery = useQuery({
+    queryKey: ["wms-putaway", pid?.id, galpaoId],
+    queryFn: () =>
+      wmsApi<{ locaisExistentes: LocalSaldo[] }>(
+        `/api/wms/receber?produto_id=${pid!.id}&galpao_id=${galpaoId}`,
+      ),
+    enabled: !!pid && !!galpaoId,
+    staleTime: 30 * 1000,
+  });
+  const locaisDisp = locaisQuery.data?.locaisExistentes ?? [];
+  const locId = locIdUser ?? locaisDisp[0]?.localizacao_id ?? "";
+
+  const qtyNum = Number(qty);
+  const folhas = qtyNum > 0 ? Math.ceil(qtyNum / 2) : 0;
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const r = await sisoFetch("/api/wms/guarda/imprimir-lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          linhas: [
+            {
+              produto_id: pid!.id,
+              galpao_id: galpaoId,
+              qty: qtyNum,
+              ...(locId ? { localizacao_id: locId } : {}),
+            },
+          ],
+        }),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        totalEtiquetas?: number;
+        totalFolhas?: number;
+        fallbackEnvelope?: boolean;
+      };
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body;
+    },
+    onSuccess: (body) => {
+      toast.success(
+        `${fmtNum(body.totalEtiquetas ?? qtyNum)} etiquetas (${fmtNum(
+          body.totalFolhas ?? folhas,
+        )} folhas) enviadas pra impressão`,
+      );
+      if (body.fallbackEnvelope) {
+        toast.warning(
+          "Impressora de produto não configurada — usando a de envio",
+        );
+      }
+      onClose();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const valid =
+    !!pid && !!galpaoId && Number.isInteger(qtyNum) && qtyNum > 0;
+
+  return (
+    <Modal
+      title="Imprimir etiquetas de produto"
+      subtitle="1 etiqueta por unidade, 2 por folha. Vai pra impressora de produto do galpão."
+      onClose={onClose}
+      footer={
+        <>
+          <button className="wms-btn wms-btn-ghost" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="wms-btn wms-btn-primary"
+            disabled={!valid || mut.isPending}
+            onClick={() => mut.mutate()}
+          >
+            <Icon name="printer" size={11} />
+            {mut.isPending
+              ? "Enviando…"
+              : `Imprimir${qtyNum > 0 ? ` ${fmtNum(qtyNum)}` : ""}`}
+          </button>
+        </>
+      }
+    >
+      <Field label="Produto" required>
+        <ProdutoCombo
+          value={pid}
+          onChange={(p) => {
+            setPid(p);
+            setLocIdUser(null);
+          }}
+          autoFocus={!seed?.produto}
+        />
+      </Field>
+
+      <div className="wms-row-2">
+        <Field label="Galpão (impressora)">
+          <select
+            className="wms-select"
+            value={galpaoId}
+            onChange={(e) => {
+              setGalpaoIdUser(e.target.value);
+              setLocIdUser(null);
+            }}
+          >
+            {galpoesList.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.nome}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field
+          label="Quantidade"
+          required
+          hint={folhas > 0 ? `${fmtNum(folhas)} folha${folhas > 1 ? "s" : ""}` : undefined}
+        >
+          <input
+            className="wms-input"
+            type="number"
+            min="1"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            placeholder="0"
+            autoFocus={!!seed?.produto}
+          />
+        </Field>
+      </div>
+
+      {!!pid && !!galpaoId && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            marginTop: -4,
+            marginBottom: 4,
+          }}
+        >
+          <span
+            className="wms-td-mute"
+            style={{ fontSize: 11, alignSelf: "center", marginRight: 2 }}
+          >
+            <Icon name="pin" size={10} /> Loc na etiqueta:
+          </span>
+          {locaisQuery.isLoading && (
+            <span
+              className="wms-td-mute"
+              style={{ fontSize: 11, alignSelf: "center" }}
+            >
+              carregando…
+            </span>
+          )}
+          {!locaisQuery.isLoading && locaisDisp.length === 0 && (
+            <span
+              className="wms-td-mute"
+              style={{ fontSize: 11, alignSelf: "center" }}
+            >
+              sem saldo nesse galpão — etiqueta sai sem loc
+            </span>
+          )}
+          {locaisDisp.map((l) => {
+            const isSelected = l.localizacao_id === locId;
+            return (
+              <button
+                key={l.localizacao_id}
+                type="button"
+                onClick={() => setLocIdUser(l.localizacao_id)}
+                className={`wms-btn wms-btn-sm ${
+                  isSelected ? "wms-btn-primary" : "wms-btn-ghost"
+                }`}
+                style={{ fontSize: 11 }}
+              >
+                <span className="wms-mono">{l.codigo}</span>
+                <span style={{ marginLeft: 5, fontSize: 10.5 }}>
+                  {fmtNum(Number(l.saldo))} un
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }

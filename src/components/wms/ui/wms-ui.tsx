@@ -46,7 +46,8 @@ export type IconName =
   | "building"
   | "trash"
   | "download"
-  | "sliders";
+  | "sliders"
+  | "printer";
 
 export function Icon({ name, size = 14, className }: IconProps) {
   const common = {
@@ -289,6 +290,14 @@ export function Icon({ name, size = 14, className }: IconProps) {
           <circle cx="5" cy="4" r="1.5" fill="white" />
           <circle cx="11" cy="8" r="1.5" fill="white" />
           <circle cx="6" cy="12" r="1.5" fill="white" />
+        </svg>
+      );
+    case "printer":
+      return (
+        <svg {...common}>
+          <path d="M4.5 5.5V2h7v3.5" />
+          <path d="M4.5 11H2.5V5.5h11V11h-2" />
+          <rect x="4.5" y="9" width="7" height="5" />
         </svg>
       );
     default:

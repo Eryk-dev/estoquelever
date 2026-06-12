@@ -19,6 +19,7 @@ import { wmsApi } from "@/lib/wms/api-client";
 import { Icon, type IconName } from "@/components/wms/ui/wms-ui";
 import {
   AjusteModal,
+  EtiquetasModal,
   RealocarModal,
   TransferModal,
 } from "@/components/wms/ui/modals";
@@ -29,7 +30,13 @@ import { type PermissaoCodigo } from "@/lib/permissions";
 // ──────────────────────────────────────────────────────────────────
 // Modal Context — qualquer página pode disparar abertura de modal.
 
-type ModalKind = "receber" | "ajuste" | "transferir" | "realocar" | null;
+type ModalKind =
+  | "receber"
+  | "ajuste"
+  | "transferir"
+  | "realocar"
+  | "etiquetas"
+  | null;
 
 interface RealocarSeedExt {
   produto?: Produto;
@@ -718,6 +725,9 @@ export function WmsShell({ children }: { children: ReactNode }) {
           )}
           {modal?.kind === "realocar" && (
             <RealocarModal seed={modal.seed} onClose={() => setModal(null)} />
+          )}
+          {modal?.kind === "etiquetas" && (
+            <EtiquetasModal seed={modal.seed} onClose={() => setModal(null)} />
           )}
         </div>
       </div>

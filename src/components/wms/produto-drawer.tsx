@@ -175,7 +175,7 @@ export function ProdutoDrawer({
   const custoMedio = Number(produto?.custo_medio_global ?? 0);
 
   function openAction(
-    kind: "receber" | "ajuste" | "transferir" | "realocar",
+    kind: "receber" | "ajuste" | "transferir" | "realocar" | "etiquetas",
   ) {
     if (!produto) return;
     modals.open(kind, { produto });
@@ -248,6 +248,13 @@ export function ProdutoDrawer({
                   >
                     <Icon name="shuffle" size={11} />
                     Realocar
+                  </button>
+                  <button
+                    className="wms-btn wms-btn-sm wms-btn-ghost"
+                    onClick={() => openAction("etiquetas")}
+                  >
+                    <Icon name="printer" size={11} />
+                    Etiquetas
                   </button>
                   <button
                     className="wms-btn-icon wms-btn-icon-lg"

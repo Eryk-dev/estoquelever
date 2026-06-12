@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, Loader2, AlertTriangle } from "lucide-react";
+import { X, Loader2, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
 import { sisoFetch } from "@/lib/auth-context";
 import { PageHeader, fmtRelative } from "@/components/wms/ui/wms-ui";
@@ -217,7 +217,6 @@ export default function WmsConferenciaPage() {
           setFilaLen(filaRef.current.length);
           void drainFila();
         }}
-        feedback={scanFeedback}
         pending={false}
       />
 
@@ -227,11 +226,21 @@ export default function WmsConferenciaPage() {
         </div>
       )}
 
+      {/* Banner grande do último bip — legível da bancada, longe da tela */}
+      {scanFeedback && scanFeedback.tone !== "neutral" && (
+        <div className={`wms-conf-banner is-${scanFeedback.tone}`}>
+          {scanFeedback.tone === "ok" && <CheckCircle2 size={26} />}
+          {scanFeedback.tone === "warn" && <AlertTriangle size={26} />}
+          {scanFeedback.tone === "error" && <XCircle size={26} />}
+          <span>{scanFeedback.text}</span>
+        </div>
+      )}
+
       {/* Card do último pedido bipado */}
       {pedido && (
         <div className="wms-card" style={{ marginTop: 12, padding: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span className="wms-mono" style={{ fontSize: 16, fontWeight: 700 }}>
+            <span className="wms-mono" style={{ fontSize: 22, fontWeight: 800 }}>
               #{pedido.numero ?? pedido.id}
             </span>
             {pedido.nome_ecommerce && (
@@ -277,26 +286,34 @@ export default function WmsConferenciaPage() {
               >
                 {item.imagem_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.imagem_url} alt="" loading="lazy" className="wms-thumb wms-thumb-md" />
+                  <img src={item.imagem_url} alt="" loading="lazy" className="wms-thumb wms-thumb-lg" />
                 ) : (
                   <div
-                    className="wms-thumb wms-thumb-md"
+                    className="wms-thumb wms-thumb-lg"
                     style={{ background: "var(--wms-c-faint)", border: "1px solid var(--wms-c-border)" }}
                   />
                 )}
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="wms-mono" style={{ fontWeight: 600, fontSize: 13 }}>
+                  <div className="wms-mono" style={{ fontWeight: 700, fontSize: 16 }}>
                     {item.sku}
                   </div>
                   <div
                     className="wms-td-mute"
-                    style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    style={{ fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                     title={item.descricao ?? undefined}
                   >
                     {item.descricao}
                   </div>
                 </div>
-                <div className="wms-mono" style={{ fontSize: 18, fontWeight: 700 }}>
+                <div
+                  className="wms-mono"
+                  style={{
+                    fontSize: 30,
+                    fontWeight: 800,
+                    lineHeight: 1,
+                    color: item.quantidade_pedida > 1 ? "#0d9488" : undefined,
+                  }}
+                >
                   ×{item.quantidade_pedida}
                 </div>
               </div>

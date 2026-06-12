@@ -1483,7 +1483,7 @@ function ItemRow({
   return (
     <div
       className={`wms-hand-item${done ? " is-done" : ""}`}
-      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
+      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px" }}
     >
       {isPego ? (
         // Linha PEGO: checkbox marcado e desabilitado (só registro visual).
@@ -1532,11 +1532,26 @@ function ItemRow({
         </div>
       )}
       <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
+          <span className="wms-hand-item-loc">
+            {produto.localizacao || "Sem loc"}
+          </span>
+          <span
+            className={`wms-hand-item-saldo${produto.disponivel < qtyExibida ? " is-low" : ""}`}
+          >
+            saldo {fmtNum(produto.disponivel)}
+          </span>
+        </div>
         <div
           className="wms-mono"
           style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}
         >
           {produto.sku}
+          {produto.gtin && (
+            <span className="wms-td-mute" style={{ fontWeight: 400 }}>
+              · GTIN {produto.gtin}
+            </span>
+          )}
           {isPego && (
             <span
               className="wms-badge wms-badge-ok"
@@ -1575,21 +1590,13 @@ function ItemRow({
         >
           {produto.descricao}
         </div>
-        <div style={{ fontSize: 11, marginTop: 2 }}>
-          <span className="wms-hand-item-loc">
-            {produto.localizacao || "Sem loc"}
-          </span>
-          <span className="wms-td-mute"> · saldo {fmtNum(produto.disponivel)}</span>
-          {produto.gtin && (
-            <span className="wms-td-mute"> · GTIN {produto.gtin}</span>
-          )}
-        </div>
       </div>
       <div
         className="wms-mono wms-tar"
         style={{
-          fontWeight: 700,
-          fontSize: multi ? 22 : 16,
+          fontWeight: 800,
+          fontSize: 26,
+          lineHeight: 1,
           color: multi ? "#0d9488" : undefined,
         }}
       >
@@ -1641,7 +1648,7 @@ function ItemRowOC({
   return (
     <div
       className={`wms-hand-item is-oc${done ? " is-done" : ""}`}
-      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px" }}
+      style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px" }}
     >
       <div
         className="wms-hand-item-check"
@@ -1671,6 +1678,16 @@ function ItemRowOC({
         </div>
       )}
       <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
+          <span className="wms-hand-item-loc">
+            {produto.localizacao || "Sem loc"}
+          </span>
+          <span
+            className={`wms-hand-item-saldo${produto.disponivel < produto.quantidade_total ? " is-low" : ""}`}
+          >
+            saldo {fmtNum(produto.disponivel)}
+          </span>
+        </div>
         <div
           style={{ display: "flex", alignItems: "center", gap: 6 }}
         >
@@ -1695,18 +1712,13 @@ function ItemRowOC({
         >
           {produto.descricao}
         </div>
-        <div style={{ fontSize: 11, marginTop: 2 }}>
-          <span className="wms-hand-item-loc">
-            {produto.localizacao || "Sem loc"}
-          </span>
-          <span className="wms-td-mute"> · saldo {fmtNum(produto.disponivel)}</span>
-        </div>
       </div>
       <div
         className="wms-mono wms-tar"
         style={{
-          fontWeight: 700,
-          fontSize: multi ? 22 : 16,
+          fontWeight: 800,
+          fontSize: 26,
+          lineHeight: 1,
           color: multi ? "#0d9488" : undefined,
         }}
       >
@@ -1802,7 +1814,7 @@ function RealocacaoRow({
     <div
       className="wms-hand-item"
       style={{
-        gridTemplateColumns: "28px 44px minmax(0,1fr) 56px 170px",
+        gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px",
         ...rowStyle,
       }}
     >
@@ -1875,7 +1887,7 @@ function RealocacaoRow({
       </div>
       <div
         className="wms-mono wms-tar"
-        style={{ fontWeight: 700, fontSize: 16 }}
+        style={{ fontWeight: 800, fontSize: 26, lineHeight: 1 }}
       >
         {r.quantidade}
       </div>

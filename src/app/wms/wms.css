@@ -2114,11 +2114,54 @@
   border-color: var(--wms-c-ok);
 }
 .wms-hand-item-loc {
+  display: inline-flex;
+  align-items: center;
   font-family: var(--wms-font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  padding: 2px 10px;
+  border-radius: var(--wms-r-2);
+  background: var(--wms-c-fg);
+  color: var(--wms-c-panel);
 }
+.wms-hand-item-saldo {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--wms-font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 1px 8px;
+  border-radius: var(--wms-r-1);
+  background: var(--wms-c-ok-bg);
+  color: var(--wms-c-ok);
+  border: 1px solid var(--wms-c-ok-bd);
+}
+.wms-hand-item-saldo.is-low {
+  background: var(--wms-c-danger-bg);
+  color: var(--wms-c-danger);
+  border-color: var(--wms-c-danger-bd);
+}
+/* Conferência — banner grande de resultado do bip (visível da bancada) */
+.wms-conf-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px 18px;
+  border-radius: var(--wms-r-4);
+  border: 2px solid var(--wms-c-border-2);
+  background: var(--wms-c-panel);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.wms-conf-banner.is-ok    { background: var(--wms-c-ok-bg);     border-color: var(--wms-c-ok);     color: var(--wms-c-ok); }
+.wms-conf-banner.is-warn  { background: var(--wms-c-warn-bg);   border-color: var(--wms-c-warn);   color: var(--wms-c-warn); }
+.wms-conf-banner.is-error { background: var(--wms-c-danger-bg); border-color: var(--wms-c-danger); color: var(--wms-c-danger); }
+
 .wms-hand-section-oc {
   margin-top: 24px;
   padding: 12px;

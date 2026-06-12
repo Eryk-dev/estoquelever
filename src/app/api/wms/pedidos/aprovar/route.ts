@@ -184,14 +184,17 @@ export async function POST(request: NextRequest) {
 
     if (itensOc && itensOc.length > 0) {
       // Resolve produto WMS por tiny_produto_id + soma disponível vivo (todos galpões).
+      // Batch único em siso_produto_empresas (era 1 resolverProdutoWms por item,
+      // sequencial). Sem mapeamento → ausente do map → disponível 0 (não cobre).
       const tinyIds = [...new Set(itensOc.map((it) => String(it.produto_id)))];
       const wmsPorTiny = new Map<string, string>();
-      for (const t of tinyIds) {
-        try {
-          wmsPorTiny.set(t, await resolverProdutoWms(pedido.empresa_origem_id as string, t));
-        } catch {
-          // sem mapeamento → disponível 0 (não cobre)
-        }
+      const { data: mapsOc } = await supabase
+        .from("siso_produto_empresas")
+        .select("produto_id, tiny_produto_id")
+        .eq("empresa_id", pedido.empresa_origem_id)
+        .in("tiny_produto_id", tinyIds.map(Number));
+      for (const m of mapsOc ?? []) {
+        wmsPorTiny.set(String(m.tiny_produto_id), String(m.produto_id));
       }
       const dispPorWms = new Map<string, number>();
       const wmsIds = [...new Set(wmsPorTiny.values())];
@@ -256,19 +259,30 @@ export async function POST(request: NextRequest) {
 
     // Map Tiny produto_id → WMS uuid via empresa origem (que é a dona
     // do tiny_produto_id armazenado em siso_pedido_itens.produto_id).
+    // Batch único (era 1 query por item, sequencial); item sem mapeamento
+    // continua sendo pulado, igual antes.
     const itens: Array<{ produto_id: string; qty: number }> = [];
-    for (const it of itensParaRotear ?? []) {
-      const { data: map } = await supabase
+    if ((itensParaRotear ?? []).length > 0) {
+      const { data: mapsRotear } = await supabase
         .from("siso_produto_empresas")
-        .select("produto_id")
+        .select("produto_id, tiny_produto_id")
         .eq("empresa_id", pedido.empresa_origem_id)
-        .eq("tiny_produto_id", Number(it.produto_id))
-        .maybeSingle();
-      if (map?.produto_id) {
-        itens.push({
-          produto_id: map.produto_id as string,
-          qty: Number(it.quantidade_pedida ?? 0),
-        });
+        .in(
+          "tiny_produto_id",
+          (itensParaRotear ?? []).map((it) => Number(it.produto_id)),
+        );
+      const wmsPorTinyRotear = new Map<string, string>();
+      for (const m of mapsRotear ?? []) {
+        wmsPorTinyRotear.set(String(m.tiny_produto_id), String(m.produto_id));
+      }
+      for (const it of itensParaRotear ?? []) {
+        const produtoWms = wmsPorTinyRotear.get(String(it.produto_id));
+        if (produtoWms) {
+          itens.push({
+            produto_id: produtoWms,
+            qty: Number(it.quantidade_pedida ?? 0),
+          });
+        }
       }
     }
 
@@ -539,6 +553,27 @@ async function criarReservasPedido(args: {
     return { ok: true, reservasCriadas: 0 };
   }
 
+  // Pré-resolve produtos WMS em paralelo (lookup read-only — 1 chamada por
+  // tiny_id único em vez de N sequenciais). Erro fica guardado e é lançado
+  // na iteração do item correspondente, preservando ordem de falha, rollback
+  // e classificação de motivo do loop atômico. buscarLocComMaiorSaldoNoGalpao
+  // NÃO é pré-resolvível: ordena por `disponivel`, que muda a cada R criada.
+  const tinyIdsUnicos = [...new Set(itens.map((i) => String(i.produto_id)))];
+  const produtoWmsPorTiny = new Map<string, { id: string } | { err: Error }>();
+  await Promise.all(
+    tinyIdsUnicos.map(async (t) => {
+      try {
+        produtoWmsPorTiny.set(t, {
+          id: await resolverProdutoWms(empresaOrigemId, t),
+        });
+      } catch (err) {
+        produtoWmsPorTiny.set(t, {
+          err: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+    }),
+  );
+
   // 3. Loop atômico
   const criadas: string[] = []; // ids das R criadas (pra rollback)
   for (const item of itens) {
@@ -546,10 +581,13 @@ async function criarReservasPedido(args: {
     if (qty <= 0) continue;
 
     try {
-      const produtoWmsId = await resolverProdutoWms(
-        empresaOrigemId,
-        String(item.produto_id),
-      );
+      const resolvido = produtoWmsPorTiny.get(String(item.produto_id)) ?? {
+        err: new Error(
+          `produto Tiny ${item.produto_id} (empresa ${empresaOrigemId}) não mapeado em siso_produto_empresas`,
+        ),
+      };
+      if ("err" in resolvido) throw resolvido.err;
+      const produtoWmsId = resolvido.id;
       // CST-01: R só pode ser criada em loc vendável (picking/overstock).
       const locId = await buscarLocComMaiorSaldoNoGalpao(
         separacaoGalpaoId,

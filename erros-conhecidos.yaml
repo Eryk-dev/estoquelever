@@ -5491,3 +5491,25 @@ erros:
   files:
     - supabase/migrations/20260612_fix_claim_agrupamento_nota_fiscal.sql
   tags: [agrupamento, rpc, claim, migration, regressao, nota_fiscal_id, silencio]
+
+- id: MV-COBERTURA-REFRESH-BLOCKING
+  date: 2026-06-12
+  source: pg_cron / siso_cobertura_estoque
+  category: infrastructure
+  message: "Queries em siso_cobertura_estoque travavam ~100-500ms a cada minuto (lock do refresh da MV)"
+  cause: >
+    O cron wms_refresh_cobertura_1min chamava SELECT wms_refresh_cobertura(),
+    cuja função roda REFRESH MATERIALIZED VIEW sem CONCURRENTLY — toma
+    AccessExclusiveLock e bloqueia todo leitor durante o refresh, 1x/min.
+    CONCURRENTLY não é opção dentro da função: exige execução top-level
+    (fora de transação), e função SQL sempre roda dentro de uma.
+  fix: >
+    Migration 20260612c_mv_refresh_concurrently: re-agenda os crons
+    (cobertura 1min + curva ABC diário) pra executar
+    REFRESH MATERIALIZED VIEW CONCURRENTLY direto como comando do job
+    (pg_cron roda top-level). Pré-requisito: índice UNIQUE na MV (ambas
+    já tinham: uq_cobertura, uq_curva_abc). As funções wms_refresh_*
+    ficam intactas pro caller manual (cobertura.ts) e smoke tests.
+  files:
+    - supabase/migrations/20260612c_mv_refresh_concurrently.sql
+  tags: [materialized-view, pg_cron, lock, concurrently, cobertura, curva-abc, performance]

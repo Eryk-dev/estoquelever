@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
@@ -168,6 +172,9 @@ export default function WmsPedidosPage() {
     },
     refetchInterval: 30_000,
     enabled: tab === "expedidos",
+    // page/busca fazem parte da queryKey — sem placeholder a tabela some pra
+    // um loading a cada paginação. Mantém a página anterior enquanto busca.
+    placeholderData: keepPreviousData,
   });
 
   // ── Derivações ──────────────────────────────────────────────────

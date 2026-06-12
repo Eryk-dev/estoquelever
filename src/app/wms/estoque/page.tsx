@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams, useRouter } from "next/navigation";
 import { wmsApi } from "@/lib/wms/api-client";
 import type { Produto } from "@/lib/wms/types";
@@ -124,6 +124,9 @@ export default function EstoquePage() {
         `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=20&offset=0&incluir_kits_por_componente=true`,
       ),
     enabled: q.trim().length >= 2,
+    // Cada caractere digitado muda a queryKey — sem placeholder os resultados
+    // somem/piscam a cada tecla. Mantém os anteriores enquanto busca.
+    placeholderData: keepPreviousData,
   });
   // `rows` da API vem com matches diretos primeiro e kits-por-componente
   // anexados ao final. `kits_por_componente` indica quantos linhas no fim

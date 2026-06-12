@@ -889,6 +889,9 @@ Adicionados pela auditoria de performance 2026-05-31 (cobrem predicados de hot p
 | `idx_produtos_descricao_trgm` | `siso_produtos` | `gin (descricao gin_trgm_ops)` | Busca `descricao ILIKE '%termo%'` (mesma busca de produtos/estoque) |
 | `idx_mov_saldos_empresa` | `siso_movimentacoes` | `(galpao_id) WHERE estorno_de IS NULL AND tipo IN ('E','S')` | Relatório `saldos-por-empresa` (varria o ledger inteiro) — preventivo p/ escala |
 | `idx_mov_criado_em` | `siso_movimentacoes` | `(criado_em) WHERE estorno_de IS NULL` | Relatório `movs-por-empresa` (range de data) — preventivo p/ escala |
+| `idx_pedidos_status_criado` | `siso_pedidos` | `(status, criado_em DESC)` | Listagem `GET /api/wms/pedidos` (`.in(status)` + ORDER BY criado_em) — Perf Tier 1 (2026-06-12) |
+| `idx_pedidos_status_sep_galpao_empresa` | `siso_pedidos` | `(status_separacao, separacao_galpao_id, empresa_origem_id)` | Varredura validação OC e filtros 3-way (o `idx_siso_pedidos_status_empresa` só cobria 2 das 3 colunas) — Perf Tier 1 |
+| `idx_mov_giro` | `siso_movimentacoes` | `(origem_tipo, criado_em) WHERE tipo = 'S' AND estorno_de IS NULL` | Agregação de giro 30d das MVs `siso_cobertura_estoque` (refresh 1min) e `siso_curva_abc` — Perf Tier 1 |
 
 > `pg_trgm` já estava habilitado (a tabela `siso_produtos_catalogo` do módulo Cross já usava trigram). Os 2 índices de `siso_movimentacoes` são latentes em staging (poucos movs) — valem na escala de produção.
 
@@ -1959,6 +1962,8 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-11 | `20260611n_guarda_desfazer_vinculo.sql` | `wms_replenishment_intra_galpao` +`p_origem_detalhes jsonb` (DROP da overload antiga); `wms_confirmar_guarda_atomico` carimba `pendencia_id` no par S+E; `wms_desfazer_guarda_atomico` filtra candidates pelo vínculo (fallback heurística legada + NOTICE); `wms_iniciar_guarda_atomico` testa liveness da R por NET (SUM R − SUM L) em vez de `estorno_de IS NULL`. Fix P2-EST-07/08. |
 | 2026-06-11 | `20260611o_cron_worker_retry.sql` | pg_cron `wms_worker_kick` (*/2min) → `net.http_post` em `/api/wms/worker/processar` (Bearer worker_secret do vault) — motor de retry da `siso_fila_execucao` (antes, job com `proximo_retry_em` futuro só rodava no próximo kick orgânico). Fix P2-CST-02. |
 | 2026-06-11 | `20260611p_oc_unique_aberta.sql` | Consolida OCs duplicadas `(fornecedor, galpao_id)` em `aguardando_compra` (re-aponta itens pra mais antiga, cancela as vazias) + `UNIQUE INDEX uq_oc_aberta_fornecedor_galpao` parcial — `findOrCreateOC` em corrida deixa de criar duplicatas (TS re-seleciona em 23505). Fix P3-06. |
+| 2026-06-12 | `20260612b_perf_indexes_tier1.sql` | **Perf Tier 1** — 3 índices p/ hot paths: `idx_pedidos_status_criado (status, criado_em DESC)` (listagem de pedidos), `idx_pedidos_status_sep_galpao_empresa` (varredura OC 3-way), `idx_mov_giro (origem_tipo, criado_em) WHERE tipo='S' AND estorno_de IS NULL` (giro 30d das MVs). Sem mudança de comportamento. |
+| 2026-06-12 | `20260612c_mv_refresh_concurrently.sql` | **Perf Tier 1** — crons `wms_refresh_cobertura_1min` e `wms_curva_abc_refresh_diario` re-agendados pra rodar `REFRESH MATERIALIZED VIEW CONCURRENTLY` direto (CONCURRENTLY não roda dentro de função). Antes, o refresh por minuto da cobertura tomava AccessExclusiveLock e travava leitores. Funções `wms_refresh_cobertura()`/`wms_refresh_curva_abc()` intactas (caller manual `cobertura.ts` + smoke tests). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

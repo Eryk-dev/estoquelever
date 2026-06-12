@@ -20,7 +20,12 @@
 //   D6 — usa <DecisaoLabel> pra mostrar a decisão final por pedido
 
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -377,6 +382,10 @@ export default function WmsSeparacaoPage() {
         return r.json() as Promise<SeparacaoResponse>;
       },
       refetchInterval: 10_000,
+      // Troca de tab/filtro/galpão muda a queryKey — sem placeholder a lista
+      // some pra um loading a cada mudança. Mantém os dados anteriores na
+      // tela enquanto a nova chave busca.
+      placeholderData: keepPreviousData,
     });
 
   const tagsQuery = useQuery<{ tags: string[] }>({

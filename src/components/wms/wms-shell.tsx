@@ -89,6 +89,7 @@ const NAV_SECTIONS: NavSection[] = [
     itens: [
       { href: "/wms/vendas", icon: "handshake", label: "Vendas Diretas", requires: ["vendas.ver"] },
       { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos", requires: ["pedidos.ver"] },
+      { href: "/wms/trocas", icon: "swap", label: "Trocas", requires: ["vendas.aprovar_troca"] },
       { href: "/wms/separacao", icon: "list", label: "Separação", requires: ["separacao.ver"] },
       { href: "/wms/compras", icon: "truck", label: "Compras", requires: ["compras.ver"] },
     ],

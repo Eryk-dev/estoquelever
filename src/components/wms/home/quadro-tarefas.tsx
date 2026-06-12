@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth, usePermissoes, sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
 import type { DashboardTarefasResult } from "@/lib/wms/dashboard-tarefas";
 import { useDashboardTarefasRealtime } from "@/hooks/use-dashboard-tarefas-realtime";
@@ -53,7 +53,22 @@ function filtrarPresentes(
 
 export function QuadroTarefas() {
   const { activeGalpaoId, activeGalpaoNome } = useAuth();
+  const { can } = usePermissoes();
+  const podeAprovarTroca = can("vendas.aprovar_troca");
   const galpaoLabel = activeGalpaoNome ?? "Todos os galpões";
+
+  // Contador de trocas aguardando aprovação (só pra quem pode decidir).
+  const trocasQuery = useQuery({
+    queryKey: ["wms-trocas-pendentes-count"],
+    queryFn: async () => {
+      const r = await sisoFetch("/api/wms/trocas?status=pendente");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const json = (await r.json()) as { trocas: unknown[] };
+      return json.trocas?.length ?? 0;
+    },
+    enabled: podeAprovarTroca,
+    refetchInterval: 30_000,
+  });
 
   const query = useQuery<DashboardTarefasResult>({
     queryKey: ["wms-tarefas-pendentes", activeGalpaoId],
@@ -133,6 +148,15 @@ export function QuadroTarefas() {
           )}
           href="/wms/separacao"
         />
+        {podeAprovarTroca && (
+          <CardTarefa
+            variante="simples"
+            titulo="Trocas aguardando aprovação"
+            contador={trocasQuery.data ?? 0}
+            legenda="equivalência"
+            href="/wms/trocas"
+          />
+        )}
       </div>
 
       <div className="wms-kanban-board">

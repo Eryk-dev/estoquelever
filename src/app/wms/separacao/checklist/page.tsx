@@ -13,6 +13,7 @@ import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
+import { EquivalentesPanel } from "@/components/wms/trocas/equivalentes-panel";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
@@ -47,6 +48,7 @@ interface ChecklistItem {
   localizacao: string | null;
   imagem_url: string | null;
   empresa_origem_id: string | null;
+  separacao_galpao_id: string | null;
   saldo: number;
   disponivel: number;
   galpao_nome: string | null;
@@ -77,6 +79,7 @@ interface ConsolidatedProduct {
   imagem_url: string | null;
   localizacao: string | null;
   empresa_origem_id: string | null;
+  separacao_galpao_id: string | null;
   quantidade_total: number;
   /** Quanto ainda falta separar (total − quantidade_pega já pega). */
   quantidade_restante: number;
@@ -200,6 +203,7 @@ function consolidar(items: ChecklistItem[]): {
         imagem_url: it.imagem_url,
         localizacao: it.localizacao,
         empresa_origem_id: it.empresa_origem_id,
+        separacao_galpao_id: it.separacao_galpao_id,
         quantidade_total: it.quantidade,
         quantidade_restante: Math.max(0, it.quantidade - Number(it.quantidade_pega ?? 0)),
         quantidade_pega: Number(it.quantidade_pega ?? 0),
@@ -275,6 +279,8 @@ export default function WmsChecklistPage() {
     loading: boolean;
     galpoes: Array<{ galpao_id: string; galpao_nome: string }>;
     pedidos_afetados: number;
+    // Item de pedido representativo do SKU — alimenta a troca de equivalência.
+    pedido_item_id: string | null;
   } | null>(null);
   const [ocLocModal, setOcLocModal] = useState<{
     produto: ConsolidatedProduct;
@@ -346,6 +352,7 @@ export default function WmsChecklistPage() {
     () =>
       (data?.items ?? []).map((item) => ({
         ...item,
+        separacao_galpao_id: item.separacao_galpao_id ?? null,
         quantidade_pega: item.quantidade_pega ?? null,
         separacao_parcial: item.separacao_parcial ?? false,
         parcial_motivo: item.parcial_motivo ?? null,
@@ -357,6 +364,12 @@ export default function WmsChecklistPage() {
 
   const { itensNormais, itensOC } = useMemo(
     () => consolidar(items),
+    [items],
+  );
+  // Galpão da separação do wave (todos os pedidos compartilham). Alimenta o
+  // painel de equivalentes (troca de equivalência).
+  const galpaoSeparacao = useMemo(
+    () => items.find((i) => i.separacao_galpao_id)?.separacao_galpao_id ?? null,
     [items],
   );
   const itensNormaisOrdenados = useMemo(
@@ -592,6 +605,10 @@ export default function WmsChecklistPage() {
         loading: false,
         galpoes: body.galpoes_alternativos ?? [],
         pedidos_afetados: body.pedidos_afetados ?? 0,
+        pedido_item_id:
+          items.find((i) => i.sku === sku)?.id != null
+            ? String(items.find((i) => i.sku === sku)!.id)
+            : null,
       });
     } catch {
       toastErroApi("Erro de conexão");
@@ -907,6 +924,10 @@ export default function WmsChecklistPage() {
         // p/ Galpão X" como 1ª opção, OC como fallback. Encaminhar move o pedido
         // inteiro (via /produto-esgotado acao=encaminhar).
         const sku = parcialModal.sku;
+        // itemIds[0] é o pedido_item_id (não-realocação) — alimenta a troca.
+        const itemIdParaTroca = parcialModal.isRealocacao
+          ? (items.find((i) => i.sku === sku)?.id ?? null)
+          : (parcialModal.itemIds[0] ?? null);
         setParcialModal(null);
         setEsgotadoModal({
           sku,
@@ -918,6 +939,7 @@ export default function WmsChecklistPage() {
             }),
           ),
           pedidos_afetados: (data.pedido_ids ?? []).length,
+          pedido_item_id: itemIdParaTroca != null ? String(itemIdParaTroca) : null,
         });
         return;
       } else if (data.status === "aguardando_supervisor") {
@@ -1384,6 +1406,9 @@ export default function WmsChecklistPage() {
                     }
                     onEsgotado={() => handleOcEsgotado(p)}
                     onDesfazer={() => handleOcDesfazer(p)}
+                    onTrocaAuto={() =>
+                      queryClient.invalidateQueries({ queryKey })
+                    }
                   />
                 ))}
               </div>
@@ -1415,6 +1440,8 @@ export default function WmsChecklistPage() {
           galpoes={esgotadoModal.galpoes}
           pedidosAfetados={esgotadoModal.pedidos_afetados}
           loading={esgotadoModal.loading}
+          galpaoSeparacaoId={galpaoSeparacao}
+          pedidoItemId={esgotadoModal.pedido_item_id}
           onClose={() =>
             !esgotadoModal.loading && setEsgotadoModal(null)
           }
@@ -1422,6 +1449,11 @@ export default function WmsChecklistPage() {
             handleEsgotadoAction("encaminhar", galpaoId)
           }
           onCriarOC={() => handleEsgotadoAction("oc")}
+          onTrocaAuto={() => {
+            // Troca aplicada na hora: fecha o modal e revalida o wave.
+            setEsgotadoModal(null);
+            queryClient.invalidateQueries({ queryKey });
+          }}
         />
       )}
 
@@ -1637,15 +1669,22 @@ function ItemRowOC({
   onEncontrei,
   onEsgotado,
   onDesfazer,
+  onTrocaAuto,
 }: {
   produto: ConsolidatedProduct;
   onEncontrei: () => void;
   onEsgotado: () => void;
   onDesfazer: () => void;
+  onTrocaAuto: () => void;
 }) {
   const done = produto.all_marcado;
   const multi = produto.quantidade_total > 1;
+  const [verEquivalentes, setVerEquivalentes] = useState(false);
+  const pedidoItemId = produto.item_ids[0] ?? null;
+  const podeVerEquivalentes =
+    !done && !!produto.separacao_galpao_id && !!pedidoItemId;
   return (
+    <>
     <div
       className={`wms-hand-item is-oc${done ? " is-done" : ""}`}
       style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px" }}
@@ -1759,6 +1798,31 @@ function ItemRowOC({
         )}
       </div>
     </div>
+    {podeVerEquivalentes && (
+      <div style={{ padding: "0 12px 10px 84px" }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-sm wms-btn-ghost"
+          onClick={() => setVerEquivalentes((v) => !v)}
+          style={{ marginBottom: verEquivalentes ? 8 : 0 }}
+        >
+          <Icon name={verEquivalentes ? "chevron-u" : "chevron-d"} size={11} />
+          {verEquivalentes ? "Ocultar equivalentes" : "Ver equivalentes"}
+        </button>
+        {verEquivalentes && (
+          <EquivalentesPanel
+            sku={produto.sku}
+            galpaoId={produto.separacao_galpao_id!}
+            pedidoItemId={pedidoItemId!}
+            origem="separacao"
+            onTrocaCriada={(r) => {
+              if (r.auto) onTrocaAuto();
+            }}
+          />
+        )}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1927,17 +1991,23 @@ function EsgotadoModal({
   galpoes,
   pedidosAfetados,
   loading,
+  galpaoSeparacaoId,
+  pedidoItemId,
   onClose,
   onEncaminhar,
   onCriarOC,
+  onTrocaAuto,
 }: {
   sku: string;
   galpoes: Array<{ galpao_id: string; galpao_nome: string }>;
   pedidosAfetados: number;
   loading: boolean;
+  galpaoSeparacaoId: string | null;
+  pedidoItemId: string | null;
   onClose: () => void;
   onEncaminhar: (galpaoId: string) => void;
   onCriarOC: () => void;
+  onTrocaAuto: () => void;
 }) {
   return (
     <div className="wms-md-overlay" onClick={onClose}>
@@ -1993,6 +2063,33 @@ function EsgotadoModal({
               {loading ? "Processando…" : "Criar Ordem de Compra"}
             </button>
           </div>
+          {galpaoSeparacaoId && pedidoItemId && (
+            <div style={{ marginTop: 14 }}>
+              <div
+                className="wms-td-mute"
+                style={{
+                  fontSize: 10.5,
+                  letterSpacing: 1,
+                  marginBottom: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <Icon name="shuffle" size={11} />
+                EQUIVALENTES EM ESTOQUE
+              </div>
+              <EquivalentesPanel
+                sku={sku}
+                galpaoId={galpaoSeparacaoId}
+                pedidoItemId={pedidoItemId}
+                origem="separacao"
+                onTrocaCriada={(r) => {
+                  if (r.auto) onTrocaAuto();
+                }}
+              />
+            </div>
+          )}
         </div>
         <div className="wms-md-ft">
           <button

@@ -21,6 +21,10 @@ import {
   PedidoCardConcluidoWms,
   type PedidoConcluidoData,
 } from "@/components/wms/vendas/pedido-card-concluido-wms";
+import {
+  TrocaAprovacaoModal,
+  type Troca,
+} from "@/components/wms/trocas/troca-aprovacao-modal";
 import { DecisaoLabel } from "@/components/wms/vendas/estoque-por-galpao-bar";
 import {
   getEcommerceAbbr,
@@ -73,7 +77,11 @@ export default function WmsPedidosPage() {
   const { user, activeGalpaoId, activeGalpaoNome } = useAuth();
   const { can } = usePermissoes();
   const podeAprovar = can("pedidos.aprovar");
+  const podeVerTroca = can("pedidos.aprovar") || can("vendas.aprovar_troca");
   const queryClient = useQueryClient();
+
+  // Troca aberta no modal (CTA "Revisar troca de peça").
+  const [trocaAberta, setTrocaAberta] = useState<Troca | null>(null);
 
   // Prefetch do detalhe no hover (aquece rota + cache; uma vez por id)
   const prefetched = useRef(new Set<string>());
@@ -173,6 +181,30 @@ export default function WmsPedidosPage() {
     enabled: tab !== "expedidos",
   });
 
+  // ── Query: trocas pendentes (CTA "Revisar troca de peça") ────────
+  // Pedidos com troca de equivalência aguardando aprovação aparecem na aba
+  // pendente com um CTA destacado. Fonte autoritativa: /api/wms/trocas.
+  const trocasPendentesQuery = useQuery({
+    queryKey: ["wms-trocas", "pendente"],
+    queryFn: async () => {
+      const r = await sisoFetch(`/api/wms/trocas?status=pendente`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const json = (await r.json()) as { trocas: Troca[] };
+      return json.trocas ?? [];
+    },
+    refetchInterval: 30_000,
+    enabled: podeVerTroca && tab !== "expedidos",
+  });
+
+  // Map pedido_id → primeira troca pendente (CTA por pedido).
+  const trocaByPedido = useMemo(() => {
+    const m = new Map<string, Troca>();
+    for (const t of trocasPendentesQuery.data ?? []) {
+      if (!m.has(t.pedido_id)) m.set(t.pedido_id, t);
+    }
+    return m;
+  }, [trocasPendentesQuery.data]);
+
   // ── Query: tracking (expedidos) ─────────────────────────────────
   const trackingQuery = useQuery({
     queryKey: ["wms-pedidos-tracking", "expedidos", page, buscaParam],
@@ -230,16 +262,20 @@ export default function WmsPedidosPage() {
   const pendentes = useMemo(() => {
     return filteredByGalpao
       .filter(
-        // Só transferência precisa de decisão humana aqui. Própria/OC
-        // auto-aprovam (webhook). Realocação migrou pra aba na separação.
-        (p) => p.status === "pendente" && p.sugestao === "transferencia",
+        // Transferência precisa de decisão humana. Própria/OC auto-aprovam
+        // (webhook). Pedido com troca de equivalência pendente também entra
+        // aqui (decisão: aprovar/rejeitar a troca). Realocação migrou pra aba
+        // na separação.
+        (p) =>
+          p.status === "pendente" &&
+          (p.sugestao === "transferencia" || trocaByPedido.has(p.id)),
       )
       .filter(buscaMatch)
       .sort(
         (a, b) =>
           new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime(),
       );
-  }, [filteredByGalpao, buscaMatch]);
+  }, [filteredByGalpao, buscaMatch, trocaByPedido]);
 
   const concluidos = useMemo(() => {
     // Decisão 6 (28/05): tab Concluídos inclui pedidos com decisão tomada
@@ -551,6 +587,8 @@ export default function WmsPedidosPage() {
                 onClickPedido={(id) => router.push(`/wms/pedidos/${id}`)}
                 onHoverPedido={prefetchPedido}
                 podeAprovar={podeAprovar}
+                trocaByPedido={trocaByPedido}
+                onRevisarTroca={setTrocaAberta}
               />
               <Pagination
                 total={pendentes.length}
@@ -612,6 +650,17 @@ export default function WmsPedidosPage() {
           )}
         </>
       )}
+
+      {trocaAberta && (
+        <TrocaAprovacaoModal
+          troca={trocaAberta}
+          onClose={() => setTrocaAberta(null)}
+          onDecidido={() => {
+            queryClient.invalidateQueries({ queryKey: ["wms-trocas"] });
+            queryClient.invalidateQueries({ queryKey: ["wms-pedidos"] });
+          }}
+        />
+      )}
     </>
   );
 }
@@ -625,6 +674,8 @@ function TabPendente({
   onClickPedido,
   onHoverPedido,
   podeAprovar,
+  trocaByPedido,
+  onRevisarTroca,
 }: {
   pedidos: Pedido[];
   toCardPedido: (p: Pedido) => Parameters<typeof PedidoCardWms>[0]["pedido"];
@@ -632,6 +683,8 @@ function TabPendente({
   onClickPedido: (id: string) => void;
   onHoverPedido: (id: string) => void;
   podeAprovar: boolean;
+  trocaByPedido: Map<string, Troca>;
+  onRevisarTroca: (t: Troca) => void;
 }) {
   // Estado local de loading por pedido (impede aprovações duplas)
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -649,35 +702,71 @@ function TabPendente({
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {pedidos.map((p) => (
-        <div key={p.id} onMouseEnter={() => onHoverPedido(p.id)}>
-          <PedidoCardWms
-            pedido={toCardPedido(p)}
-            onClick={() => onClickPedido(p.id)}
-            interactive={
-              podeAprovar
-                ? {
-                    loading: loadingId === p.id,
-                    onApprove: async (decisao) => {
-                      if (
-                        !window.confirm(
-                          `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+      {pedidos.map((p) => {
+        const troca = trocaByPedido.get(p.id);
+        if (troca) {
+          // Pedido com troca de equivalência pendente: destaca o card e
+          // mostra o CTA "Revisar troca de peça" em vez do footer de decisão.
+          return (
+            <div
+              key={p.id}
+              onMouseEnter={() => onHoverPedido(p.id)}
+              style={{
+                border: "1.5px solid var(--wms-c-info-bd)",
+                borderRadius: "var(--wms-r-3)",
+                background: "var(--wms-c-info-bg)",
+                padding: 6,
+              }}
+            >
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                style={{ width: "100%", justifyContent: "center", marginBottom: 6 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRevisarTroca(troca);
+                }}
+              >
+                <Icon name="swap" size={12} />
+                Revisar troca de peça
+              </button>
+              <PedidoCardWms
+                pedido={toCardPedido(p)}
+                onClick={() => onClickPedido(p.id)}
+              />
+            </div>
+          );
+        }
+        return (
+          <div key={p.id} onMouseEnter={() => onHoverPedido(p.id)}>
+            <PedidoCardWms
+              pedido={toCardPedido(p)}
+              onClick={() => onClickPedido(p.id)}
+              interactive={
+                podeAprovar
+                  ? {
+                      loading: loadingId === p.id,
+                      onApprove: async (decisao) => {
+                        if (
+                          !window.confirm(
+                            `Aprovar pedido #${p.numero} com a decisão "${decisao}"?`,
+                          )
                         )
-                      )
-                        return;
-                      setLoadingId(p.id);
-                      try {
-                        await onAprovar(p, decisao);
-                      } finally {
-                        setLoadingId(null);
-                      }
-                    },
-                  }
-                : undefined
-            }
-          />
-        </div>
-      ))}
+                          return;
+                        setLoadingId(p.id);
+                        try {
+                          await onAprovar(p, decisao);
+                        } finally {
+                          setLoadingId(null);
+                        }
+                      },
+                    }
+                  : undefined
+              }
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

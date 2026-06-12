@@ -137,9 +137,11 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Unique item ID |
+| `id` | bigint | NO | (PK) | Unique item ID (⚠ bigint, não uuid) |
 | `pedido_id` | text | NO | FK | Order ID |
 | `produto_id` | bigint | NO | | Tiny product ID (in origin empresa) |
+| `produto_wms_substituto_id` | uuid | YES | FK → siso_produtos | Troca de equivalência (2026-06-12): produto FÍSICO que substitui o vendido — picks/reservas/estornos resolvem por ele; `produto_id` (fiscal) fica intocado |
+| `troca_equivalencia_id` | uuid | YES | FK → siso_trocas_equivalencia | Vínculo com a troca aplicada |
 | `sku` | text | NO | | Product SKU |
 | `descricao` | text | YES | | Product description |
 | `quantidade_pedida` | integer | NO | | Ordered quantity |
@@ -1593,6 +1595,61 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 **Notes:**
 - Inserção é fire-and-forget no endpoint de search — não bloqueia a resposta
 - Útil para identificar buscas frequentes sem resultado (oportunidade de cadastrar OEMs/equivalentes)
+
+---
+
+## Troca de Equivalência (2026-06-12)
+
+Integra o cluster cross ao fluxo operacional: pedido sem estoque do SKU vendido pode sair com peça EQUIVALENTE do estoque (mata compra inflada). Plano: `docs/superpowers/plans/2026-06-12-cross-troca-equivalencia.md`. Migrations: `20260612f_troca_equivalencia.sql` + `20260612g_troca_sugestao_enum.sql`.
+
+### siso_produtos.tier_qualidade (coluna nova)
+
+`text NULL CHECK IN ('original','primeira_linha','segunda_linha')` — escala única ordenada de qualidade (D5). NULL = sem classificação → toda troca envolvendo o produto exige aprovação. Backfill via SQL por padrão de SKU/fornecedor.
+
+### siso_equivalencias_verificadas
+
+**Purpose:** curadoria humana de pares (D9) — auto-troca SÓ acontece com par `verificado`; `bloqueado` = override "nunca trocar" mesmo que o cluster OEM diga equivalente.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial PK | |
+| `sku_a` / `sku_b` | text FK → siso_produtos_catalogo(sku) CASCADE | par normalizado `CHECK (sku_a < sku_b)` + `UNIQUE(sku_a, sku_b)` |
+| `status` | text | `verificado` \| `bloqueado` |
+| `observacao` | text | |
+| `verificado_por` / `verificado_em` | uuid FK siso_usuarios / timestamptz | |
+
+### siso_trocas_equivalencia
+
+**Purpose:** solicitação de troca — entidade ÚNICA com 3 superfícies (painel de pedidos, chão de separação, compras) + origem `roteamento` (webhook).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid PK | |
+| `pedido_id` | text FK siso_pedidos | |
+| `pedido_item_id` | bigint FK siso_pedido_itens | unique parcial: 1 `pendente` por item |
+| `galpao_id` | uuid FK siso_galpoes | |
+| `produto_vendido_id` / `produto_substituto_id` | uuid FK siso_produtos | `CHECK (vendido <> substituto)` |
+| `sku_vendido` / `sku_substituto` | text | snapshot |
+| `quantidade` | numeric > 0 | residual do item no momento da solicitação |
+| `tipo` | text | `mesmo_nivel` \| `upgrade` \| `downgrade` \| `sem_classificacao` \| `misto` |
+| `origem_solicitacao` | text | `roteamento` \| `separacao` \| `compras` \| `painel` |
+| `status` | text | `pendente` → `aprovada` \| `rejeitada` \| `expirada` \| `cancelada` |
+| `tier_*_snapshot` | text | tiers no momento da solicitação |
+| `reserva_mov_ids` | uuid[] | R(s) `reserva_troca` criadas AO SOLICITAR (D6, TTL 48h) |
+| `solicitado_por/em`, `decidido_por/em`, `motivo_rejeicao` | | auditoria |
+
+### origem_tipo novos (siso_movimentacoes)
+
+`reserva_troca` (R forte no substituto enquanto aguarda aprovação — NÃO usa `reserva_pedido` de propósito: o cutover converteria em L+S) e `liberacao_troca` (L que libera/converte).
+
+### RPCs
+
+- **`wms_aprovar_troca_atomico(p_troca_id, p_usuario_id)`** — converte cada R `reserva_troca` viva em L `liberacao_troca` + R `reserva_pedido` (lock da tripla segura o disponível entre as duas), seta `produto_wms_substituto_id`/`troca_equivalencia_id` no item e `status='aprovada'` — tudo-ou-nada.
+- **`wms_encerrar_troca_atomico(p_troca_id, p_usuario_id, p_status, p_motivo)`** — libera R de troca remanescentes + fecha (`rejeitada`/`cancelada`/`expirada`).
+
+### Enum siso_decisao
+
+Ganhou `troca_equivalente` — usado APENAS em `siso_pedidos.sugestao` (pedido pendente aguardando aprovação de troca), nunca em `decisao_final`.
 
 ---
 

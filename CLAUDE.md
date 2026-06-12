@@ -111,7 +111,15 @@ Conjunto: `propria | transferencia | oc` (sem empréstimo/swap no 3D).
 2. Mantém os que cobrem 100%, ordena por `geoPriority` (0=casa/sem-preferência · 1=mesma cidade+UF · 2=mesma UF · 3=outro).
 3. `geoPriority===0` → **propria** · cobre 100% mas não-casa → **transferencia** · ninguém cobre 100% mas há parcial → **oc** (`split_galpoes`) · ninguém tem nada → **oc** (`sem_cobertura`).
 
-**Auto-aprovação:** `propria` e `oc`. Só `transferencia` vai pro painel.
+**Auto-aprovação:** `propria` e `oc`. Só `transferencia` (e `troca_equivalente`) vai pro painel.
+
+### Troca de Equivalência (2026-06-12 — plano `2026-06-12-cross-troca-equivalencia.md`)
+
+Integra o cluster cross (OEM + links + curadoria) ao operacional. Regra (`trocas-equivalencia-regra.ts`, pura): **mesmo `tier_qualidade` + par `verificado` em `siso_equivalencias_verificadas` = troca LIVRE (auto)**; qualquer diferença de tier (upgrade incluso), sem classificação, par não-verificado ou misto (item já com picks) = **aprovação humana** (`vendas.aprovar_troca`, fila `/wms/trocas` + modal compartilhado). Par `bloqueado` = nunca troca.
+- **Entidade:** `siso_trocas_equivalencia` (1 pendente por item). Ao solicitar, cria **R forte** `origem_tipo='reserva_troca'` no substituto (TTL 48h — NÃO usa `reserva_pedido` senão o cutover converteria). Aprovar = RPC `wms_aprovar_troca_atomico` (L `liberacao_troca` + R `reserva_pedido` com lock de tripla + substituto no item). Rejeitar/cancelar = `wms_encerrar_troca_atomico`.
+- **Item:** `produto_id` (tiny/fiscal) fica INTOCADO — NF/Tiny mantêm o SKU vendido (D3). O produto FÍSICO vem de `produto_wms_substituto_id`; **todo caminho de reserva/pick/estorno resolve via `resolverProdutoEfetivoDoItem`** (wms-mapping), nunca `resolverProdutoWms` direto quando há item em mãos.
+- **Roteamento:** galpão-casa não cobre com original → `planejarTrocaRoteamento` tenta substitutos. Todos auto → pedido `propria` (troca local VENCE transferência). Algum exige aprovação → pedido `pendente` com `sugestao='troca_equivalente'`; aprovar a última troca aprova o pedido (`wms_aprovar_e_enfileirar`); rejeitar re-roteia automático (`trocas-roteamento.ts`).
+- Cancelamento/encaminhar de pedido encerra trocas pendentes (libera `reserva_troca`).
 
 ### Status
 
@@ -138,8 +146,8 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 197 rotas — TODO o backend
-    wms/**                              # 46 pages (+layout) — TODO o frontend, todas "use client"
+    api/wms/**/route.ts                 # 204 rotas — TODO o backend
+    wms/**                              # 47 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
   components/
@@ -177,6 +185,7 @@ src/
       crossdock-{detector,trigger}.ts · contagem-inline.ts
       inventario.ts · inventario-reconciliacao.ts (pura) · inventario-recovery.ts
       vendas-{disponibilidade,cancelamento}.ts · mandar-compras.ts · varredura-validacao-oc.ts
+      trocas-equivalencia.ts · trocas-equivalencia-regra.ts (pura) · trocas-roteamento.ts · trocas-api.ts
       fornecedores.ts · compras-manuais.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
@@ -188,9 +197,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (197 rotas em `/api/wms`)
+### API — grupos por domínio (204 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `inventario` (15) · `cross` (14) · `compras` (14) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (4) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 
@@ -211,6 +220,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 | `siso_transferencias_galpao` (+itens) | Transferência inter-galpão (2 pernas S→E). |
 | `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
 | `siso_compras_manuais` (+itens) | Compra avulsa de fornecedor (sem pedido). Recebimento gera mov `E` reusando `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'` (sem NF) **+ pendência de put-away** (estorna a `E` se a pendência falhar). Sem RLS. |
+| `siso_trocas_equivalencia` · `siso_equivalencias_verificadas` | Troca de equivalência (2026-06-12): solicitação de troca (1 `pendente` por item; `reserva_mov_ids` = R `reserva_troca`) + curadoria de pares (`verificado`/`bloqueado`, par normalizado `sku_a<sku_b`). `siso_produtos.tier_qualidade` (`original/primeira_linha/segunda_linha`, NULL = exige aprovação). Item ganha `produto_wms_substituto_id` + `troca_equivalencia_id`. |
 
 > **Dropadas (não referenciar):** `siso_pedido_item_estoques`, `siso_emprestimo_regras`, `siso_wms_mini_swap_config`, `siso_transferencias`(+itens), `siso_inventarios`(+itens).
 
@@ -219,6 +229,8 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 `wms_inserir_movimentacao` (único write do ledger; aceita `p_idempotency_key` no-op desde fase-5) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick; aceita `p_idempotency_key`, propagado só no ramo sem-reserva) · `wms_iniciar_guarda_atomico` / `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` / `wms_cancelar_pendencia_guarda_atomico` (ver FASE 6 abaixo) · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim; desde 2026-06-12 tem FASE 0 de retomada — loc `em_contagem` do próprio operador volta com `retomada=true`+`bipes` — e param `p_somente_retomar` que não claima) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (test harness).
 
 **Raio-X Fase 5 (atomicidade tudo-ou-nada, tudo idempotente):** `wms_aplicar_sessao_inventario` (aplica divergências aprovadas de uma sessão de inventário em bloco) · `wms_pick_parcial_atomico` (S + ajuste loc_zerou na mesma tx) · `wms_desmarcar_item_atomico` (estorna par S+L do pick; recria R clampada ao saldo livre, retorna `status_alerta`) · `wms_reverter_cutover_atomico` (estorna S do pedido + recria R + flipa `estoque_lancado=false`) · `wms_vender_baixa_direta_atomico` (baixa N S de venda manual; advisory lock por tripla) · `wms_cancelar_venda_atomico` (estorna S `venda_manual` + marca pedido cancelado) · `wms_aprovar_e_enfileirar` (transição de status + INSERT do job `lancar_estoque` na mesma tx; `p_marcadores` é `text[]`) · `wms_reconciliar_retroativo` (lock + idempotência + estorno parcial clampado ao disponível) · `wms_resolver_pedido_fantasma` (R viva de pedido forward → `saiu`: R→L+S · `cancelado`: R→L + pedido cancelado).
+
+**Troca de Equivalência (2026-06-12):** `wms_aprovar_troca_atomico` (converte R `reserva_troca`→L `liberacao_troca`+R `reserva_pedido` com lock de tripla + seta `produto_wms_substituto_id` no item, tudo-ou-nada) · `wms_encerrar_troca_atomico` (libera R de troca + fecha como rejeitada/cancelada/expirada).
 
 **FASE 6 — Guarda dinâmica (reserva forte + auto-encerrar):** o put-away agora reserva o saldo na loc de recebimento ao INICIAR, evitando que um pick consuma a peça antes da guarda.
 - `wms_iniciar_guarda_atomico(p_pendencia_id, p_usuario_id, p_forcar)`: `FOR UPDATE` + claim (status→`em_guarda`, idempotente p/ mesmo operador; `p_forcar`=takeover preservando `qty_guardada`) + cria **reserva forte** = mov `R` `origem_tipo='reserva_guarda'` (TTL 7d) sobre o saldo LIVRE da loc de recebimento (`LEAST(qty_pendente, saldo-reservado)`; não cria R de 0; idempotente). Zera o `disponivel` → roteamento de um pedido novo do mesmo SKU decide OC em vez de separar do recebimento. Conflito de claim → `55006`, mapeado p/ `PENDENCIA_OUTRA_GUARDA` (409) no serviço.
@@ -246,7 +258,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### Permissões (RBAC dinâmico)
 
-- **34 códigos em 6 módulos** (`vendas, visibilidade, operacoes, inventario, cadastros, sistema`) no registry `src/lib/permissions.ts` (formato `"modulo.acao"`).
+- **35 códigos em 6 módulos** (`vendas, visibilidade, operacoes, inventario, cadastros, sistema`) no registry `src/lib/permissions.ts` (formato `"modulo.acao"`). Novo (2026-06-12): `vendas.aprovar_troca`.
 - Roles em `siso_roles`/`siso_role_permissoes` (editáveis em `/wms/configuracoes/roles`). 6 system roles: `admin, operador, operador_cwb, operador_sp, comprador, vendedor`.
 - **Checagem:**
   - Backend registry: `userCan(session, ...)` (TODAS; lista vazia ⇒ true) · `userCanAny(session, ...)` (PELO MENOS uma; lista vazia ⇒ false).

@@ -29,8 +29,8 @@ interface EstoquePorGalpaoBarProps {
 }
 
 interface DecisaoLabelProps {
-  /** Decisão final do pedido */
-  decisao: "propria" | "transferencia" | "oc";
+  /** Decisão final do pedido (troca_equivalente = aguardando aprovação de troca) */
+  decisao: "propria" | "transferencia" | "oc" | "troca_equivalente";
   /** Galpão de origem (de onde o pedido entrou) */
   galpaoOrigem: string;
   /** Galpão que vai cumprir (mesmo da origem em "propria", outro em "transferencia") */
@@ -182,6 +182,15 @@ function DecisaoLabel(props: DecisaoLabelProps) {
     return (
       <span className={className} title={swapTitle}>
         {galpaoOrigem} <span className="wms-dec-arrow">→</span> {fonte}
+      </span>
+    );
+  }
+
+  if (decisao === "troca_equivalente") {
+    return (
+      <span className={className}>
+        <span className="wms-dec-arrow">⇄</span>
+        {compact ? "Troca" : "Troca de Equivalente"}
       </span>
     );
   }

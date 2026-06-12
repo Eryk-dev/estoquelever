@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Replace, X, Loader2, Package, MapPin, Boxes, ExternalLink } from "lucide-react";
 import { sisoFetch } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import { TIER_LABEL } from "@/lib/wms/trocas-equivalencia-regra";
 import type {
   DetalheProduto,
   EquivalenteRapido,
@@ -419,6 +420,21 @@ function CrossModal({ sku, onClose }: CrossModalProps) {
                             {(eq.origem === "link" || eq.origem === "oem+link") && (
                               <span className="px-1 py-px rounded bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 text-[9px] font-medium">
                                 Linkado
+                              </span>
+                            )}
+                            {eq.tier_qualidade && (
+                              <span className="px-1 py-px rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[9px] font-medium">
+                                {TIER_LABEL[eq.tier_qualidade]}
+                              </span>
+                            )}
+                            {eq.verificacao === "verificado" && (
+                              <span className="px-1 py-px rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[9px] font-medium">
+                                ✓ Verificado
+                              </span>
+                            )}
+                            {eq.verificacao === "bloqueado" && (
+                              <span className="px-1 py-px rounded bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-300 text-[9px] font-medium">
+                                ✕ Bloqueado
                               </span>
                             )}
                             {eq.oems_compartilhados.slice(0, 3).map((o) => (

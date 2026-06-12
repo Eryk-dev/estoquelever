@@ -47,7 +47,8 @@ export type IconName =
   | "trash"
   | "download"
   | "sliders"
-  | "printer";
+  | "printer"
+  | "swap";
 
 export function Icon({ name, size = 14, className }: IconProps) {
   const common = {
@@ -298,6 +299,13 @@ export function Icon({ name, size = 14, className }: IconProps) {
           <path d="M4.5 5.5V2h7v3.5" />
           <path d="M4.5 11H2.5V5.5h11V11h-2" />
           <rect x="4.5" y="9" width="7" height="5" />
+        </svg>
+      );
+    case "swap":
+      return (
+        <svg {...common}>
+          <path d="M3 5.5h10l-3-3" />
+          <path d="M13 10.5H3l3 3" />
         </svg>
       );
     default:

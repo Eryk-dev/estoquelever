@@ -5145,6 +5145,60 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 ---
 
+## Trocas de Equivalência (2026-06-12)
+
+Plano: `docs/superpowers/plans/2026-06-12-cross-troca-equivalencia.md`. Serviço: `src/lib/wms/trocas-equivalencia.ts` (+ regra pura em `trocas-equivalencia-regra.ts`, integração de roteamento em `trocas-roteamento.ts`).
+
+### GET /api/wms/trocas
+
+**File:** `src/app/api/wms/trocas/route.ts` · **Auth:** sessão
+
+**Query:** `status` (default `pendente`; `todas` = sem filtro) · `pedido_id` (opcional)
+
+Lista trocas com joins: `produto_vendido`/`produto_substituto` (sku, descricao, imagem_url, tier_qualidade), `solicitante` (nome), `galpao` (nome). Limit 100, ordem `solicitado_em desc`.
+
+### POST /api/wms/trocas
+
+**Auth:** `userCanAny(separacao.executar, compras.executar, pedidos.aprovar, vendas.aprovar_troca)`
+
+**Body:** `{ pedido_item_id, sku_substituto, origem: 'separacao'|'compras'|'painel' }` (`roteamento` é exclusivo do webhook)
+
+Solicita troca: valida estado do item/pedido, aplica `regraTroca` (mesmo tier + par verificado = LIVRE), cria a solicitação + **reserva forte** no substituto (R `reserva_troca`, TTL 48h, multi-loc via `resolverRealocacao`). Regra 'livre' → aprova na hora (`auto: true` na resposta). Erros com `code`: 404 (item/substituto), 409 (`TROCA_PENDENTE_EXISTE`, `PAR_BLOQUEADO`, `ITEM_JA_SEPARADO`, `PEDIDO_ESTADO_INVALIDO`, `TROCA_JA_APLICADA`), 422 (`SEM_SALDO_SUBSTITUTO`, `PRODUTO_VENDIDO_NAO_MAPEADO`, `GALPAO_INDETERMINADO`).
+
+### POST /api/wms/trocas/[id]/aprovar
+
+**Auth:** `vendas.aprovar_troca`
+
+Libera R vivas do produto VENDIDO do item (precedente P2-CMP-04) + RPC `wms_aprovar_troca_atomico` (converte reserva, aplica substituto no item). Se a troca nasceu no ROTEAMENTO e era a última pendente do pedido → aprova o pedido como `propria` via `wms_aprovar_e_enfileirar` + kickWorker (resposta inclui `pedido_aprovado`).
+
+### POST /api/wms/trocas/[id]/rejeitar
+
+**Auth:** `vendas.aprovar_troca` · **Body:** `{ motivo? }`
+
+RPC `wms_encerrar_troca_atomico` (libera R de troca + fecha). Origem ROTEAMENTO → re-roteia automático (`reRotearPedidoPosTroca`): propria auto-aprova / transferencia volta pro painel / oc auto-enfileira (resposta inclui `re_roteado`).
+
+### GET /api/wms/trocas/equivalentes
+
+**Query:** `sku`, `galpao_id`
+
+Equivalentes do cluster cross presentes em `siso_produtos`, com `tier_qualidade`, `par_verificacao` e `disponivel_galpao` (live, locs vendáveis). Alimenta as superfícies (separação/compras/painel).
+
+### POST /api/wms/cross/produtos/[sku]/verificacao · DELETE .../verificacao/[skuAlvo]
+
+**Auth:** `produtos.editar` · **Body POST:** `{ sku_alvo, status: 'verificado'|'bloqueado', observacao? }`
+
+Curadoria do par (normalizado `sku_a < sku_b`) em `siso_equivalencias_verificadas`. DELETE volta o par a "não curado".
+
+### POST /api/wms/cross/produtos/[sku]/tier
+
+**Auth:** `produtos.editar` · **Body:** `{ tier: 'original'|'primeira_linha'|'segunda_linha'|null }`
+
+Atualiza `siso_produtos.tier_qualidade` pelo SKU (404 se SKU fora do catálogo WMS).
+
+> **Roteamento (webhook):** quando o galpão-casa não cobre com o SKU original, `planejarTrocaRoteamento` tenta substitutos — todos auto (mesmo nível + verificado) → pedido `propria` com troca auto-aplicada; algum exigindo aprovação → pedido `pendente` com `sugestao='troca_equivalente'` + trocas pendentes com R forte. `GET equivalentes-rapidos` do cross também retorna `verificacao` + `tier_qualidade` por equivalente.
+
+---
+
 ## WMS — Foundation (Plano 1)
 
 Schema 3D (a partir de 2026-05-20): cada posição de estoque é única por **(produto_id, galpao_id, localizacao_id)**. Empresa virou TAG em movs com NF (`empresa_compradora_id` / `empresa_vendedora_id` / `empresa_referencia_id`). Toda escrita no ledger passa pela RPC `wms_inserir_movimentacao` (lock pessimista no Postgres, recalcula `siso_custo_medio` em entradas com `custo_unitario`).

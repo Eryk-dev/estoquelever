@@ -29,6 +29,14 @@ interface DevRow {
   status?: string;
   classificacao?: string | null;
   classificada_em?: string | null;
+  /** Itens do pedido de origem que tiveram troca de equivalência aplicada —
+   *  a peça física que volta é o SUBSTITUTO, então a entrada vai nele. */
+  trocas?: Array<{
+    produto_substituto_id: string;
+    sku_substituto: string;
+    sku_vendido: string;
+    troca_equivalencia_id: string | null;
+  }>;
 }
 
 interface ProdutoMin {
@@ -106,6 +114,20 @@ export default function ClassificarPage({
   });
   const dev = devResp?.devolucao;
   const jaClassificada = dev?.status === "classificada";
+  // Troca de equivalência: peça que volta é o SUBSTITUTO (não o SKU vendido na
+  // NF). Pega a 1ª troca do pedido pra sugerir o produto + avisar o operador.
+  const troca = dev?.trocas?.[0];
+
+  // Default do produto = substituto quando o pedido teve troca. Aplica uma vez
+  // assim que a troca chega (pattern "ajustar state quando uma prop muda" —
+  // setState em render, não em effect). Só pré-preenche se o operador ainda
+  // não escolheu nada (não atropela edição manual).
+  const [trocaAplicada, setTrocaAplicada] = useState<string>();
+  if (troca && trocaAplicada !== troca.produto_substituto_id && !produto_id && !sku) {
+    setTrocaAplicada(troca.produto_substituto_id);
+    setProduto(troca.produto_substituto_id);
+    setSku(troca.sku_substituto);
+  }
 
   const { data: fornecedoresResp } = useQuery({
     queryKey: ["wms-fornecedores"],
@@ -276,6 +298,19 @@ export default function ClassificarPage({
 
       {!jaClassificada && (
         <>
+      {troca && (
+        <div className="wms-hint-card" style={{ marginBottom: 16 }}>
+          <Icon name="swap" size={14} />
+          <span>
+            <strong>⇄ Este pedido teve troca de equivalência</strong> — a peça
+            enviada foi <strong className="wms-mono">{troca.sku_substituto}</strong>{" "}
+            (vendido como{" "}
+            <span className="wms-mono">{troca.sku_vendido}</span>), a entrada
+            vai nesse produto.
+          </span>
+        </div>
+      )}
+
       <h3 className="wms-sec-h">Classificação</h3>
       <div
         style={{

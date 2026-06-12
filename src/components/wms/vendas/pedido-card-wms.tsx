@@ -14,7 +14,10 @@ import { EstoquePorGalpaoBar, DecisaoLabel } from "./estoque-por-galpao-bar";
 
 // ── Tipos ─────────────────────────────────────────────────────────────
 
-type Decisao = "propria" | "transferencia" | "oc";
+// `troca_equivalente` chega via sugestao (pedido aguardando aprovação de troca
+// de peça) — não é selecionável no dropdown de decisão; a decisão acontece no
+// modal de trocas.
+type Decisao = "propria" | "transferencia" | "oc" | "troca_equivalente";
 
 interface ItemEstoque {
   saldo: number;
@@ -109,6 +112,7 @@ function decisaoIsAvailable(
   itens: ItemRow[],
   filialOrigem: string,
 ): boolean {
+  if (decisao === "troca_equivalente") return false; // decidido no modal de trocas
   if (decisao === "propria") return galpaoAtendeTudo(itens, filialOrigem);
   if (decisao === "transferencia") {
     for (const g of getAllGalpoes(itens)) {
@@ -133,6 +137,7 @@ function decisaoLabel(
   if (decisao === "transferencia") {
     return `${getTransferTarget(itens, filialOrigem)} → ${filialOrigem}`;
   }
+  if (decisao === "troca_equivalente") return "Troca de Equivalente";
   return "Ordem de Compra";
 }
 

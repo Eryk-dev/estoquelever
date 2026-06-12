@@ -6,6 +6,28 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import { PageHeader, Icon, fmtNum } from "@/components/wms/ui/wms-ui";
+import { TIER_LABEL } from "@/lib/wms/trocas-equivalencia-regra";
+
+type TierQualidade = "original" | "primeira_linha" | "segunda_linha";
+type ParVerificacao = "verificado" | "bloqueado" | null;
+
+interface EquivalenteRapido {
+  sku: string;
+  nome: string;
+  fornecedor: string | null;
+  marca: string | null;
+  imagem_url: string | null;
+  localizacao: string | null;
+  origem: "oem" | "link" | "oem+link" | "cadeia";
+  verificacao: ParVerificacao;
+  tier_qualidade: TierQualidade | null;
+}
+
+interface EquivalentesRapidosResp {
+  sku: string;
+  tier_qualidade: TierQualidade | null;
+  equivalentes: EquivalenteRapido[];
+}
 
 interface OemDetalhe {
   codigo: string;
@@ -92,6 +114,90 @@ export default function WmsCrossDetalhePage() {
       return r.json();
     },
     enabled: !!sku,
+  });
+
+  const equivalentesQuery = useQuery<EquivalentesRapidosResp>({
+    queryKey: ["wms-cross-equivalentes-rapidos", sku],
+    queryFn: async () => {
+      const r = await sisoFetch(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/equivalentes-rapidos`,
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+    enabled: !!sku,
+  });
+
+  const tierMut = useMutation({
+    mutationFn: async (tier: TierQualidade | null) => {
+      const r = await sisoFetch(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/tier`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tier }),
+        },
+      );
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+      return json;
+    },
+    onSuccess: () => {
+      toast.success("Classificação atualizada");
+      queryClient.invalidateQueries({
+        queryKey: ["wms-cross-equivalentes-rapidos", sku],
+      });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const verificarMut = useMutation({
+    mutationFn: async (args: {
+      skuAlvo: string;
+      status: "verificado" | "bloqueado";
+    }) => {
+      const r = await sisoFetch(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/verificacao`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sku_alvo: args.skuAlvo, status: args.status }),
+        },
+      );
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+      return json;
+    },
+    onSuccess: (_d, vars) => {
+      toast.success(
+        vars.status === "verificado"
+          ? "Par marcado como verificado"
+          : "Par bloqueado",
+      );
+      queryClient.invalidateQueries({
+        queryKey: ["wms-cross-equivalentes-rapidos", sku],
+      });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const removerVerificacaoMut = useMutation({
+    mutationFn: async (skuAlvo: string) => {
+      const r = await sisoFetch(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/verificacao/${encodeURIComponent(skuAlvo)}`,
+        { method: "DELETE" },
+      );
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+      return json;
+    },
+    onSuccess: () => {
+      toast.success("Curadoria removida");
+      queryClient.invalidateQueries({
+        queryKey: ["wms-cross-equivalentes-rapidos", sku],
+      });
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const refetchTinyMut = useMutation({
@@ -222,6 +328,8 @@ export default function WmsCrossDetalhePage() {
 
   const d = detalheQuery.data!;
   const estoque = estoqueQuery.data?.estoque_por_galpao ?? {};
+  const tierAtual = equivalentesQuery.data?.tier_qualidade ?? null;
+  const equivalentes = equivalentesQuery.data?.equivalentes ?? [];
 
   return (
     <>
@@ -306,6 +414,60 @@ export default function WmsCrossDetalhePage() {
               <span className="wms-td-mute">Marca: </span>
               {d.marca || "—"}
             </span>
+          </div>
+
+          {/* Classificação de qualidade (tier) */}
+          <div
+            style={{
+              marginTop: 10,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <span className="wms-td-mute" style={{ fontSize: 12 }}>
+              Qualidade:
+            </span>
+            {tierAtual ? (
+              <span
+                className={`wms-badge ${
+                  tierAtual === "original"
+                    ? "wms-badge-ok"
+                    : tierAtual === "primeira_linha"
+                      ? "wms-badge-info"
+                      : "wms-badge-warn"
+                }`}
+              >
+                {TIER_LABEL[tierAtual]}
+              </span>
+            ) : (
+              <span className="wms-badge wms-badge-mute">Sem classificação</span>
+            )}
+            {podeEditar && (
+              <select
+                className="wms-select"
+                style={{ width: "auto", minWidth: 160 }}
+                value={tierAtual ?? ""}
+                disabled={tierMut.isPending}
+                onChange={(e) =>
+                  tierMut.mutate(
+                    e.target.value
+                      ? (e.target.value as TierQualidade)
+                      : null,
+                  )
+                }
+              >
+                <option value="">Sem classificação</option>
+                <option value="original">{TIER_LABEL.original}</option>
+                <option value="primeira_linha">
+                  {TIER_LABEL.primeira_linha}
+                </option>
+                <option value="segunda_linha">
+                  {TIER_LABEL.segunda_linha}
+                </option>
+              </select>
+            )}
           </div>
         </div>
       </div>
@@ -419,6 +581,115 @@ export default function WmsCrossDetalhePage() {
             </span>
           )}
         </div>
+      </div>
+
+      {/* Equivalências (curadoria) */}
+      <h2 className="wms-sec-h">Equivalências (curadoria) ({equivalentes.length})</h2>
+      <div className="wms-tbl" style={{ marginBottom: 24 }}>
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Produto</th>
+              <th>Qualidade</th>
+              <th>Curadoria</th>
+              {podeEditar && <th className="wms-tar">Ações</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {equivalentes.map((eq) => (
+              <tr key={eq.sku}>
+                <td className="wms-mono">{eq.sku}</td>
+                <td>{eq.nome}</td>
+                <td>
+                  {eq.tier_qualidade ? (
+                    <span className="wms-badge wms-badge-mute">
+                      {TIER_LABEL[eq.tier_qualidade]}
+                    </span>
+                  ) : (
+                    <span className="wms-td-mute">—</span>
+                  )}
+                </td>
+                <td>
+                  {eq.verificacao === "verificado" && (
+                    <span className="wms-badge wms-badge-ok">
+                      <Icon name="check" size={10} /> Verificado
+                    </span>
+                  )}
+                  {eq.verificacao === "bloqueado" && (
+                    <span className="wms-badge wms-badge-danger">
+                      <Icon name="x" size={10} /> Bloqueado
+                    </span>
+                  )}
+                  {eq.verificacao === null && (
+                    <span className="wms-badge wms-badge-mute">
+                      Não verificado
+                    </span>
+                  )}
+                </td>
+                {podeEditar && (
+                  <td className="wms-tar">
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        justifyContent: "flex-end",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {eq.verificacao !== "verificado" && (
+                        <button
+                          className="wms-btn wms-btn-sm wms-btn-ghost"
+                          disabled={verificarMut.isPending}
+                          onClick={() =>
+                            verificarMut.mutate({
+                              skuAlvo: eq.sku,
+                              status: "verificado",
+                            })
+                          }
+                        >
+                          <Icon name="check" size={11} /> Verificar
+                        </button>
+                      )}
+                      {eq.verificacao !== "bloqueado" && (
+                        <button
+                          className="wms-btn wms-btn-sm wms-btn-ghost"
+                          disabled={verificarMut.isPending}
+                          onClick={() =>
+                            verificarMut.mutate({
+                              skuAlvo: eq.sku,
+                              status: "bloqueado",
+                            })
+                          }
+                        >
+                          <Icon name="x" size={11} /> Bloquear
+                        </button>
+                      )}
+                      {eq.verificacao !== null && (
+                        <button
+                          className="wms-btn wms-btn-sm wms-btn-ghost"
+                          disabled={removerVerificacaoMut.isPending}
+                          onClick={() => removerVerificacaoMut.mutate(eq.sku)}
+                        >
+                          <Icon name="trash" size={11} /> Remover
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+            {equivalentes.length === 0 && (
+              <tr>
+                <td colSpan={podeEditar ? 5 : 4} className="wms-td-empty">
+                  {equivalentesQuery.isLoading
+                    ? "Carregando..."
+                    : "Nenhuma equivalência encontrada (sem OEM compartilhado nem link)."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {/* Veículos */}

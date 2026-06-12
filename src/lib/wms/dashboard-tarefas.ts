@@ -174,7 +174,13 @@ export type DashboardTarefasResult = {
   };
   separacao: { count: number; executores: Executor[] };
   embalagem: { count: number; executores: Executor[] };
-  guarda: { count: number; executores: Executor[]; itens: GuardaItem[] };
+  guarda: {
+    count: number;
+    /** Somatório de peças a guardar (qty_pendente) das pendências carregadas. */
+    qty_pendente_total: number;
+    executores: Executor[];
+    itens: GuardaItem[];
+  };
   compras: {
     aComprar: number;
     aReceber: number;
@@ -1138,6 +1144,10 @@ export async function montarDashboardTarefas(
     },
     guarda: {
       count: guardaRows.length,
+      qty_pendente_total: guardaRows.reduce(
+        (acc, r) => acc + (Number(r.qty_inicial) - Number(r.qty_guardada)),
+        0,
+      ),
       executores: hidratarExecutores(guardaIds, usuariosMap),
       itens: guardaItens,
     },

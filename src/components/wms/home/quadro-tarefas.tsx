@@ -75,6 +75,7 @@ export function QuadroTarefas() {
   const data = query.data;
 
   const guardaTotal = data?.guarda.count ?? 0;
+  const guardaPecas = data?.guarda.qty_pendente_total ?? 0;
   const inventarioTotal = data?.inventario.sessoesAtivas ?? 0;
   const comprasComprar = data?.compras.aComprar ?? 0;
   const comprasReceber = data?.compras.aReceber ?? 0;
@@ -138,7 +139,7 @@ export function QuadroTarefas() {
         <div className="wms-kanban-coluna">
           <div className="wms-kanban-coluna-head">
             <span className="wms-kanban-coluna-titulo">Guarda</span>
-            <span className="wms-kanban-coluna-count">{guardaTotal}</span>
+            <span className="wms-kanban-coluna-count">{guardaPecas}</span>
           </div>
           <div className="wms-kanban-coluna-cards">
             {guardaTotal === 0 ? (

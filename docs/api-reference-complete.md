@@ -6068,8 +6068,17 @@ Pega localização atomicamente (RPC). **409** se já bloqueada por outro operad
 ### DELETE /api/wms/inventario/[id]/localizacoes/[locId]/bloquear
 Libera lock. Status='contada'.
 
+### POST /api/wms/inventario/[id]/proxima-loc
+Pull queue: claima a próxima loc disponível pro operador (RPC `wms_inventario_proxima_loc`, claim hierárquico rua>prédio>colisão). `{ pool_vazio: true }` quando acabou.
+
+**[INV-05] Query `retomar=1`:** só retoma a loc já `em_contagem` DESTE operador (refresh do app) — se não houver, `{ sem_loc_ativa: true }` SEM claimar. Toda retomada (com ou sem o param) vem com `retomada: true` + `bipes: [{produto_id, sku, descricao, qty}]` (contagens prévias do operador, pra reidratar a UI).
+
+**Auth:** `requireWarehouseAccess`
+
 ### GET /api/wms/inventario/[id]/divergencias
 Lista divergências da sessão. Query: `status`.
+
+**[INV-04]** Perdas (`delta<0`, status pendente/aprovada) cuja aplicação deixaria `saldo < reservado` na tripla vêm com `colide_reserva: true` — a UI mostra badge "⚠ reserva" (aplicar a sessão falharia no preflight; ação: liberar/realocar a reserva ou rejeitar a linha).
 
 ### PATCH /api/wms/inventario/[id]/divergencias
 Atualiza status de divergências em lote (single-id é caso particular com `[id]`).

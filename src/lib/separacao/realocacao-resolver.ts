@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import type { TipoLocalizacao } from "@/lib/wms/types";
 import { naturalLocCompare } from "@/lib/wms/loc-compare";
+import { locsBloqueadasSet } from "@/lib/wms/loc-locks";
 
 // 3D (Fase 5 Batch C):
 // Cascade de realocação opera no pool físico do galpão — sem empresa_dona.
@@ -136,9 +137,17 @@ function defaultDeps(): ResolverDeps {
         query = query.not("localizacao_id", "in", `(${excluir.join(",")})`);
       }
 
-      const { data } = await query;
+      const [{ data }, bloqueadas] = await Promise.all([
+        query,
+        // [INV-07] Loc em contagem de inventário não recebe R cascade — criar
+        // reserva lá manda o picker pra dentro da loc sendo contada e pode
+        // travar a aplicação da perda (preflight INV-02/04).
+        locsBloqueadasSet(supabase),
+      ]);
 
-      return (data ?? []).map((row) => {
+      return (data ?? [])
+        .filter((row) => !bloqueadas.has(row.localizacao_id as string))
+        .map((row) => {
         const loc = row.siso_localizacoes as unknown as {
           codigo: string;
           tipo: TipoLocalizacao;

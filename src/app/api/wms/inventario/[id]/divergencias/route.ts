@@ -35,7 +35,51 @@ export async function GET(
       metadata: { sessao_id: id },
     });
   }
-  return NextResponse.json({ rows: data ?? [] });
+
+  // [INV-04] Marca perdas que COLIDEM com reserva viva: aplicar a perda
+  // deixaria saldo < reservado (CHECK do estoque) e o preflight da RPC de
+  // aplicar abortaria a sessão inteira. O badge avisa o supervisor ANTES de
+  // ele tentar aplicar — ação: liberar/realocar a reserva ou rejeitar a linha.
+  type DivRow = {
+    produto_id: string;
+    localizacao_id: string;
+    delta: number;
+    status: string;
+    [k: string]: unknown;
+  };
+  let rows = (data ?? []) as DivRow[];
+  const perdas = rows.filter(
+    (r) =>
+      Number(r.delta) < 0 &&
+      (r.status === "pendente" || r.status === "aprovada"),
+  );
+  if (perdas.length > 0) {
+    const { data: est } = await sb
+      .from("siso_estoque")
+      .select("produto_id, localizacao_id, saldo, reservado")
+      .in("produto_id", [...new Set(perdas.map((p) => p.produto_id))])
+      .in("localizacao_id", [...new Set(perdas.map((p) => p.localizacao_id))]);
+    const estMap = new Map(
+      ((est ?? []) as Array<{
+        produto_id: string;
+        localizacao_id: string;
+        saldo: number;
+        reservado: number;
+      }>).map((e) => [`${e.produto_id}|${e.localizacao_id}`, e]),
+    );
+    rows = rows.map((r) => {
+      if (Number(r.delta) >= 0 || (r.status !== "pendente" && r.status !== "aprovada")) {
+        return r;
+      }
+      const e = estMap.get(`${r.produto_id}|${r.localizacao_id}`);
+      if (!e) return r;
+      const colide =
+        Number(e.saldo) - Math.abs(Number(r.delta)) < Number(e.reservado);
+      return colide ? { ...r, colide_reserva: true } : r;
+    });
+  }
+
+  return NextResponse.json({ rows });
 }
 
 export async function PATCH(

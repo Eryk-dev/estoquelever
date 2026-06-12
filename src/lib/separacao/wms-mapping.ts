@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { TIPOS_LOC_VENDAVEIS } from "@/lib/wms/roteamento";
+import { locsBloqueadasSet } from "@/lib/wms/loc-locks";
 
 export interface MappingDeps {
   buscarProdutoId: (empresaId: string, tinyProdutoId: string) => Promise<string | null>;
@@ -79,6 +80,11 @@ export async function buscarLocComMaiorSaldoNoGalpao(
   opts?: { apenasVendaveis?: boolean },
 ): Promise<string | null> {
   const supabase = createServiceClient();
+  // [INV-07] Exclui locs com lock de inventário ativo — mesma regra de
+  // roteamento.ts/sugestao-dinamica.ts. Busca top-20 por disponivel e pega a
+  // primeira não-travada (antes era limit(1), que podia cair numa loc em
+  // contagem e direcionar pick/reserva pra dentro dela).
+  const bloqueadas = await locsBloqueadasSet(supabase);
   if (opts?.apenasVendaveis) {
     const { data } = await supabase
       .from("siso_estoque")
@@ -88,9 +94,11 @@ export async function buscarLocComMaiorSaldoNoGalpao(
       .in("siso_localizacoes.tipo", [...TIPOS_LOC_VENDAVEIS])
       .gt("disponivel", 0)
       .order("disponivel", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return (data?.localizacao_id as string | null | undefined) ?? null;
+      .limit(20);
+    const livre = (data ?? []).find(
+      (r) => !bloqueadas.has(r.localizacao_id as string),
+    );
+    return (livre?.localizacao_id as string | undefined) ?? null;
   }
   const { data } = await supabase
     .from("siso_estoque")
@@ -99,9 +107,11 @@ export async function buscarLocComMaiorSaldoNoGalpao(
     .eq("produto_id", produtoUuid)
     .gt("disponivel", 0)
     .order("disponivel", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return (data?.localizacao_id as string | null | undefined) ?? null;
+    .limit(20);
+  const livre = (data ?? []).find(
+    (r) => !bloqueadas.has(r.localizacao_id as string),
+  );
+  return (livre?.localizacao_id as string | undefined) ?? null;
 }
 
 /**

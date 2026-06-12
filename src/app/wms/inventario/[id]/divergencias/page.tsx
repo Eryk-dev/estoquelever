@@ -23,6 +23,8 @@ interface DivergenciaRow {
   delta_pct: number | null;
   valor_financeiro: number | null;
   status: string;
+  /** [INV-04] Perda que colide com reserva viva — aplicar travaria a sessão. */
+  colide_reserva?: boolean;
 }
 
 export default function DivergenciasPage({
@@ -381,6 +383,15 @@ export default function DivergenciasPage({
                     </td>
                     <td>
                       <StatusBadge status={d.status} />
+                      {d.colide_reserva && (
+                        <span
+                          className="wms-badge wms-badge-warn"
+                          style={{ marginLeft: 4 }}
+                          title="Aplicar esta perda deixaria o saldo abaixo do reservado — a aplicação da sessão inteira falharia. Libere/realoque a reserva do pedido nessa localização, ou rejeite esta divergência."
+                        >
+                          ⚠ reserva
+                        </span>
+                      )}
                     </td>
                     <td className="wms-td-actions">
                       {pendente && (

@@ -5570,3 +5570,72 @@ erros:
     - src/app/api/wms/separacao/cancelar/route.ts
     - src/app/api/wms/separacao/cancelar/cancelar-recria-reserva.test.ts
   tags: [separacao, cancelar, reserva, estorno, overselling, sep-06, ledger]
+
+- id: INVENTARIO-REFRESH-PULA-LOC
+  date: 2026-06-12
+  source: wms_inventario_proxima_loc / wms/inventario/[id]/contar
+  category: business_logic
+  message: "Refresh do app no meio da contagem pulava pra próxima loc — a atual ficava órfã e os bipes eram descartados em 30min"
+  cause: >
+    A RPC wms_inventario_proxima_loc não tinha fase de retomada: todas
+    as fases buscavam só status='pendente' AND bloqueada_por IS NULL.
+    O frontend guardava a loc ativa só em React state — refresh perdia
+    tudo, auto-entrava na party (no-op) e o próximo "pegar próxima"
+    claimava loc NOVA. A antiga ficava em_contagem bloqueada pelo
+    operador até o recovery cron (30min) descartar os bipes parciais
+    (P0-02) e devolvê-la ao pool — trabalho perdido + recontagem do
+    zero. O toast "contagens preservadas" da reentrada era enganoso.
+  fix: >
+    [INV-05] FASE 0 na RPC: loc em_contagem do PRÓPRIO operador retorna
+    com retomada=true + bipes (contagens prévias agregadas pra reidratar
+    a UI). Param novo p_somente_retomar (default false): sem loc ativa
+    retorna sem_loc_ativa=true SEM claimar — usado pelo frontend no
+    mount (proxima-loc?retomar=1). contar/page.tsx dispara retomada ao
+    chegar em standby com party ativa e pula direto pra counting com as
+    quantidades já bipadas. Assinatura da RPC mudou 2→3 params (DROP +
+    CREATE pra evitar overload ambíguo no PostgREST).
+  files:
+    - supabase/migrations/20260612_inventario_proxima_loc_retomada.sql
+    - src/lib/wms/inventario.ts
+    - src/app/api/wms/inventario/[id]/proxima-loc/route.ts
+    - src/app/wms/inventario/[id]/contar/page.tsx
+  tags: [inventario, proxima-loc, retomada, refresh, claim, pull-queue, p0-02]
+
+- id: INVENTARIO-OPERACAO-FUROS-LOCK
+  date: 2026-06-12
+  source: realocacao-resolver / wms-mapping / putaway / computarDivergencias
+  category: business_logic
+  message: "Cascade do parcial, fallback de loc do pick e sugestão de put-away ignoravam locks de inventário; órfãs poluíam o cálculo de divergências"
+  cause: >
+    siso_localizacao_locks era respeitado por roteamento.ts,
+    sugestao-dinamica.ts e reconciliador-oc.ts (P3-26), mas NÃO por:
+    (a) realocacao-resolver (R cascade criada em loc em contagem —
+    manda picker pra dentro da contagem e pode travar a aplicação da
+    perda no preflight INV-02/04); (b) buscarLocComMaiorSaldoNoGalpao
+    (fallback de pick/reserva); (c) sugerirLocalizacaoPutaway (despeja
+    estoque na prateleira sendo contada). Além disso,
+    computarDivergencias resetava locs órfãs (em_contagem de operador
+    finalizado) DEPOIS do cálculo e SEM descartar os bipes parciais —
+    em modo full/forçado a contagem pela metade virava divergência; em
+    parcial, bipes de loc em_contagem entravam sem saldo carregado
+    (saldo_esperado=0) → ganho fantasma.
+  fix: >
+    [INV-07] helper locsBloqueadasSet (lib/wms/loc-locks.ts) aplicado
+    nos 3 pontos. [INV-08] computarDivergencias: órfãs descartadas
+    (descartarContagensDeLocsDevolvidas) e devolvidas ao pool ANTES do
+    cálculo; em modo parcial as contagens são filtradas às locs
+    finalizadas. [INV-06] siso_localizacao_locks ganhou sessao_id
+    (dono explícito — mata o proxy por timestamp do P2-INV-02);
+    finalizarLoc agora libera o lock externo da loc na hora (D2: loc
+    contada volta pro roteamento sem esperar aprovação da sessão);
+    aprovar/cancelar/aplicar liberam por sessao_id com fallback legado.
+  files:
+    - supabase/migrations/20260612b_loc_locks_sessao_id.sql
+    - src/lib/wms/loc-locks.ts
+    - src/lib/separacao/realocacao-resolver.ts
+    - src/lib/separacao/wms-mapping.ts
+    - src/lib/wms/putaway.ts
+    - src/lib/wms/inventario.ts
+    - src/app/api/wms/inventario/[id]/route.ts
+    - src/app/api/wms/inventario/[id]/divergencias/route.ts
+  tags: [inventario, locks, cascade, putaway, divergencias, orfas, sessao-id, operacao-viva]

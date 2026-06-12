@@ -89,13 +89,29 @@ export async function sugerirLocalizacaoPutaway(
     .gt("saldo", 0)
     .order("saldo", { ascending: false });
 
+  // [INV-07] Loc com lock de inventário ativo (em contagem) não recebe
+  // put-away — despejar estoque no meio da contagem gera interferência física
+  // com o operador contando. Mesma regra de roteamento/sugestão de pick.
+  const { data: locksRaw } = await sb
+    .from("siso_localizacao_locks")
+    .select("localizacao_id")
+    .is("finalizado_em", null);
+  const bloqueadas = new Set(
+    ((locksRaw ?? []) as Array<{ localizacao_id: string }>).map(
+      (l) => l.localizacao_id,
+    ),
+  );
+
   type Existente = {
     localizacao_id: string;
     saldo: number;
     localizacao?: { codigo?: string; tipo?: string };
   };
   const lista = ((existentes ?? []) as Existente[]).filter(
-    (e) => e.localizacao?.tipo && e.localizacao.tipo !== "recebimento",
+    (e) =>
+      e.localizacao?.tipo &&
+      e.localizacao.tipo !== "recebimento" &&
+      !bloqueadas.has(e.localizacao_id),
   );
   const candidato =
     lista.find((e) => e.localizacao?.tipo === "picking") ?? lista[0];
@@ -112,7 +128,7 @@ export async function sugerirLocalizacaoPutaway(
     .select("id, codigo")
     .match({ galpao_id: ctx.galpao_id, codigo: "DEFAULT-PICKING" })
     .limit(1);
-  if (def && def.length > 0) {
+  if (def && def.length > 0 && !bloqueadas.has(def[0].id)) {
     return {
       localizacao_id: def[0].id,
       codigo: def[0].codigo,

@@ -175,6 +175,9 @@ export async function iniciarSessao(
       localizacao_id: l.localizacao_id,
       motivo: "cycle_count",
       iniciado_por: usuarioId,
+      // [INV-06] dono explícito — liberação (finalizar/aprovar/cancelar/
+      // aplicar) escopa por sessao_id em vez do proxy por timestamp.
+      sessao_id: sessaoId,
     }),
   );
   if (lockRows.length > 0) {
@@ -209,7 +212,12 @@ export async function iniciarSessao(
 async function inserirLocksUmAUm(
   sb: ReturnType<typeof createServiceClient>,
   sessaoId: string,
-  lockRows: Array<{ localizacao_id: string; motivo: string; iniciado_por: string }>,
+  lockRows: Array<{
+    localizacao_id: string;
+    motivo: string;
+    iniciado_por: string;
+    sessao_id: string;
+  }>,
 ): Promise<void> {
   const inseridosIds: string[] = [];
   const conflitos: string[] = [];
@@ -449,8 +457,24 @@ export interface EsperadoItem {
 export type ClaimTipo = "rua" | "predio" | "colisao";
 export type ClaimDirecao = "asc" | "desc";
 
+/** [INV-05] Bipe já registrado pelo operador na loc retomada — reidrata a UI. */
+export interface BipeRetomada {
+  produto_id: string;
+  sku: string;
+  descricao: string;
+  qty: number;
+  imagem_url?: string | null;
+  imagens?: string[];
+}
+
 export interface ProximaLocOutput {
   pool_vazio: boolean;
+  /** [INV-05] true quando a loc retornada já era deste operador (refresh). */
+  retomada?: boolean;
+  /** [INV-05] modo somente_retomar sem loc ativa — nada foi claimado. */
+  sem_loc_ativa?: boolean;
+  /** [INV-05] contagens prévias deste operador na loc retomada. */
+  bipes?: BipeRetomada[];
   inv_loc_id?: string;
   loc_id?: string;
   codigo?: string;
@@ -470,16 +494,21 @@ export interface ProximaLocOutput {
 export async function pegarProximaLoc(
   sessaoId: string,
   usuarioId: string,
+  opts?: { somenteRetomar?: boolean },
 ): Promise<ProximaLocOutput> {
   const sb = createServiceClient();
   const { data, error } = await sb.rpc("wms_inventario_proxima_loc", {
     p_sessao: sessaoId,
     p_user: usuarioId,
+    p_somente_retomar: opts?.somenteRetomar ?? false,
   });
   if (error) throw error;
   const r = (data ?? {}) as {
     ok?: boolean;
     pool_vazio?: boolean;
+    retomada?: boolean;
+    sem_loc_ativa?: boolean;
+    bipes?: BipeRetomada[] | null;
     inv_loc_id?: string;
     loc_id?: string;
     codigo?: string;
@@ -491,17 +520,24 @@ export async function pegarProximaLoc(
     claim_codigo?: string;
     claim_direcao?: ClaimDirecao;
   };
-  // Enriquece esperados com imagem_url — RPC não retorna pra evitar bloat
-  // no payload de roteamento; aqui é a hora de pagar o lookup (lista
-  // pequena, normalmente <10 SKUs por loc) pra ajudar o operador a
+  if (r.sem_loc_ativa === true) {
+    return { pool_vazio: false, sem_loc_ativa: true };
+  }
+  // Enriquece esperados (e bipes da retomada) com imagem_url — RPC não retorna
+  // pra evitar bloat no payload de roteamento; aqui é a hora de pagar o lookup
+  // (lista pequena, normalmente <10 SKUs por loc) pra ajudar o operador a
   // identificar visualmente a peça no handheld.
   let esperadosEnriched = r.esperados ?? undefined;
-  if (esperadosEnriched && esperadosEnriched.length > 0) {
-    const ids = esperadosEnriched.map((e) => e.produto_id);
+  let bipesEnriched = r.bipes ?? undefined;
+  const idsImg = [
+    ...(esperadosEnriched ?? []).map((e) => e.produto_id),
+    ...(bipesEnriched ?? []).map((b) => b.produto_id),
+  ];
+  if (idsImg.length > 0) {
     const { data: imgs } = await sb
       .from("siso_produtos")
       .select("id, imagem_url, imagens")
-      .in("id", ids);
+      .in("id", [...new Set(idsImg)]);
     const imgMap = new Map(
       ((imgs ?? []) as Array<{
         id: string;
@@ -512,10 +548,18 @@ export async function pegarProximaLoc(
         { imagem_url: p.imagem_url, imagens: p.imagens ?? [] },
       ]),
     );
-    esperadosEnriched = esperadosEnriched.map((e) => {
+    esperadosEnriched = esperadosEnriched?.map((e) => {
       const m = imgMap.get(e.produto_id);
       return {
         ...e,
+        imagem_url: m?.imagem_url ?? null,
+        imagens: m?.imagens ?? [],
+      };
+    });
+    bipesEnriched = bipesEnriched?.map((b) => {
+      const m = imgMap.get(b.produto_id);
+      return {
+        ...b,
         imagem_url: m?.imagem_url ?? null,
         imagens: m?.imagens ?? [],
       };
@@ -524,6 +568,8 @@ export async function pegarProximaLoc(
 
   return {
     pool_vazio: r.pool_vazio === true,
+    retomada: r.retomada === true,
+    bipes: bipesEnriched,
     inv_loc_id: r.inv_loc_id,
     loc_id: r.loc_id,
     codigo: r.codigo,
@@ -551,12 +597,13 @@ export async function finalizarLoc(
   // Confirma que o user é dono do lock dessa loc
   const { data: invLoc } = await sb
     .from("siso_inventario_localizacoes")
-    .select("id, bloqueada_por, status")
+    .select("id, localizacao_id, bloqueada_por, status")
     .eq("id", invLocId)
     .eq("sessao_id", sessaoId)
     .single();
   const row = invLoc as {
     id: string;
+    localizacao_id: string;
     bloqueada_por: string | null;
     status: string;
   } | null;
@@ -578,6 +625,28 @@ export async function finalizarLoc(
     })
     .eq("id", invLocId);
   if (error) throw error;
+
+  // [INV-06/D2] Libera o lock EXTERNO desta loc na hora — loc contada volta
+  // pro roteamento/sugestão de pick imediatamente, em vez de esperar a
+  // aprovação da sessão inteira (que pode levar horas em revisão). A
+  // reconciliação temporal absorve movs pós-contagem e a aplicação é por
+  // delta; colisão perda×reserva nova é pega pelo preflight INV-02/04.
+  // Fallback sessao_id IS NULL cobre locks legados pré-coluna (uq garante
+  // 1 lock ativo por loc, então o ativo desta loc é desta sessão).
+  const agora = new Date().toISOString();
+  await sb
+    .from("siso_localizacao_locks")
+    .update({ finalizado_em: agora })
+    .eq("localizacao_id", row.localizacao_id)
+    .eq("sessao_id", sessaoId)
+    .is("finalizado_em", null);
+  await sb
+    .from("siso_localizacao_locks")
+    .update({ finalizado_em: agora })
+    .eq("localizacao_id", row.localizacao_id)
+    .is("sessao_id", null)
+    .eq("motivo", "cycle_count")
+    .is("finalizado_em", null);
 
   // Incrementa contador do operador (best-effort)
   const { data: op } = await sb
@@ -1018,6 +1087,37 @@ export async function computarDivergencias(
     throw err;
   }
 
+  // [INV-08] Órfãs ANTES do cálculo (era depois do upsert): locs em_contagem
+  // cujo bloqueada_por não é operador ativo (zumbi/abandono) regridem pra
+  // 'pendente' E têm os bipes parciais DESCARTADOS (P0-02) — senão a contagem
+  // pela metade entrava no cálculo como divergência real (perda falsa).
+  const ativosUserIds = ativos
+    .map((a) => a.usuario_id)
+    .filter((id) => UUID_RX.test(id));
+  const { data: orfasRaw } = await sb
+    .from("siso_inventario_localizacoes")
+    .select("id, localizacao_id, bloqueada_por")
+    .eq("sessao_id", sessaoId)
+    .eq("status", "em_contagem")
+    .not("bloqueada_por", "is", null);
+  const orfas = ((orfasRaw ?? []) as Array<{
+    id: string;
+    localizacao_id: string;
+    bloqueada_por: string;
+  }>).filter((r) => !ativosUserIds.includes(r.bloqueada_por));
+  if (orfas.length > 0) {
+    await descartarContagensDeLocsDevolvidas(
+      sb,
+      sessaoId,
+      orfas.map((o) => o.localizacao_id),
+      "computar_divergencias_orfas",
+    );
+    await sb
+      .from("siso_inventario_localizacoes")
+      .update({ status: "pendente", bloqueada_por: null, bloqueada_em: null })
+      .in("id", orfas.map((o) => o.id));
+  }
+
   // 1. Carrega locs da sessão (filtrando por modo parcial)
   const locsQuery = sb
     .from("siso_inventario_localizacoes")
@@ -1057,10 +1157,23 @@ export async function computarDivergencias(
     }));
 
   // 2. Contagens (3D: produto + galpao + loc; sem empresa_dona)
-  const { data: contagensRaw } = await sb
+  // [INV-08] Em modo parcial, restringe às locs FINALIZADAS (locIds) — sem o
+  // filtro, bipes de uma loc ainda em_contagem entravam no cálculo com
+  // saldoMap/movs vazios pra ela (carregados só pra locIds) → saldo_esperado 0
+  // → divergência de ganho fantasma. Em modo full o filtro é desnecessário
+  // (locIds = todas as locs da sessão e registrarContagem só aceita locs da
+  // sessão) e o .in() com centenas de uuids estouraria a URL do PostgREST.
+  let contagensQuery = sb
     .from("siso_inventario_contagens")
     .select("localizacao_id, produto_id, qty_contada, criado_em")
     .eq("sessao_id", sessaoId);
+  if (parcial) {
+    contagensQuery = contagensQuery.in(
+      "localizacao_id",
+      locIds.length > 0 ? locIds : ["00000000-0000-0000-0000-000000000000"],
+    );
+  }
+  const { data: contagensRaw } = await contagensQuery;
 
   const contagens = ((contagensRaw ?? []) as Array<{
     localizacao_id: string;
@@ -1232,26 +1345,8 @@ export async function computarDivergencias(
     if (upErr) throw upErr;
   }
 
-  // P3 #4.6: limpa locs órfãs em em_contagem cujo `bloqueada_por` não é
-  // operador ativo (ex.: usuário saiu da party sem finalizar a loc).
-  // Filtro defensivo via JS: valida UUIDs e exclui ativos.
-  const ativosUserIds = ativos
-    .map((a) => a.usuario_id)
-    .filter((id) => UUID_RX.test(id));
-  const { data: orfasRaw } = await sb
-    .from("siso_inventario_localizacoes")
-    .select("id, bloqueada_por")
-    .eq("sessao_id", sessaoId)
-    .eq("status", "em_contagem")
-    .not("bloqueada_por", "is", null);
-  const orfas = ((orfasRaw ?? []) as Array<{ id: string; bloqueada_por: string }>)
-    .filter((r) => !ativosUserIds.includes(r.bloqueada_por));
-  if (orfas.length > 0) {
-    await sb
-      .from("siso_inventario_localizacoes")
-      .update({ status: "pendente", bloqueada_por: null, bloqueada_em: null })
-      .in("id", orfas.map((o) => o.id));
-  }
+  // [INV-08] A limpeza de locs órfãs (P3 #4.6) agora roda ANTES do cálculo —
+  // ver bloco no topo da função (descarta bipes parciais junto).
 
   await sb
     .from("siso_inventario_sessoes")
@@ -1310,19 +1405,16 @@ export async function aprovarSessao(
   // Aplicação (gerar movs) é só ato contábil — não precisa segurar lock
   // contra outras sessões.
   //
-  // [P2-INV-02] siso_localizacao_locks NÃO tem coluna de dono (sessao_id/
-  // origem_id) — só (localizacao_id, motivo, iniciado_em, iniciado_por). Soltar
-  // por localizacao_id puro liberava lock de OUTRA sessão que travou a mesma loc.
-  // Escopamos pelo melhor proxy disponível: locks das locs desta sessão que
-  // foram criados DEPOIS de a sessão iniciar (iniciado_em >= iniciada_em).
-  // LIMITAÇÃO: se duas sessões da mesma loc iniciam no mesmo instante, ainda há
-  // ambiguidade — só uma coluna de dono no schema resolve de vez.
-  const { data: sessRow } = await sb
-    .from("siso_inventario_sessoes")
-    .select("iniciada_em")
-    .eq("id", sessaoId)
-    .maybeSingle();
-  const iniciadaEm = (sessRow as { iniciada_em: string | null } | null)?.iniciada_em ?? null;
+  // [INV-06] Escopado pelo dono (sessao_id) — resolve a limitação P2-INV-02
+  // do proxy por timestamp. Fallback por localizacao_id pra locks legados
+  // (sessao_id NULL, pré-coluna): seguro porque uq_loc_lock_ativo garante 1
+  // lock ativo por loc e as locs desta sessão só podem estar travadas por ela.
+  const agora = new Date().toISOString();
+  await sb
+    .from("siso_localizacao_locks")
+    .update({ finalizado_em: agora })
+    .eq("sessao_id", sessaoId)
+    .is("finalizado_em", null);
 
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
@@ -1332,13 +1424,13 @@ export async function aprovarSessao(
     (l) => l.localizacao_id,
   );
   if (locIds.length > 0) {
-    let q = sb
+    await sb
       .from("siso_localizacao_locks")
-      .update({ finalizado_em: new Date().toISOString() })
+      .update({ finalizado_em: agora })
       .in("localizacao_id", locIds)
+      .is("sessao_id", null)
+      .eq("motivo", "cycle_count")
       .is("finalizado_em", null);
-    if (iniciadaEm) q = q.gte("iniciado_em", iniciadaEm);
-    await q;
   }
 }
 

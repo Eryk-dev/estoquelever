@@ -208,6 +208,15 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   }
 
+  // [INV-06] Liberação escopada por dono (sessao_id) + fallback por
+  // localizacao_id pra locks legados sem a coluna (uq_loc_lock_ativo garante
+  // 1 lock ativo por loc — o ativo das locs desta sessão é dela).
+  const agora = new Date().toISOString();
+  await sb
+    .from("siso_localizacao_locks")
+    .update({ finalizado_em: agora })
+    .eq("sessao_id", id)
+    .is("finalizado_em", null);
   const { data: locs } = await sb
     .from("siso_inventario_localizacoes")
     .select("localizacao_id")
@@ -218,8 +227,10 @@ export async function DELETE(
   if (locIds.length > 0) {
     await sb
       .from("siso_localizacao_locks")
-      .update({ finalizado_em: new Date().toISOString() })
+      .update({ finalizado_em: agora })
       .in("localizacao_id", locIds)
+      .is("sessao_id", null)
+      .eq("motivo", "cycle_count")
       .is("finalizado_em", null);
   }
   await sb

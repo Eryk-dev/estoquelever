@@ -10,6 +10,7 @@ interface ExistRow {
 function mockSb(
   rows: ExistRow[],
   defaultPickingRows: { id: string; codigo: string }[] = [],
+  locksAtivos: string[] = [],
 ) {
   return {
     from(table: string) {
@@ -21,6 +22,17 @@ function mockSb(
                 order: () => Promise.resolve({ data: rows, error: null }),
               }),
             }),
+          }),
+        };
+      }
+      if (table === "siso_localizacao_locks") {
+        return {
+          select: () => ({
+            is: () =>
+              Promise.resolve({
+                data: locksAtivos.map((id) => ({ localizacao_id: id })),
+                error: null,
+              }),
           }),
         };
       }
@@ -116,5 +128,42 @@ describe("sugerirLocalizacaoPutaway", () => {
     });
     expect(r?.localizacao_id).toBe("loc-default");
     expect(r?.razao).toMatch(/DEFAULT-PICKING/i);
+  });
+
+  it("[INV-07] pula loc com lock de inventário ativo (em contagem)", async () => {
+    const sb = mockSb(
+      [
+        {
+          localizacao_id: "loc-travada",
+          saldo: 100,
+          localizacao: { codigo: "A1", tipo: "picking" },
+        },
+        {
+          localizacao_id: "loc-livre",
+          saldo: 5,
+          localizacao: { codigo: "B2", tipo: "overstock" },
+        },
+      ],
+      [],
+      ["loc-travada"],
+    );
+    const r = await sugerirLocalizacaoPutaway(sb as never, {
+      produto_id: "p1",
+      galpao_id: "g1",
+    });
+    expect(r?.localizacao_id).toBe("loc-livre");
+  });
+
+  it("[INV-07] não sugere DEFAULT-PICKING travada — retorna null (operador decide)", async () => {
+    const sb = mockSb(
+      [],
+      [{ id: "loc-default", codigo: "DEFAULT-PICKING" }],
+      ["loc-default"],
+    );
+    const r = await sugerirLocalizacaoPutaway(sb as never, {
+      produto_id: "p2",
+      galpao_id: "g1",
+    });
+    expect(r).toBeNull();
   });
 });

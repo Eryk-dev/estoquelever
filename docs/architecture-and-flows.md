@@ -122,9 +122,21 @@ Implementação:
 - Função pura: `src/lib/wms/inventario-reconciliacao.ts` (testada em `inventario-reconciliacao.test.ts`)
 - Wrapper com I/O: `src/lib/wms/inventario.ts::computarDivergencias`
 
+### Inventário com operação viva — o que é garantido vs soft (2026-06-12)
+
+Três camadas sustentam "contar sem parar a operação":
+
+1. **Locks soft** (`siso_localizacao_locks`, agora com `sessao_id` de dono — INV-06): tiram as locs da sessão do roteamento de pedidos novos, da sugestão de pick, do reconciliador-OC, do cascade do parcial, do fallback de loc (`buscarLocComMaiorSaldoNoGalpao`) e da sugestão de put-away (INV-07). Liberação é **per-loc no `finalizarLoc`** (loc contada volta pro roteamento na hora) com backstop em aprovar/cancelar/aplicar.
+2. **Reconciliação temporal** (acima): absorve movs que acontecem mesmo assim — picks de **reservas pré-existentes** seguem permitidos por design (`wms_pick_item_atomico` NÃO checa lock; bloquear pararia a separação). A matemática por tripla com `T_ref` cobre pick antes/depois do bipe, put-away durante a sessão e estornos.
+3. **Aplicação por delta** (`wms_aplicar_sessao_inventario`): aplica E/S do delta sobre o saldo atual — movs entre contagem e aplicação não corrompem. Preflight INV-02/04 aborta nomeando a divergência se uma perda colidir com saldo/reserva (badge "⚠ reserva" na UI de divergências avisa antes).
+
+**Residual aceito (físico, inerente):** janela de segundos entre o picker tirar a peça da prateleira e a mov ser gravada — se bipes do MESMO SKU intercalam esse intervalo, há ambiguidade que nenhum modelo de ledger resolve. Com os locks dos pontos INV-07 fechados, picks novos não são mais direcionados pra locs em contagem, encolhendo a exposição.
+
+**Retomada (INV-05):** `wms_inventario_proxima_loc` tem FASE 0 — loc `em_contagem` do próprio operador retorna com `retomada=true` + `bipes`; `p_somente_retomar` permite o frontend perguntar sem claimar (refresh não pula mais de loc).
+
 ---
 
-*Last updated: 2026-05-20 — Ledger Simplificado 3D rollout (drop dona física, empresa como tag em movs).*
+*Last updated: 2026-06-12 — Inventário operação-viva: retomada pós-refresh (INV-05), locks com dono + per-loc (INV-06), furos de lock fechados (INV-07), órfãs antes do computar (INV-08).*
 
 ---
 

@@ -47,6 +47,35 @@ interface ContagemLocal {
 
 type Etapa = "entering" | "standby" | "confirming-loc" | "counting" | "pool-vazio";
 
+// [INV-05] Reconstrói a lista de contagens da loc retomada (pós-refresh):
+// esperados entram com a qty já bipada (0 se não bipou); bipes de SKUs fora
+// dos esperados (ou modo blind, sem esperados) entram como linhas extras.
+function montarContagensRetomada(r: ProximaLocOutput): ContagemLocal[] {
+  const bipesMap = new Map((r.bipes ?? []).map((b) => [b.produto_id, b]));
+  const lista: ContagemLocal[] = (r.esperados ?? []).map((e: EsperadoItem) => ({
+    sku: e.sku,
+    produto_id: e.produto_id,
+    descricao: e.descricao,
+    imagem_url: e.imagem_url,
+    imagens: e.imagens,
+    qty: bipesMap.get(e.produto_id)?.qty ?? 0,
+    esperado: e.saldo_esperado,
+  }));
+  const esperadosIds = new Set(lista.map((c) => c.produto_id));
+  for (const b of r.bipes ?? []) {
+    if (esperadosIds.has(b.produto_id)) continue;
+    lista.push({
+      sku: b.sku,
+      produto_id: b.produto_id,
+      descricao: b.descricao,
+      imagem_url: b.imagem_url ?? null,
+      imagens: b.imagens ?? [],
+      qty: b.qty,
+    });
+  }
+  return lista;
+}
+
 export default function ContarPage({
   params,
 }: {
@@ -165,6 +194,38 @@ export default function ContarPage({
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // [INV-05] Retomada pós-refresh: ao chegar em standby com party ativa,
+  // pergunta ao servidor se há loc em contagem DESTE operador (retomar=1 não
+  // claima nada). Se houver, volta direto pra ela com as contagens já bipadas
+  // — antes, o refresh fazia o operador pular pra próxima loc e os bipes da
+  // antiga eram descartados pelo recovery em 30min.
+  const retomadaRef = useRef(false);
+  const retomar = useMutation({
+    mutationFn: () =>
+      wmsApi<ProximaLocOutput>(
+        `/api/wms/inventario/${id}/proxima-loc?retomar=1`,
+        { method: "POST" },
+      ),
+    onSuccess: (r) => {
+      if (r.sem_loc_ativa || !r.inv_loc_id) return; // sem loc ativa → standby
+      setLocAtual(r);
+      setContagens(montarContagensRetomada(r));
+      // Pula confirming-loc: o operador já estava fisicamente nessa loc.
+      setEtapa("counting");
+      toast.success(`Retomando ${r.codigo} — contagens preservadas`);
+    },
+    onError: () => {
+      // Silencioso: falha na retomada não bloqueia o fluxo normal (standby).
+    },
+  });
+
+  useEffect(() => {
+    if (etapa !== "standby" || !meuOp || retomadaRef.current) return;
+    retomadaRef.current = true;
+    retomar.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [etapa, meuOp]);
 
   const pegarProxima = useMutation({
     mutationFn: () =>

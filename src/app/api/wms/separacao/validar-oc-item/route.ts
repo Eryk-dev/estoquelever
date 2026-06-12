@@ -6,7 +6,7 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
-import { resolverProdutoWms, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoEfetivoDoItem, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
 import { alocarContagem, type PlanoAlocacao } from "@/lib/wms/separacao/alocacao-contagem";
 
@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
       // short-circuit idempotente em retry — clique duplo do operador).
       const { data: itensFull } = await supabase
         .from("siso_pedido_itens")
-        .select("id, pedido_id, produto_id, sku, quantidade_pedida, mov_saida_id")
+        .select("id, pedido_id, produto_id, sku, quantidade_pedida, mov_saida_id, produto_wms_substituto_id")
         .in(
           "id",
           items.map((i) => i.id),
@@ -263,9 +263,9 @@ export async function POST(request: NextRequest) {
               );
             }
           }
-          const produtoWmsPrimeiro = await resolverProdutoWms(
+          const produtoWmsPrimeiro = await resolverProdutoEfetivoDoItem(
             ctx.empresa!,
-            String(primeiro.produto_id),
+            primeiro,
           );
           try {
             await registrarContagemInline({
@@ -320,7 +320,7 @@ export async function POST(request: NextRequest) {
         let movSaidaId: string | null = null;
         if (!jaPicado && ctx && ctx.galpao && ctx.empresa) {
           const qty = Number(item.quantidade_pedida ?? 0);
-          const produtoWmsId = await resolverProdutoWms(ctx.empresa, String(item.produto_id));
+          const produtoWmsId = await resolverProdutoEfetivoDoItem(ctx.empresa, item);
 
           if (qtyContadaBody !== null) {
             const plano = planoContagem?.get(String(item.id));
@@ -338,6 +338,7 @@ export async function POST(request: NextRequest) {
                   pedido_numero: ctx.numero,
                   item_id: Number(item.id),
                   produto_id_tiny: String(item.produto_id),
+                  produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
                   sku: String(item.sku),
                   qty: plano.qty_pega,
                   usuario_id: user.id,
@@ -430,6 +431,7 @@ export async function POST(request: NextRequest) {
                 pedido_numero: ctx.numero,
                 item_id: Number(item.id),
                 produto_id_tiny: String(item.produto_id),
+                  produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
                 sku: String(item.sku),
                 qty,
                 usuario_id: user.id,
@@ -550,6 +552,7 @@ export async function POST(request: NextRequest) {
                 pedido_numero: ctx.numero,
                 item_id: Number(item.id),
                 produto_id_tiny: String(item.produto_id),
+                  produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
                 sku: String(item.sku),
                 qty,
                 usuario_id: user.id,
@@ -675,6 +678,7 @@ export async function POST(request: NextRequest) {
                 pedido_numero: ctx.numero,
                 item_id: Number(item.id),
                 produto_id_tiny: String(item.produto_id),
+                  produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
                 sku: String(item.sku),
                 qty,
                 usuario_id: user.id,

@@ -9,7 +9,7 @@ import {
   estornarLiberacaoReserva,
 } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoEfetivoDoItem } from "@/lib/separacao/wms-mapping";
 
 /**
  * POST /api/separacao/marcar-realocacao
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     const { data: item } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade_pedida")
+      .select("id, pedido_id, produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
       .eq("id", realoc.pedido_item_id)
       .single();
     if (!item) {
@@ -74,9 +74,10 @@ export async function POST(request: NextRequest) {
     // empresa vendedora (origem do pedido). Mantemos empresa_dona_id da realoc
     // apenas como ownership lógica do pedido — não chave de estoque.
     const empresaVendedoraId = pedido.empresa_origem_id as string | null;
-    const produtoWmsId = await resolverProdutoWms(
+    // Troca de equivalência: produto FÍSICO (substituto quando aplicado)
+    const produtoWmsId = await resolverProdutoEfetivoDoItem(
       realoc.empresa_dona_id,
-      String(item.produto_id),
+      item,
     );
 
     // R↔L↔S pairing: cascade do parcial criou R nova nessa tripla quando

@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { cancelarTrocasPendentesDoPedido } from "@/lib/wms/trocas-equivalencia";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "encaminhar";
@@ -359,6 +360,27 @@ async function reverseStockExecution(
     });
   } catch (e) {
     logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  // Troca de equivalência: solicitação pendente carrega R forte no SUBSTITUTO
+  // (origem_tipo='reserva_troca') no galpão ATUAL — encerra antes do pedido
+  // migrar de galpão, senão a peça fica presa numa troca que não vale mais.
+  try {
+    const canceladas = await cancelarTrocasPendentesDoPedido({
+      pedidoId: String(pedido.id),
+      usuarioId,
+      motivo: "pedido encaminhado pra outro galpão",
+    });
+    if (canceladas > 0) {
+      logger.info(LOG_SOURCE, "trocas pendentes canceladas no encaminhar", {
+        pedidoId: pedido.id,
+        canceladas,
+      });
+    }
+  } catch (e) {
+    logger.warn(LOG_SOURCE, "falha cancelando trocas pendentes (segue)", {
       error: e instanceof Error ? e.message : String(e),
     });
   }

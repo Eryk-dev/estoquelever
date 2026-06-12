@@ -25,6 +25,7 @@ export const PERMISSIONS = {
   "compras.executar":     { modulo: "vendas",        label: "Comprar/receber/cancelar OC" },
   "pedidos.estornar":         { modulo: "vendas",    label: "Estornar pedido (Banner D10 admin)" },
   "pedidos.liberar_reservas": { modulo: "vendas",    label: "Liberar reservas do pedido (D2 override admin)" },
+  "vendas.aprovar_troca":     { modulo: "vendas",    label: "Aprovar troca de peça equivalente" },
 
   // ── Visibilidade ──
   "estoque.ver":          { modulo: "visibilidade",  label: "Ver Estoque" },

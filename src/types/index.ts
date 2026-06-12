@@ -3,8 +3,12 @@
 // Types
 // ============================================================
 
-/** Possible decision for an order */
-export type Decisao = "propria" | "transferencia" | "oc";
+/**
+ * Possible decision for an order.
+ * `troca_equivalente` é usado APENAS em `sugestao` (pedido pendente
+ * aguardando aprovação de troca de peça equivalente) — nunca em decisao_final.
+ */
+export type Decisao = "propria" | "transferencia" | "oc" | "troca_equivalente";
 
 /** Status of order processing */
 export type StatusPedido =

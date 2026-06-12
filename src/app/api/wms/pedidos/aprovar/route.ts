@@ -536,7 +536,7 @@ async function criarReservasPedido(args: {
   // 2. Itens do pedido
   const { data: itens, error: itensErr } = await supabase
     .from("siso_pedido_itens")
-    .select("id, produto_id, sku, quantidade_pedida")
+    .select("id, produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
     .eq("pedido_id", pedidoId);
   if (itensErr) {
     logger.error("aprovar.reservas", "Falha ao buscar itens do pedido", {
@@ -581,13 +581,20 @@ async function criarReservasPedido(args: {
     if (qty <= 0) continue;
 
     try {
-      const resolvido = produtoWmsPorTiny.get(String(item.produto_id)) ?? {
-        err: new Error(
-          `produto Tiny ${item.produto_id} (empresa ${empresaOrigemId}) não mapeado em siso_produto_empresas`,
-        ),
-      };
-      if ("err" in resolvido) throw resolvido.err;
-      const produtoWmsId = resolvido.id;
+      // Troca de equivalência: item com substituto aplicado reserva o produto
+      // FÍSICO direto (uuid), sem passar pela bridge tiny.
+      let produtoWmsId: string;
+      if (item.produto_wms_substituto_id) {
+        produtoWmsId = item.produto_wms_substituto_id as string;
+      } else {
+        const resolvido = produtoWmsPorTiny.get(String(item.produto_id)) ?? {
+          err: new Error(
+            `produto Tiny ${item.produto_id} (empresa ${empresaOrigemId}) não mapeado em siso_produto_empresas`,
+          ),
+        };
+        if ("err" in resolvido) throw resolvido.err;
+        produtoWmsId = resolvido.id;
+      }
       // CST-01: R só pode ser criada em loc vendável (picking/overstock).
       const locId = await buscarLocComMaiorSaldoNoGalpao(
         separacaoGalpaoId,

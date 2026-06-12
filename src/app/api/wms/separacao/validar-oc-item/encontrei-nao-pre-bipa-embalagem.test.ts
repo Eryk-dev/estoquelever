@@ -31,6 +31,7 @@ vi.mock("@/lib/wms/ledger", () => ({
 }));
 vi.mock("@/lib/separacao/wms-mapping", () => ({
   resolverProdutoWms: vi.fn(async () => "prod-uuid"),
+  resolverProdutoEfetivoDoItem: vi.fn(async () => "prod-uuid"),
   resolverLocalizacaoWms: vi.fn(async () => "loc-uuid"),
 }));
 vi.mock("@/lib/wms/contagem-inline", () => ({

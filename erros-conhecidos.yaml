@@ -20,6 +20,31 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: trocar-sku-sem-guard-de-estado
+    date: "2026-06-12"
+    source: wms.compras
+    category: business_logic
+    message: >
+      troca de SKU permitida em item já separado/com NF — reserva R órfã
+      apontando pro produto antigo + NF com produto fantasma
+    cause: >
+      POST /api/wms/compras/trocar-sku atualizava siso_pedido_itens.produto_id
+      sem validar estado: item com picking (quantidade_pega>0/separacao_parcial),
+      pedido com estoque_lancado=true ou status_separacao avançado
+      (separado/embalado/conferido/expedido) podiam ser trocados, desacoplando
+      as movimentações R/L/S (produto antigo) do item (produto novo)
+    fix: >
+      guard motivoBloqueioEstado() no trocar-sku — item nessas condições entra
+      em itens_nao_trocados com motivo claro em vez de ser trocado
+    files:
+      - src/app/api/wms/compras/trocar-sku/route.ts
+    tags: [trocar-sku, compras, reserva-orfa, guard, troca-equivalencia]
+    notes: >
+      Encontrado durante a implementação da Troca de Equivalência
+      (docs/superpowers/plans/2026-06-12-cross-troca-equivalencia.md).
+      Pra trocar a PEÇA FÍSICA de um pedido (mantendo NF), usar o fluxo novo
+      de trocas (/api/wms/trocas) — produto_wms_substituto_id no item.
+
   - id: cross-rpc-cluster-skus-ausente-staging
     date: "2026-06-10"
     source: wms.cross

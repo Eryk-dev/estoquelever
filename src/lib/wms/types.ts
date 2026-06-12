@@ -31,7 +31,9 @@ export type OrigemTipo =
   | "reserva_pedido"
   | "liberacao_reserva"
   | "lancamento_retroativo"
-  | "estorno";
+  | "estorno"
+  | "reserva_troca"
+  | "liberacao_troca";
 
 export interface Produto {
   id: string;

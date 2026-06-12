@@ -105,7 +105,12 @@ export type EventoPedido =
   | "oc_item_saldo_reconciliado"
   | "embalagem_fisica_registrada"
   | "conferencia_ok"
-  | "conferencia_divergencia";
+  | "conferencia_divergencia"
+  | "troca_solicitada"
+  | "troca_auto_aplicada"
+  | "troca_aprovada"
+  | "troca_rejeitada"
+  | "troca_cancelada";
 
 /**
  * Record a single event in the order history.

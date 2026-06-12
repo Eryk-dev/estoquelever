@@ -305,6 +305,7 @@ export async function GET(request: NextRequest) {
         saldo: live?.saldo ?? 0,
         disponivel: live?.disponivel ?? 0,
         empresa_origem_id: sepEmpresaId,
+        separacao_galpao_id: sepGalpaoId,
         galpao_nome: galpaoMap.get(sepEmpresaId ?? "") ?? null,
         quantidade_pega: item.quantidade_pega ?? null,
         separacao_parcial: item.separacao_parcial ?? false,

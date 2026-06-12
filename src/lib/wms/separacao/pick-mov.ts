@@ -54,6 +54,11 @@ export interface PickMovInput {
   pedido_numero: string;
   item_id: number;
   produto_id_tiny: string;
+  /**
+   * Troca de equivalência: uuid WMS do produto FÍSICO quando o item teve
+   * troca aprovada — curto-circuita a resolução via bridge tiny.
+   */
+  produto_wms_substituto_id?: string | null;
   sku: string;
   qty: number;
   usuario_id: string;
@@ -133,10 +138,9 @@ export async function pickMovPicking(
     return null;
   }
 
-  const produtoWmsId = await deps.resolverProdutoWms(
-    input.empresa_origem_id,
-    input.produto_id_tiny,
-  );
+  const produtoWmsId =
+    input.produto_wms_substituto_id ??
+    (await deps.resolverProdutoWms(input.empresa_origem_id, input.produto_id_tiny));
 
   // Loc do pick vem da R VIVA do pedido (posição reservada por aprovar). Sem R,
   // cai pra loc com maior saldo vivo → DEFAULT-PICKING.

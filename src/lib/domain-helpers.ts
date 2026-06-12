@@ -39,6 +39,7 @@ export const DECISAO_LABELS: Record<Decisao, string> = {
   propria: "Própria",
   transferencia: "Transferência",
   oc: "Ordem de Compra",
+  troca_equivalente: "Troca de Equivalente",
 };
 
 export function getDecisaoColors(decisao: Decisao): string {

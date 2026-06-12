@@ -13,7 +13,7 @@ import {
 } from "@/lib/wms/reservas-picking";
 import { registrarEvento } from "@/lib/historico-service";
 import {
-  resolverProdutoWms,
+  resolverProdutoEfetivoDoItem,
   resolverLocalizacaoWms,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
@@ -118,7 +118,7 @@ async function processarParcialItem(
     const { data: itemsRaw, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_marcado, separacao_parcial",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_marcado, separacao_parcial, produto_wms_substituto_id",
       )
       .in("id", pedido_item_ids)
       .order("id", { ascending: true });
@@ -145,11 +145,20 @@ async function processarParcialItem(
       );
     }
 
-    // 3. Valida: todos com o mesmo produto_id (consolidação só faz sentido pro mesmo SKU)
-    const produtoIdSet = new Set(itemsRaw.map((it) => String(it.produto_id)));
+    // 3. Valida: todos com o mesmo produto FÍSICO (consolidação só faz sentido
+    // pro mesmo SKU). Troca de equivalência: item com substituto aplicado sai
+    // de OUTRO produto — misturar no mesmo wave consolidaria S do produto errado.
+    const produtoIdSet = new Set(
+      itemsRaw.map(
+        (it) => `${it.produto_id}|${it.produto_wms_substituto_id ?? ""}`,
+      ),
+    );
     if (produtoIdSet.size > 1) {
       return NextResponse.json(
-        { error: "items devem ter o mesmo produto_id" },
+        {
+          error:
+            "items devem ter o mesmo produto físico (há troca de equivalência aplicada em parte deles — separe individualmente)",
+        },
         { status: 400 },
       );
     }
@@ -214,7 +223,11 @@ async function processarParcialItem(
     const primeiroPedido = pedidoById.get(primeiroItem.pedido_id)!;
 
     const produtoTinyId = String(primeiroItem.produto_id);
-    const produtoWmsId = await resolverProdutoWms(empresaOrigemId, produtoTinyId);
+    // Troca de equivalência: baixa sai do produto FÍSICO (substituto quando aplicado)
+    const produtoWmsId = await resolverProdutoEfetivoDoItem(
+      empresaOrigemId,
+      primeiroItem,
+    );
 
     // 5. Loc original — vem da R VIVA do pedido (posição que `aprovar` reservou).
     // No wave picking todos compartilham a mesma loc consolidada. (Fase 1.4: era
@@ -1016,9 +1029,9 @@ async function processarParcialItem(
         ]),
       );
 
-      const produtoWmsGrupo = await resolverProdutoWms(
+      const produtoWmsGrupo = await resolverProdutoEfetivoDoItem(
         empOrigem,
-        String(grupo[0].item.produto_id),
+        grupo[0].item,
       );
 
       const resolver = await resolverRealocacao({
@@ -1329,7 +1342,7 @@ async function processarParcialRealocacao(
     const itemIds = [...new Set(realocs.map((r) => r.pedido_item_id))];
     const { data: items, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade_pedida")
+      .select("id, pedido_id, produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
       .in("id", itemIds);
 
     if (itemsErr || !items || items.length !== itemIds.length) {
@@ -1368,7 +1381,11 @@ async function processarParcialRealocacao(
     const empresaOrigemPrimeiroPedido = primeiroPedido.empresa_origem_id as string;
 
     const produtoTinyId = String(primeiroItem.produto_id);
-    const produtoWmsId = await resolverProdutoWms(empresaDonaId, produtoTinyId);
+    // Troca de equivalência: produto FÍSICO (substituto quando aplicado)
+    const produtoWmsId = await resolverProdutoEfetivoDoItem(
+      empresaDonaId,
+      primeiroItem,
+    );
 
     // 6. Saldo / reservado (3D: produto + galpao + loc)
     const { data: estoqueWms } = await supabase
@@ -2181,9 +2198,9 @@ async function processarParcialRealocacao(
         ]),
       );
 
-      const produtoWmsGrupo = await resolverProdutoWms(
+      const produtoWmsGrupo = await resolverProdutoEfetivoDoItem(
         empOrigem,
-        String(itemsGrupo[0].produto_id),
+        itemsGrupo[0],
       );
 
       const resolver = await resolverRealocacao({

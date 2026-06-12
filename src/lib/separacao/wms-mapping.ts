@@ -23,6 +23,28 @@ export async function resolverProdutoWms(
   return id;
 }
 
+/**
+ * Resolve o produto FÍSICO (efetivo) de um item de pedido.
+ *
+ * Troca de equivalência (2026-06-12): quando o item teve troca aprovada,
+ * `produto_wms_substituto_id` aponta direto pro uuid WMS da peça que
+ * fisicamente sai do estoque — `produto_id` (tiny) fica intocado porque é a
+ * camada fiscal (NF/marketplace mantêm o SKU vendido, D3). Todo caminho que
+ * cria/consome reserva, pick ou estorno deve resolver por AQUI, nunca por
+ * `resolverProdutoWms` direto, senão opera no produto errado pós-troca.
+ */
+export async function resolverProdutoEfetivoDoItem(
+  empresaId: string,
+  item: {
+    produto_id: number | string;
+    produto_wms_substituto_id?: string | null;
+  },
+  deps: MappingDeps = defaultDeps(),
+): Promise<string> {
+  if (item.produto_wms_substituto_id) return item.produto_wms_substituto_id;
+  return resolverProdutoWms(empresaId, String(item.produto_id), deps);
+}
+
 export async function resolverLocalizacaoWms(
   galpaoId: string,
   codigo: string | null | undefined,

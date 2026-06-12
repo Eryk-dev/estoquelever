@@ -29,11 +29,16 @@ import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
+import {
+  planejarTrocaRoteamento,
+  aplicarTrocasRoteamento,
+  type PlanoTrocaRoteamento,
+} from "./wms/trocas-roteamento";
 import type { RotaResult } from "./wms/roteamento";
 import type { TinyPedidoDetalhe } from "./tiny-api";
 
 /** Map WMS decision → legacy Decisao shape. */
-type LegacyDecisao = "propria" | "transferencia" | "oc";
+type LegacyDecisao = "propria" | "transferencia" | "oc" | "troca_equivalente";
 
 interface ProcessWebhookWmsInput {
   webhookLogId: string;
@@ -444,31 +449,71 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       ? await rotearPedidoDoBanco(empresaOrigemId, itensPraRotear)
       : { decisao: "oc", motivo: "sem_cobertura" };
 
+  // 3b. Troca de equivalência (Fase 4): galpão-casa não cobre com o SKU
+  //     original → tenta cobrir com SUBSTITUTOS do cluster cross (D10: troca
+  //     local vence transferência). Falha no planejamento NUNCA derruba o
+  //     webhook — segue a rota normal.
+  let planoTroca: PlanoTrocaRoteamento | null = null;
+  if (rota.decisao !== "propria" && itensPraRotear.length > 0) {
+    try {
+      planoTroca = await planejarTrocaRoteamento({
+        galpaoId: galpaoOrigemId,
+        itens: itensResolvidos
+          .filter((i) => i.produtoIdWms)
+          .map((i) => ({
+            tiny_id: String(i.tinyProdutoId),
+            sku: i.sku,
+            produto_uuid: i.produtoIdWms as string,
+            qty: i.quantidade,
+          })),
+      });
+    } catch (e) {
+      logger.warn("processor.wms", "falha planejando troca de equivalência (segue rota normal)", {
+        pedidoId: pedido.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      planoTroca = null;
+    }
+  }
+
   // 4. Mapear WMS decisao → legacy Decisao
   // Em 3D só temos propria | transferencia | oc — não há empréstimo.
+  // Com plano de troca: todosAuto → propria (auto-troca, zero humano);
+  // senão → pendente com sugestao='troca_equivalente' (painel decide).
   let sugestao: LegacyDecisao;
   let separacaoGalpaoId: string;
   let motivo: string;
 
-  switch (rota.decisao) {
-    case "propria":
-      sugestao = "propria";
-      separacaoGalpaoId = rota.galpao_id;
-      motivo = "Estoque próprio no galpão origem";
-      break;
-    case "transferencia":
-      sugestao = "transferencia";
-      separacaoGalpaoId = rota.galpao_id;
-      motivo = "Estoque em outro galpão — transferência";
-      break;
-    case "oc":
-      sugestao = "oc";
-      separacaoGalpaoId = galpaoOrigemId;
-      motivo =
-        rota.motivo === "split_galpoes"
-          ? "Itens em galpões diferentes — vai pra OC"
-          : "Sem cobertura de estoque — vai pra OC";
-      break;
+  if (planoTroca && planoTroca.todosAuto) {
+    sugestao = "propria";
+    separacaoGalpaoId = galpaoOrigemId;
+    motivo =
+      "Troca de equivalência automática — substituto mesmo nível (par verificado) no galpão casa";
+  } else if (planoTroca) {
+    sugestao = "troca_equivalente";
+    separacaoGalpaoId = galpaoOrigemId;
+    motivo = "Equivalente em estoque no galpão casa — aguardando aprovação de troca";
+  } else {
+    switch (rota.decisao) {
+      case "propria":
+        sugestao = "propria";
+        separacaoGalpaoId = rota.galpao_id;
+        motivo = "Estoque próprio no galpão origem";
+        break;
+      case "transferencia":
+        sugestao = "transferencia";
+        separacaoGalpaoId = rota.galpao_id;
+        motivo = "Estoque em outro galpão — transferência";
+        break;
+      case "oc":
+        sugestao = "oc";
+        separacaoGalpaoId = galpaoOrigemId;
+        motivo =
+          rota.motivo === "split_galpoes"
+            ? "Itens em galpões diferentes — vai pra OC"
+            : "Sem cobertura de estoque — vai pra OC";
+        break;
+    }
   }
 
   const isAuto = sugestao === "propria";
@@ -654,10 +699,43 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    siso_pedido_item_estoques. A tabela foi dropada — todo consumidor lê
   //    estoque VIVO de siso_estoque / da R viva do ledger. Reservas abaixo.
 
+  // 7b. Troca de equivalência: aplica os swaps nos itens recém-upsertados —
+  //     auto vira troca 'aprovada' + substituto no item; com aprovação vira
+  //     troca 'pendente' + R forte (reserva_troca) no substituto.
+  if (planoTroca) {
+    await aplicarTrocasRoteamento({
+      pedidoId: pedido.id,
+      galpaoId: galpaoOrigemId,
+      swaps: planoTroca.swaps,
+    });
+  }
+
   // 8. Criar reservas all-or-nothing (apenas propria/transferencia — OC não reserva).
   //    P085: se qualquer item falhar, throw → webhook vira 'erro' (Tiny retenta);
   //    NÃO enfileira lancar_estoque com pedido meio-aprovado.
-  if (rota.decisao === "propria" || rota.decisao === "transferencia") {
+  //    Com plano de troca: R reserva_pedido pros itens cobertos pelo ORIGINAL +
+  //    swaps AUTO (substituto). Swaps pendentes já têm R reserva_troca (7b).
+  if (planoTroca) {
+    const rotasTroca = [
+      ...planoTroca.cobertosOriginal.map((c) => ({
+        produto_id: c.produto_uuid,
+        galpao_id: galpaoOrigemId,
+        localizacao_id: c.localizacao_id,
+        qty: c.qty,
+      })),
+      ...planoTroca.swaps
+        .filter((s) => s.auto)
+        .map((s) => ({
+          produto_id: s.produto_substituto_id,
+          galpao_id: galpaoOrigemId,
+          localizacao_id: s.localizacao_id,
+          qty: s.qty,
+        })),
+    ];
+    if (rotasTroca.length > 0) {
+      await criarReservasRotaAtomico({ pedidoId: pedido.id, rotas: rotasTroca });
+    }
+  } else if (rota.decisao === "propria" || rota.decisao === "transferencia") {
     await criarReservasRotaAtomico({
       pedidoId: pedido.id,
       rotas: rota.rotas.map((r) => ({

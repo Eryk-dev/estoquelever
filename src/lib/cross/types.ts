@@ -115,6 +115,10 @@ export interface EquivalenteRapido {
    *   'cadeia'   — alcançado via transitividade (cluster), sem aresta direta
    */
   origem: "oem" | "link" | "oem+link" | "cadeia";
+  /** Curadoria do par (sku base ↔ este sku) — null = nunca curado. */
+  verificacao?: "verificado" | "bloqueado" | null;
+  /** Classificação de qualidade do produto WMS — null = sem classificação. */
+  tier_qualidade?: "original" | "primeira_linha" | "segunda_linha" | null;
 }
 
 export interface ProdutoLink {

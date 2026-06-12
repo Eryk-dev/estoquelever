@@ -17,6 +17,7 @@
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import { estornarReservaIndividual } from "./wms/reservas";
+import { cancelarTrocasPendentesDoPedido } from "./wms/trocas-equivalencia";
 import { classificarItensParaCancelamento } from "./wms/cancelamento-parcial";
 import { registrarEvento } from "./historico-service";
 
@@ -82,6 +83,28 @@ export async function handlePedidoCancelamento(params: {
       });
     } catch (e) {
       logger.warn("webhook", "falha liberando Rs no cancel (segue)", {
+        pedidoId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    // Troca de equivalência: solicitação pendente carrega R forte
+    // (origem_tipo='reserva_troca') que o loop acima NÃO cobre — encerra as
+    // trocas pendentes do pedido pra devolver o disponivel do substituto.
+    try {
+      const canceladas = await cancelarTrocasPendentesDoPedido({
+        pedidoId: String(pedidoId),
+        usuarioId: null,
+        motivo: "pedido cancelado",
+      });
+      if (canceladas > 0) {
+        logger.info("webhook", "trocas pendentes canceladas no cancelamento", {
+          pedidoId,
+          canceladas,
+        });
+      }
+    } catch (e) {
+      logger.warn("webhook", "falha cancelando trocas pendentes (segue)", {
         pedidoId,
         error: e instanceof Error ? e.message : String(e),
       });

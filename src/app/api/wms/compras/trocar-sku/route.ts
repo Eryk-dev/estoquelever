@@ -50,7 +50,9 @@ export async function POST(request: NextRequest) {
     // itens de pedidos de empresas diferentes no mesmo lote)
     const { data: items, error: fetchErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku, quantidade_pedida, siso_pedidos(empresa_origem_id)")
+      .select(
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, siso_pedidos(empresa_origem_id, estoque_lancado, status_separacao)",
+      )
       .in("id", itemIds);
 
     if (fetchErr || !items?.length) {
@@ -96,9 +98,38 @@ export async function POST(request: NextRequest) {
       id: string;
       pedido_id: string;
       sku: string;
-      siso_pedidos: { empresa_origem_id: string | null } | null;
+      quantidade_pega: number | null;
+      separacao_parcial: boolean | null;
+      siso_pedidos: {
+        empresa_origem_id: string | null;
+        estoque_lancado: boolean | null;
+        status_separacao: string | null;
+      } | null;
     };
     const itemsTyped = items as unknown as ItemRow[];
+
+    // Guard de estado (troca-equivalência 2026-06-12): trocar SKU de item já
+    // movimentado deixa R órfã apontando pro produto antigo e NF com produto
+    // fantasma. Item nessas condições NÃO é trocado (entra em naoTrocados).
+    const STATUS_SEP_BLOQUEADOS = new Set([
+      "separado",
+      "embalado",
+      "conferido",
+      "expedido",
+    ]);
+    function motivoBloqueioEstado(item: ItemRow): string | null {
+      if (item.siso_pedidos?.estoque_lancado) {
+        return "Pedido com estoque já lançado (NF processada) — troca de SKU bloqueada";
+      }
+      const sep = item.siso_pedidos?.status_separacao ?? "";
+      if (STATUS_SEP_BLOQUEADOS.has(sep)) {
+        return `Pedido em '${sep}' — troca de SKU bloqueada`;
+      }
+      if (Number(item.quantidade_pega ?? 0) > 0 || item.separacao_parcial) {
+        return "Item com picking em andamento — desfaça a separação antes de trocar o SKU";
+      }
+      return null;
+    }
 
     // Agrupa itens por empresa_origem do pedido dono; itens cuja empresa não
     // tem mapping do SKU novo NÃO são trocados (fail loud, sem troca parcial
@@ -111,6 +142,15 @@ export async function POST(request: NextRequest) {
     }> = [];
 
     for (const item of itemsTyped) {
+      const motivoEstado = motivoBloqueioEstado(item);
+      if (motivoEstado) {
+        naoTrocados.push({
+          item_id: String(item.id),
+          pedido_id: item.pedido_id,
+          motivo: motivoEstado,
+        });
+        continue;
+      }
       const empresaId = item.siso_pedidos?.empresa_origem_id ?? null;
       if (!empresaId) {
         naoTrocados.push({

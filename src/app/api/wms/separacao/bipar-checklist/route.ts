@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
     const { data: itemsFull } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id, produto_wms_substituto_id",
       )
       .in("id", itemIds);
 
@@ -171,6 +171,7 @@ export async function POST(request: NextRequest) {
           pedido_numero: ctx.numero,
           item_id: Number(item.id),
           produto_id_tiny: String(item.produto_id),
+          produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
           sku: String(item.sku),
           qty: qtyADescontar,
           usuario_id: session.id,

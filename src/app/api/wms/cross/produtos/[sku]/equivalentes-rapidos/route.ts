@@ -45,7 +45,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     : [];
 
   if (clusterSkus.length === 0) {
-    return NextResponse.json({ sku, equivalentes: [] });
+    const { data: baseWms } = await supabase
+      .from("siso_produtos")
+      .select("tier_qualidade")
+      .eq("sku", sku)
+      .maybeSingle();
+    return NextResponse.json({
+      sku,
+      tier_qualidade: (baseWms?.tier_qualidade as string | null) ?? null,
+      equivalentes: [],
+    });
   }
 
   // 2. Carrega base + dados de catálogo dos SKUs do cluster (uma query)
@@ -72,6 +81,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   for (const row of linksA ?? []) skusComLinkDireto.add(row.sku_b);
   for (const row of linksB ?? []) skusComLinkDireto.add(row.sku_a);
 
+  // 3b. Curadoria de pares (sku base ↔ cada equivalente) + tier de qualidade
+  //     (tier vive em siso_produtos, não no catálogo cross; compartilham o sku).
+  const [{ data: pares }, { data: produtosWms }] = await Promise.all([
+    supabase
+      .from("siso_equivalencias_verificadas")
+      .select("sku_a, sku_b, status")
+      .or(`sku_a.eq.${sku},sku_b.eq.${sku}`),
+    supabase
+      .from("siso_produtos")
+      .select("sku, tier_qualidade")
+      .in("sku", [sku, ...clusterSkus]),
+  ]);
+
+  const verificacaoPorSku = new Map<string, "verificado" | "bloqueado">();
+  for (const p of pares ?? []) {
+    const outro = p.sku_a === sku ? (p.sku_b as string) : (p.sku_a as string);
+    verificacaoPorSku.set(outro, p.status as "verificado" | "bloqueado");
+  }
+
+  const tierPorSku = new Map<string, string | null>();
+  for (const p of produtosWms ?? []) {
+    tierPorSku.set(p.sku as string, (p.tier_qualidade as string | null) ?? null);
+  }
+
   // 4. Classifica cada SKU do cluster por origem
   const lista = (produtos ?? []).map((row) => {
     const oemsCompartilhados = (row.oem ?? []).filter((o: string) =>
@@ -96,6 +129,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       oems: row.oem ?? [],
       oems_compartilhados: oemsCompartilhados,
       origem,
+      verificacao: verificacaoPorSku.get(row.sku) ?? null,
+      tier_qualidade: tierPorSku.get(row.sku) ?? null,
     };
   });
 
@@ -112,5 +147,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return score(a.origem) - score(b.origem);
   });
 
-  return NextResponse.json({ sku, equivalentes: lista });
+  return NextResponse.json({
+    sku,
+    tier_qualidade: tierPorSku.get(sku) ?? null,
+    equivalentes: lista,
+  });
 }

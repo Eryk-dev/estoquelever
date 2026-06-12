@@ -7,7 +7,7 @@ import {
   pickItemAtomico,
 } from "@/lib/wms/reservas-picking";
 import {
-  resolverProdutoWms,
+  resolverProdutoEfetivoDoItem,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     const { data: item, error: itemErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id, produto_wms_substituto_id",
       )
       .eq("id", pedido_item_id)
       .single();
@@ -99,9 +99,11 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        const produtoWmsId = await resolverProdutoWms(
+        // Troca de equivalência: resolve o produto FÍSICO (substituto quando
+        // a troca foi aprovada) — a baixa sai da peça que realmente vai na caixa.
+        const produtoWmsId = await resolverProdutoEfetivoDoItem(
           empresaOrigemId,
-          String(item.produto_id),
+          item,
         );
 
         // Loc do pick vem da R VIVA do pedido (posição reservada por aprovar),

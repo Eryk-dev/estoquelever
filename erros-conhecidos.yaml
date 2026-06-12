@@ -5721,10 +5721,14 @@ erros:
     (a) Claim em duas fases no processQueue: jobs de pedido
     (lancar_estoque, lancar_estoque_pos_nf) sempre claimados antes dos
     de manutenção — flood de varredura nunca mais atrasa pedido.
-    (b) Vercel Cron a cada 5min (vercel.json) chamando GET
+    (b) Cron de kick a cada 5min chamando GET
     /api/wms/worker/processar, que kicka o drain loop (maxDuration=300
     na rota); auth por CRON_SECRET/WORKER_SECRET ou user-agent
-    vercel-cron. Destrave imediato: UPDATE prioridade=true nos 8 jobs
+    vercel-cron. Vercel Cron */5 foi rejeitado pelo plano (deploy
+    travou; revertido em d718928) — o agendador real é pg_cron no
+    Supabase staging (job 'wms-worker-kick', net.http_get com UA
+    vercel-cron/pg_cron). Em prod, recriar o job apontando pro domínio
+    de prod. Destrave imediato: UPDATE prioridade=true nos 8 jobs
     presos no staging.
   files:
     - src/lib/execution-worker.ts

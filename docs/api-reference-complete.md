@@ -4764,7 +4764,7 @@ Erros são isolados por empresa e por item (uma falha não derruba a varredura).
 
 **File:** `src/app/api/wms/worker/processar/route.ts`
 
-**Purpose:** Alvo do Vercel Cron (`vercel.json`, `*/5 * * * *`). Kicka o drain loop (fire-and-forget) e retorna imediatamente; o drain roda em background até `maxDuration` (300s).
+**Purpose:** Alvo do cron de kick (pg_cron no Supabase staging, job `wms-worker-kick`, `*/5 * * * *`, via `net.http_get` com UA `vercel-cron/pg_cron` — Vercel Cron foi rejeitado pelo plano). Kicka o drain loop (fire-and-forget) e retorna imediatamente; o drain roda em background até `maxDuration` (300s).
 
 **Auth:** Bearer `CRON_SECRET` ou `WORKER_SECRET`, OU user-agent `vercel-cron/*`. Bypass por user-agent é aceitável: kick não recebe input, só processa jobs já enfileirados (idempotente). Sem nenhum secret configurado: aberto.
 

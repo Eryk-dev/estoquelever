@@ -16,7 +16,11 @@
  *   - Pedidos CANCELADOS (situacao=2) no Tiny mas ainda ativos no SISO →
  *     mesma lógica do webhook (handlePedidoCancelamento).
  *   - NFs AUTORIZADAS (situacao=6) e EMITIDA DANFE (7 — NF autorizada cuja
- *     DANFE já saiu entre um poll e outro) → handleNfWebhook (dedup interno).
+ *     DANFE já saiu entre um poll e outro) → handleNfWebhook (dedup interno;
+ *     log em 'aguardando_pedido' re-entrega pro retry de match do handler).
+ *   - Pedidos PRESOS em aguardando_nf com NF completa (id + chave) há >30min
+ *     → transiciona pra aguardando_separacao + fase-1 do agrupamento
+ *     (recuperarNfsPresas; cobre transição perdida/regressão de status).
  *
  * Dedup: o poller insere em siso_webhook_logs com tipo='polling_pedido' —
  * o dedup_key generated (tiny_pedido_id:tipo:codigo_situacao) torna cada
@@ -49,6 +53,7 @@ import { getEmpresaByCnpj, type EmpresaInfo } from "./empresa-lookup";
 import { processWebhook } from "./webhook-processor";
 import { handleNfWebhook, type NfWebhookPayload } from "./nf-webhook-handler";
 import { handlePedidoCancelamento } from "./pedido-cancel-handler";
+import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { logger } from "./logger";
 
 const LOG_SOURCE = "tiny-polling";
@@ -75,6 +80,13 @@ const RETRY_FALHOS_MAX = 20;
 // faz tempo (faturado/cancelado manualmente) e o reprocesso cego recriaria
 // um pedido já tratado fora do SISO.
 const RETRY_FALHOS_JANELA_MS = 7 * 24 * 60 * 60 * 1000;
+
+// NF presa: pedido com NF completa (id + chave) parado em aguardando_nf há
+// mais que isso = a transição pra aguardando_separacao se perdeu (ex.:
+// reprocesso tardio regrediu o status por cima — visto em 2026-06-12).
+// A transição normal acontece no MESMO handler que preenche a chave, em
+// segundos; 30min parado com chave preenchida é estado morto.
+const NF_PRESA_GRACE_MS = 30 * 60 * 1000;
 
 interface WebhookLogResumo {
   tiny_pedido_id: string;
@@ -114,6 +126,7 @@ export interface PollingResumoEmpresa {
   notas_vistas: number;
   notas_processadas: number;
   webhooks_retentados: number;
+  nfs_destravadas: number;
   erros: string[];
 }
 
@@ -524,17 +537,21 @@ async function pollNotasAutorizadas(
   resumo.notas_vistas = porId.size;
   if (porId.size === 0) return;
 
-  // Pré-dedup por id (o handler ainda faz o dedup composto por chaveAcesso)
+  // Pré-dedup por id (o handler ainda faz o dedup composto por chaveAcesso).
+  // Log em 'aguardando_pedido' NÃO conta como conhecida: a NF chegou antes do
+  // pedido existir e o handler tem retry de match exatamente pra re-entrega
+  // (23505 → reusa o log pendente) — mas esse retry só dispara se o polling
+  // re-entregar. Contar como conhecida deixava a NF órfã pra sempre.
   const ids = [...porId.keys()];
   const conhecidas = new Set<string>();
   for (const lote of chunk(ids, 200)) {
     const { data: logs } = await sb
       .from("siso_webhook_logs")
-      .select("tiny_pedido_id")
+      .select("tiny_pedido_id, status")
       .eq("tipo", "nota_fiscal")
       .in("tiny_pedido_id", lote);
-    for (const l of (logs ?? []) as Array<{ tiny_pedido_id: string }>) {
-      conhecidas.add(l.tiny_pedido_id);
+    for (const l of (logs ?? []) as Array<{ tiny_pedido_id: string; status: string }>) {
+      if (l.status !== "aguardando_pedido") conhecidas.add(l.tiny_pedido_id);
     }
   }
 
@@ -573,6 +590,83 @@ async function pollNotasAutorizadas(
         empresaId: empresa.empresaId,
         error: msg,
       });
+    }
+  }
+}
+
+// ─── NFs autorizadas presas (transição perdida) ─────────────────────────────
+
+/**
+ * Destrava pedidos parados em aguardando_nf cuja NF JÁ foi processada:
+ * nota_fiscal_id + chave_acesso_nf preenchidos há >30min e status que não
+ * andou. Acontece quando a transição se perde (ex.: reprocesso tardio de
+ * webhook regrediu o status por cima dela — caso zumbi de 2026-06-12). O
+ * pré-dedup do polling de NFs pula NF com log existente, então sem esta
+ * varredura o pedido fica preso pra sempre.
+ *
+ * Guard: exige log de NF visto (webhook/poll processou a autorização) —
+ * chave preenchida por outro caminho sem NF autorizada não transiciona.
+ */
+async function recuperarNfsPresas(
+  empresa: EmpresaInfo,
+  resumo: PollingResumoEmpresa,
+): Promise<void> {
+  const sb = createServiceClient();
+  const cutoff = new Date(Date.now() - NF_PRESA_GRACE_MS).toISOString();
+
+  const { data } = await sb
+    .from("siso_pedidos")
+    .select("id, numero, nota_fiscal_id")
+    .eq("empresa_origem_id", empresa.empresaId)
+    .neq("status", "cancelado")
+    .eq("status_separacao", "aguardando_nf")
+    .not("nota_fiscal_id", "is", null)
+    .not("chave_acesso_nf", "is", null)
+    .lt("criado_em", cutoff)
+    .limit(20);
+
+  const presos = (data ?? []) as Array<{
+    id: string;
+    numero: string;
+    nota_fiscal_id: number;
+  }>;
+  if (presos.length === 0) return;
+
+  // Evidência de NF autorizada vista: log tipo='nota_fiscal' do NF id
+  const nfIds = presos.map((p) => String(p.nota_fiscal_id));
+  const { data: logsNf } = await sb
+    .from("siso_webhook_logs")
+    .select("tiny_pedido_id")
+    .eq("tipo", "nota_fiscal")
+    .in("tiny_pedido_id", nfIds);
+  const nfVistas = new Set(
+    ((logsNf ?? []) as Array<{ tiny_pedido_id: string }>).map(
+      (l) => l.tiny_pedido_id,
+    ),
+  );
+
+  for (const p of presos) {
+    if (!nfVistas.has(String(p.nota_fiscal_id))) continue;
+    try {
+      const { data: updated } = await sb
+        .from("siso_pedidos")
+        .update({ status_separacao: "aguardando_separacao" })
+        .eq("id", p.id)
+        .eq("status_separacao", "aguardando_nf")
+        .select("id");
+      if (!updated || updated.length === 0) continue;
+
+      resumo.nfs_destravadas++;
+      logger.info(LOG_SOURCE, "Pedido preso em aguardando_nf destravado", {
+        pedidoId: p.id,
+        numero: p.numero,
+        empresaId: empresa.empresaId,
+      });
+      // Fase-1 do agrupamento (idempotente; no-op se já existe)
+      await criarAgrupamentoFase1(p.id).catch(() => {});
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resumo.erros.push(`nf-presa ${p.id}: ${msg}`);
     }
   }
 }
@@ -648,6 +742,7 @@ export async function pollTiny(): Promise<PollingResult> {
       notas_vistas: 0,
       notas_processadas: 0,
       webhooks_retentados: 0,
+      nfs_destravadas: 0,
       erros: [],
     };
     resultado.empresas.push(resumo);
@@ -671,6 +766,7 @@ export async function pollTiny(): Promise<PollingResult> {
           ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicialAprovados, resumo)],
           ["cancelados", () => pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo)],
           ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo)],
+          ["nfs-presas", () => recuperarNfsPresas(empresa, resumo)],
         ];
         for (const [nome, varrer] of varreduras) {
           try {

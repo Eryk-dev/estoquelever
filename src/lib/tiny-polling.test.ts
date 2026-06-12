@@ -14,7 +14,10 @@ const state = {
   connections: [] as Array<{ cnpj: string; empresa_id: string }>,
   pedidosExistentes: [] as Array<{ id: string; status: string }>,
   logsAprovados: [] as LogAprovado[],
-  logsNf: [] as string[],
+  logsNf: [] as Array<{ id: string; status: string }>,
+  // pedidos retornados pela query de presos em aguardando_nf (recuperarNfsPresas)
+  pedidosPresosNf: [] as Array<{ id: string; numero: string; nota_fiscal_id: number }>,
+  pedidoUpdates: [] as Array<Record<string, unknown>>,
   insertError: null as { code: string; message: string } | null,
   inserts: [] as Array<Record<string, unknown>>,
   // log retornado no lookup pós-23505 (retry de aprovado/cancelado)
@@ -40,6 +43,16 @@ function makeBuilder(table: string) {
       return { data: state.connections.map((c) => ({ id: c.empresa_id })), error: null };
     }
     if (table === "siso_pedidos") {
+      // UPDATE (transição do recuperarNfsPresas): registra e devolve a linha
+      if (ops.some((o) => o.m === "update")) {
+        state.pedidoUpdates.push(ops.find((o) => o.m === "update")!.args[0] as Record<string, unknown>);
+        const eqId = ops.find((o) => o.m === "eq" && o.args[0] === "id");
+        return { data: eqId ? [{ id: eqId.args[1] }] : [], error: null };
+      }
+      // Query de presos em aguardando_nf (recuperarNfsPresas)
+      if (ops.some((o) => o.m === "eq" && o.args[0] === "status_separacao" && o.args[1] === "aguardando_nf")) {
+        return { data: state.pedidosPresosNf, error: null };
+      }
       const inOp = ops.find((o) => o.m === "in");
       const eqId = ops.find((o) => o.m === "eq" && o.args[0] === "id");
       let rows = state.pedidosExistentes;
@@ -74,7 +87,9 @@ function makeBuilder(table: string) {
       }
       if (isNf) {
         return pick(
-          state.logsNf.filter((id) => ids.includes(id)).map((id) => ({ tiny_pedido_id: id })),
+          state.logsNf
+            .filter((l) => ids.includes(l.id))
+            .map((l) => ({ tiny_pedido_id: l.id, status: l.status })),
         );
       }
       if (isOwnLogLookup) {
@@ -93,7 +108,7 @@ function makeBuilder(table: string) {
     return { data: null, error: null };
   };
 
-  for (const m of ["select", "insert", "eq", "neq", "in", "not", "update", "or", "gte", "order", "limit"]) {
+  for (const m of ["select", "insert", "eq", "neq", "in", "not", "update", "or", "gte", "lt", "order", "limit"]) {
     builder[m] = (...args: unknown[]) => {
       ops.push({ m, args });
       return builder;
@@ -151,6 +166,11 @@ vi.mock("./nf-webhook-handler", () => ({
   handleNfWebhook: (...args: unknown[]) => handleNfWebhookMock(...args),
 }));
 
+const criarAgrupamentoFase1Mock = vi.fn(async (..._args: unknown[]) => undefined);
+vi.mock("./agrupamento-service", () => ({
+  criarAgrupamentoFase1: (...args: unknown[]) => criarAgrupamentoFase1Mock(...args),
+}));
+
 const cancelMock = vi.fn(async (..._args: unknown[]) => ({ status: "cancelled" }));
 vi.mock("./pedido-cancel-handler", () => ({
   handlePedidoCancelamento: (...args: unknown[]) => cancelMock(...args),
@@ -171,6 +191,8 @@ beforeEach(() => {
   state.pedidosExistentes = [];
   state.logsAprovados = [];
   state.logsNf = [];
+  state.pedidosPresosNf = [];
+  state.pedidoUpdates = [];
   state.insertError = null;
   state.inserts = [];
   state.logExistente = { id: "log-existente" };
@@ -604,8 +626,8 @@ describe("pollTiny — notas fiscais", () => {
     expect(result.empresas[0].notas_vistas).toBe(1);
   });
 
-  it("pula NF que já tem webhook log", async () => {
-    state.logsNf = ["333"];
+  it("pula NF que já tem webhook log processado", async () => {
+    state.logsNf = [{ id: "333", status: "processado" }];
     listarNotasMock.mockImplementation(async (_t: unknown, params: { situacao: number }) =>
       params.situacao === 6 ? { itens: [{ id: 333 }] } : { itens: [] },
     );
@@ -613,6 +635,41 @@ describe("pollTiny — notas fiscais", () => {
     await pollTiny();
 
     expect(handleNfWebhookMock).not.toHaveBeenCalled();
+  });
+
+  it("re-entrega NF com log em 'aguardando_pedido' (retry de match do handler)", async () => {
+    state.logsNf = [{ id: "333", status: "aguardando_pedido" }];
+    listarNotasMock.mockImplementation(async (_t: unknown, params: { situacao: number }) =>
+      params.situacao === 6 ? { itens: [{ id: 333 }] } : { itens: [] },
+    );
+
+    await pollTiny();
+
+    expect(handleNfWebhookMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pollTiny — NFs autorizadas presas (aguardando_nf)", () => {
+  it("destrava pedido com NF completa e log de NF visto + tenta fase-1", async () => {
+    state.pedidosPresosNf = [{ id: "777", numero: "51000", nota_fiscal_id: 555 }];
+    state.logsNf = [{ id: "555", status: "processado" }];
+
+    const result = await pollTiny();
+
+    expect(result.empresas[0].nfs_destravadas).toBe(1);
+    expect(state.pedidoUpdates).toContainEqual({ status_separacao: "aguardando_separacao" });
+    expect(criarAgrupamentoFase1Mock).toHaveBeenCalledWith("777");
+  });
+
+  it("NÃO destrava sem evidência de NF vista (nenhum log nota_fiscal)", async () => {
+    state.pedidosPresosNf = [{ id: "777", numero: "51000", nota_fiscal_id: 555 }];
+    state.logsNf = [];
+
+    const result = await pollTiny();
+
+    expect(result.empresas[0].nfs_destravadas).toBe(0);
+    expect(state.pedidoUpdates).toHaveLength(0);
+    expect(criarAgrupamentoFase1Mock).not.toHaveBeenCalled();
   });
 });
 

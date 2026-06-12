@@ -388,7 +388,9 @@ export default function WmsSeparacaoPage() {
         }
         return r.json() as Promise<SeparacaoResponse>;
       },
-      refetchInterval: 10_000,
+      // Backstop — useRealtimeSeparacao() invalida em qualquer mudança de
+      // siso_pedidos (debounce 500ms); o poll só cobre queda do websocket.
+      refetchInterval: 30_000,
       // Troca de tab/filtro/galpão muda a queryKey — sem placeholder a lista
       // some pra um loading a cada mudança. Mantém os dados anteriores na
       // tela enquanto a nova chave busca.

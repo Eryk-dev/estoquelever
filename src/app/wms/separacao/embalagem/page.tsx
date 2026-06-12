@@ -24,6 +24,7 @@ import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import type { SeparacaoPedido } from "@/components/wms/separacao/types";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
+import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,11 @@ function WmsEmbalagemPage() {
   // Anuncia presença no card "Embalagem" do quadro de tarefas (/wms).
   useTrackPresencaWms("embalagem");
 
+  // Realtime escopado: mudanças nos pedidos/itens desta tela invalidam o
+  // prefixo ["wms-embalagem"] (cobre as queries de pedidos E itens abaixo).
+  // Vira o gatilho primário de freshness; o poll de 15s é só backstop.
+  useRealtimeSeparacao({ pedidoIds, queryKey: ["wms-embalagem"] });
+
   const [scanQty, setScanQty] = useState(1);
   const [scanFeedback, setScanFeedback] = useState<{
     text: string;
@@ -108,7 +114,7 @@ function WmsEmbalagemPage() {
 
   // ─── Query: pedidos ─────────────────────────────────────────────
   const pedidosQueryKey = useMemo(
-    () => ["wms-embalagem-pedidos", pedidoIds.join(","), modo ?? ""],
+    () => ["wms-embalagem", "pedidos", pedidoIds.join(","), modo ?? ""],
     [pedidoIds, modo],
   );
 
@@ -126,12 +132,13 @@ function WmsEmbalagemPage() {
       return list.filter((p) => pedidoIds.includes(p.id));
     },
     enabled: pedidoIds.length > 0,
-    refetchInterval: 5_000,
+    // Backstop — realtime escopado acima é o gatilho primário.
+    refetchInterval: 15_000,
   });
 
   // ─── Query: itens ─────────────────────────────────────────────
   const itemsQueryKey = useMemo(
-    () => ["wms-embalagem-items", pedidoIds.join(","), modo ?? ""],
+    () => ["wms-embalagem", "items", pedidoIds.join(","), modo ?? ""],
     [pedidoIds, modo],
   );
 

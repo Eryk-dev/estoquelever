@@ -301,6 +301,11 @@ export async function POST(request: NextRequest) {
         quantidade_pega: null,
         mov_saida_id: null,
         mov_ajuste_loc_zerou_id: null,
+        // Espelha resetarEstadoSeparacaoItens: sem isso o bip de embalagem
+        // sobrevive ao cancelamento e o pedido re-separado cai na aba
+        // Separados já "Bipado" (etiqueta não dispara).
+        quantidade_bipada: 0,
+        bipado_completo: false,
       })
       .in("pedido_id", pedido_ids);
 

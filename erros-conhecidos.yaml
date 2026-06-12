@@ -5639,3 +5639,38 @@ erros:
     - src/app/api/wms/inventario/[id]/route.ts
     - src/app/api/wms/inventario/[id]/divergencias/route.ts
   tags: [inventario, locks, cascade, putaway, divergencias, orfas, sessao-id, operacao-viva]
+
+- id: ENCONTREI-OC-PRE-BIPA-EMBALAGEM
+  date: 2026-06-12
+  source: validar-oc-item / cancelar
+  category: business_logic
+  message: "Pedido cai na aba Separados já 'Bipado'; bip da embalagem retorna 'já bipado' e a etiqueta nunca sai — operador precisa reiniciar embalagem e re-bipar (pedido #51261)"
+  cause: >
+    Duas fontes do bip fantasma: (a) validar-oc-item ação "encontrei"
+    (desde eddf2e1) setava bipado_completo=true +
+    quantidade_bipada=quantidade_pedida junto com o pick — conflava o
+    pick de SEPARAÇÃO com o bip de EMBALAGEM. O pedido chegava em
+    'separado' com tudo pré-bipado; siso_processar_bip_embalagem não
+    achava item pendente (404 "já bipado") e a impressão da etiqueta
+    (que só dispara dentro do bip/confirm que completa o pedido) nunca
+    rodava. (b) cancelar separação resetava os itens com update inline
+    próprio que omitia quantidade_bipada/bipado_completo (divergia do
+    helper resetarEstadoSeparacaoItens) — o bip fantasma sobrevivia ao
+    cancelamento e contaminava o ciclo seguinte. No #51261: encontrei
+    16:55 → separado em 3s já "Bipado" → embalagem forçada 16:56 →
+    cancelar 16:57 manteve bipado_completo=true → re-separação 17:02
+    caiu de novo já "Bipado", sem evento de impressão.
+  fix: >
+    (a) encontrei agora marca só o pick (separacao_marcado=true,
+    quantidade_pega) e deixa bipado_completo=false/quantidade_bipada=0
+    — a conferência de embalagem (e a etiqueta) volta a acontecer no
+    bip físico. Ramo parcial do encontrei não mudou (pré-preenche
+    quantidade_bipada=pegaTotal por design da embalagem direta OC).
+    (b) cancelar passou a zerar quantidade_bipada/bipado_completo no
+    reset inline, espelhando resetarEstadoSeparacaoItens.
+  files:
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+    - src/app/api/wms/separacao/cancelar/route.ts
+    - src/app/api/wms/separacao/validar-oc-item/encontrei-nao-pre-bipa-embalagem.test.ts
+    - src/app/api/wms/separacao/cancelar/cancelar-recria-reserva.test.ts
+  tags: [embalagem, bipado_completo, etiqueta, validacao-oc, encontrei, cancelar, bip-fantasma, separados]

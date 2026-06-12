@@ -734,8 +734,12 @@ export async function POST(request: NextRequest) {
           compra_solicitada_em: null,
           ordem_compra_id: null,
           separacao_marcado: true,
-          bipado_completo: true,
-          quantidade_bipada: Number(item.quantidade_pedida ?? 0),
+          // Bip de EMBALAGEM fica pendente: pré-marcar bipado_completo aqui
+          // fazia o pedido cair na aba Separados já "Bipado" — o bip do
+          // embalador retornava "já bipado" e a etiqueta (disparada só dentro
+          // do bip que completa o pedido) nunca saía sem reiniciar embalagem.
+          bipado_completo: false,
+          quantidade_bipada: 0,
           quantidade_pega: Number(item.quantidade_pedida ?? 0),
         };
         if (movSaidaId) updates.mov_saida_id = movSaidaId;

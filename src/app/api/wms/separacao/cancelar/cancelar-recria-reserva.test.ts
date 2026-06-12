@@ -41,6 +41,7 @@ const tables: {
   movsReservas: unknown[];
 } = { itens: [], links: [], realocs: [], movsReservas: [] };
 const selectCount: Record<string, number> = {};
+const updates: Array<{ table: string; payload: Record<string, unknown> }> = [];
 
 function dataFor(table: string, op: string, nth: number): unknown {
   if (op !== "select") return null;
@@ -59,12 +60,17 @@ vi.mock("@/lib/supabase-server", () => ({
     from(table: string) {
       let op = "select";
       const chain: Record<string, unknown> = {};
-      for (const m of ["select", "in", "eq", "neq", "not", "update", "delete", "gt", "limit"]) {
+      for (const m of ["select", "in", "eq", "neq", "not", "delete", "gt", "limit"]) {
         chain[m] = () => {
-          if (m === "update" || m === "delete") op = m;
+          if (m === "delete") op = m;
           return chain;
         };
       }
+      chain.update = (payload: Record<string, unknown>) => {
+        op = "update";
+        updates.push({ table, payload });
+        return chain;
+      };
       chain.then = (resolve: (v: unknown) => void) => {
         const key = `${table}:${op}`;
         selectCount[key] = (selectCount[key] ?? 0) + 1;
@@ -89,6 +95,7 @@ function makeReq(body: unknown): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(selectCount)) delete selectCount[k];
+  updates.length = 0;
   tables.itens = [];
   tables.links = [];
   tables.realocs = [];
@@ -167,6 +174,38 @@ describe("cancelar separação — recria reserva (SEP-06)", () => {
       expect.objectContaining({ mov_id: "mov-s" }),
     );
     expect(estornarLiberacaoSpy).not.toHaveBeenCalled();
+  });
+
+  // Bug (2026-06-12, pedido #51261): o reset inline dos itens não zerava
+  // quantidade_bipada/bipado_completo (divergia de resetarEstadoSeparacaoItens).
+  // O bip fantasma sobrevivia ao cancelamento e o pedido re-separado caía na
+  // aba Separados já "Bipado" — etiqueta não disparava no bip de embalagem.
+  it("reset dos itens zera o bip de embalagem (quantidade_bipada/bipado_completo)", async () => {
+    tables.itens = [
+      {
+        id: 1,
+        pedido_id: "p1",
+        mov_saida_id: "mov-s",
+        mov_ajuste_loc_zerou_id: null,
+        separacao_parcial: false,
+      },
+    ];
+    tables.links = [{ mov_id: "mov-s", tipo_link: "saida", qty: 4, pedido_item_id: 1 }];
+
+    const res = await POST(makeReq({ pedido_ids: ["p1"] }));
+    expect(res.status).toBe(200);
+
+    const itemReset = updates.find(
+      (u) => u.table === "siso_pedido_itens" && "separacao_marcado" in u.payload,
+    );
+    expect(itemReset).toBeDefined();
+    expect(itemReset!.payload).toMatchObject({
+      separacao_marcado: false,
+      quantidade_pega: null,
+      mov_saida_id: null,
+      quantidade_bipada: 0,
+      bipado_completo: false,
+    });
   });
 
   it("cancelar_pedido=true (D1, pedido morre) NÃO ressuscita reservas", async () => {

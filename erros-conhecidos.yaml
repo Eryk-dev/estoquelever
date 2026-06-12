@@ -5439,3 +5439,32 @@ erros:
     - public/manifest.webmanifest
     - src/app/wms/wms.css
   tags: [mobile, pwa, manifest, orientation, overflow, dvh, tabela]
+
+- id: WEBHOOK-FIRE-FORGET-VENDA-PERDIDA
+  date: 2026-06-12
+  source: webhook
+  category: infrastructure
+  message: "22 vendas EasyPeasy aprovadas no Tiny nunca entraram no SISO; webhook logs presos em 'processando' sem erro; polling não recuperava"
+  cause: >
+    Duas pernas. (1) A rota /api/wms/webhook/tiny respondia 200 e deixava
+    processWebhook como promise solta — a função Vercel congela ao
+    responder, então quando a fila Tiny rate-limited segurava o fetch
+    (picos de 125-204s na queda de conexão da EasyPeasy em 2026-06-11
+    21:35), o processamento morria sem rodar o catch: log preso em
+    'processando' pra sempre, sem registro de erro. (2)
+    logBloqueiaReprocesso no tiny-polling bloqueava reprocesso de
+    QUALQUER log de webhook real, mesmo erro/processando morto — por
+    design o recovery era só o /webhook/reprocessar manual, então o
+    polling via os pedidos no Tiny mas considerava todos "já tratados".
+  fix: >
+    (1) Rota webhook envolve processWebhook/handleNfWebhook/devolução em
+    after() do next/server + maxDuration=300 — função fica viva até o
+    processamento terminar. (2) logBloqueiaReprocesso relaxado: 'erro' e
+    'processando'/'recebido' presos >1h re-tentam no próximo poll
+    independente do tipo; só 'concluido'/'ignorado' e logs frescos em
+    voo bloqueiam. O polling vira backstop de verdade — recuperou os 22
+    pedidos sozinho no poll seguinte ao deploy.
+  files:
+    - src/app/api/wms/webhook/tiny/route.ts
+    - src/lib/tiny-polling.ts
+  tags: [webhook, polling, vercel, fire-and-forget, after, serverless, tiny, easypeasy, venda-perdida]

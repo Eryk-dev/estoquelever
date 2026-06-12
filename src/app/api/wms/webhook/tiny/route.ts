@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getEmpresaByCnpj } from "@/lib/empresa-lookup";
 import { processWebhook } from "@/lib/webhook-processor";
@@ -17,7 +18,14 @@ import { logger, generateCorrelationId } from "@/lib/logger";
  * 3. Deduplicate by pedido_id + tipo + situacao
  * 4. Respond 200 immediately
  * 5. Process asynchronously (fetch order, enrich stock, save)
+ *
+ * O processamento pós-resposta roda dentro de after() — sem ele a função
+ * serverless congela ao responder e o log fica preso em 'processando' sem
+ * erro (vendas perdidas de 2026-06-11). maxDuration cobre a espera da fila
+ * Tiny rate-limited (picos observados de 125–204s).
  */
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const correlationId = generateCorrelationId();
   let payload: Record<string, unknown>;
@@ -61,20 +69,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing dados.idNotaFiscalTiny" }, { status: 400 });
     }
 
-    handleNfWebhook(nfPayload, empresa.empresaId).catch((err) => {
-      logger.logError({
-        error: err,
-        source: "webhook",
-        message: "NF webhook processing failed",
-        category: "external_api",
-        pedidoId: String(nfPayload.dados.idNotaFiscalTiny),
-        empresaId: empresa.empresaId,
-        correlationId,
-        requestPath: "/api/wms/webhook/tiny",
-        requestMethod: "POST",
-        metadata: { tipo: "nota_fiscal" },
-      });
-    });
+    after(() =>
+      handleNfWebhook(nfPayload, empresa.empresaId).catch((err) => {
+        logger.logError({
+          error: err,
+          source: "webhook",
+          message: "NF webhook processing failed",
+          category: "external_api",
+          pedidoId: String(nfPayload.dados.idNotaFiscalTiny),
+          empresaId: empresa.empresaId,
+          correlationId,
+          requestPath: "/api/wms/webhook/tiny",
+          requestMethod: "POST",
+          metadata: { tipo: "nota_fiscal" },
+        });
+      }),
+    );
 
     // WMS Plano 5: detecta NF de devolução e enfileira pra classificação
     // física pelo operador. Best-effort, não afeta o fluxo principal.
@@ -93,7 +103,7 @@ export async function POST(request: NextRequest) {
     if (
       isDevolucao({ tipo: tipoNota, tipoOperacao, finalidade })
     ) {
-      void (async () => {
+      after(async () => {
         try {
           const { registrarDevolucaoPendente } = await import(
             "@/lib/wms/devolucoes"
@@ -116,7 +126,7 @@ export async function POST(request: NextRequest) {
             e: e instanceof Error ? e.message : String(e),
           });
         }
-      })();
+      });
     }
 
     return NextResponse.json({ status: "queued", tipo: "nota_fiscal" });
@@ -208,28 +218,30 @@ export async function POST(request: NextRequest) {
   }
 
   // Process approved order
-  processWebhook(
-    webhookLogId,
-    pedidoId,
-    empresa.empresaId,
-    empresa.galpaoId,
-    empresa.grupoId,
-  ).catch((err) => {
-    logger.logError({
-      error: err,
-      source: "webhook",
-      message: `Processing task failed for pedido ${pedidoId}`,
-      category: "business_logic",
+  after(() =>
+    processWebhook(
+      webhookLogId,
       pedidoId,
-      empresaId: empresa.empresaId,
-      empresaNome: empresa.empresaNome,
-      galpaoNome: empresa.galpaoNome,
-      correlationId,
-      requestPath: "/api/wms/webhook/tiny",
-      requestMethod: "POST",
-      metadata: { webhookLogId },
-    });
-  });
+      empresa.empresaId,
+      empresa.galpaoId,
+      empresa.grupoId,
+    ).catch((err) => {
+      logger.logError({
+        error: err,
+        source: "webhook",
+        message: `Processing task failed for pedido ${pedidoId}`,
+        category: "business_logic",
+        pedidoId,
+        empresaId: empresa.empresaId,
+        empresaNome: empresa.empresaNome,
+        galpaoNome: empresa.galpaoNome,
+        correlationId,
+        requestPath: "/api/wms/webhook/tiny",
+        requestMethod: "POST",
+        metadata: { webhookLogId },
+      });
+    }),
+  );
 
   return NextResponse.json({
     status: "queued",

@@ -22,10 +22,14 @@
  * processamento (encolhe a janela pra sub-segundo — mesma classe de corrida
  * pré-existente entre inclusao_pedido e atualizacao_pedido).
  *
- * Retry: logs tipo='polling_pedido' com status='erro' (ou presos em
- * 'processando' por >1h — função morta no meio) NÃO bloqueiam o dedup; a
- * próxima varredura re-tenta. Logs de webhook real com erro são problema de
- * processamento (não de entrega) — recovery é o /webhook/reprocessar manual.
+ * Retry: logs com status='erro' ou presos em 'processando'/'recebido' por
+ * >1h (função serverless morta no meio) NÃO bloqueiam o dedup — a próxima
+ * varredura re-tenta, independente do tipo (webhook real ou poller). Só
+ * 'concluido'/'ignorado' e logs frescos em andamento bloqueiam. Antes,
+ * logs de webhook real bloqueavam pra sempre → 22 vendas EasyPeasy
+ * perdidas em 2026-06-11 quando a conexão Tiny caiu e o processamento
+ * morreu sem marcar erro. /webhook/reprocessar segue disponível pra
+ * forçar reprocesso manual pontual.
  */
 
 import { createServiceClient } from "./supabase-server";
@@ -65,16 +69,17 @@ interface WebhookLogResumo {
 
 /**
  * Um log de aprovação bloqueia o reprocessamento do pedido?
- * - Log de webhook real: sempre bloqueia (falha ali é de processamento, não
- *   de entrega — recovery é o /webhook/reprocessar manual).
- * - Log do próprio poller: não bloqueia se a tentativa anterior falhou
- *   (status='erro') ou ficou presa em 'processando' por >1h (função morta).
+ * - 'concluido'/'ignorado': bloqueia (pedido tratado).
+ * - 'erro': não bloqueia — re-tenta, seja log do poller ou de webhook real
+ *   (falha transiente de processamento não pode virar venda perdida).
+ * - 'processando'/'recebido' fresco (<1h): bloqueia (processamento em voo).
+ * - 'processando'/'recebido' velho (>1h): não bloqueia (função serverless
+ *   morta no meio — o status nunca vai sair do lugar sozinho).
  */
 function logBloqueiaReprocesso(log: WebhookLogResumo): boolean {
-  if (log.tipo !== "polling_pedido") return true;
   if (log.status === "erro") return false;
   if (
-    log.status === "processando" &&
+    (log.status === "processando" || log.status === "recebido") &&
     Date.parse(log.criado_em) < Date.now() - STUCK_PROCESSANDO_MS
   ) {
     return false;
@@ -157,8 +162,8 @@ async function pollPedidosAprovados(
   const ids = [...porId.keys()];
 
   // Dedup em lote: pedido já existe OU já tem webhook log de aprovação que
-  // bloqueia (qualquer tipo; logs do próprio poller com falha são retryable —
-  // ver logBloqueiaReprocesso).
+  // bloqueia (logs com falha — erro ou presos >1h — são retryable, qualquer
+  // tipo; ver logBloqueiaReprocesso).
   const conhecidos = new Set<string>();
   for (const lote of chunk(ids, 200)) {
     const [{ data: pedidos }, { data: logs }] = await Promise.all([

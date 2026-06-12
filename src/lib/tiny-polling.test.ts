@@ -271,12 +271,50 @@ describe("pollTiny — pedidos aprovados", () => {
     expect(result.empresas[0].pedidos_processados).toBe(1);
   });
 
-  it("NÃO re-tenta log de webhook real com status=erro (recovery é manual)", async () => {
+  it("re-tenta log de webhook real com status=erro (falha de processamento não bloqueia)", async () => {
     state.logsAprovados = [
       {
         tiny_pedido_id: "111",
         tipo: "inclusao_pedido",
         status: "erro",
+        criado_em: new Date().toISOString(),
+      },
+    ];
+    listarPedidosMock.mockImplementation(async (_t: unknown, params: { situacao: number }) =>
+      params.situacao === 3 ? { itens: [{ id: 111 }] } : { itens: [] },
+    );
+
+    const result = await pollTiny();
+
+    expect(processWebhookMock).toHaveBeenCalledTimes(1);
+    expect(result.empresas[0].pedidos_processados).toBe(1);
+  });
+
+  it("re-tenta log de webhook real preso em 'processando' por >1h (função morta)", async () => {
+    state.logsAprovados = [
+      {
+        tiny_pedido_id: "111",
+        tipo: "inclusao_pedido",
+        status: "processando",
+        criado_em: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      },
+    ];
+    listarPedidosMock.mockImplementation(async (_t: unknown, params: { situacao: number }) =>
+      params.situacao === 3 ? { itens: [{ id: 111 }] } : { itens: [] },
+    );
+
+    const result = await pollTiny();
+
+    expect(processWebhookMock).toHaveBeenCalledTimes(1);
+    expect(result.empresas[0].pedidos_processados).toBe(1);
+  });
+
+  it("NÃO re-tenta log de webhook real fresco em 'processando' (em voo)", async () => {
+    state.logsAprovados = [
+      {
+        tiny_pedido_id: "111",
+        tipo: "inclusao_pedido",
+        status: "processando",
         criado_em: new Date().toISOString(),
       },
     ];

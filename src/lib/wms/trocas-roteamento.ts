@@ -21,7 +21,12 @@ import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 import { inserirMovimentacao } from "./ledger";
 import { reservarAtomico, estornarReservaIndividual } from "./reservas";
-import { rotearPedidoDoBanco, TIPOS_LOC_VENDAVEIS } from "./roteamento";
+import {
+  rotearPedidoDoBanco,
+  TIPOS_LOC_VENDAVEIS,
+  geoPriority,
+  type GalpaoLite,
+} from "./roteamento";
 import { locsBloqueadasSet } from "./loc-locks";
 import { kickWorker } from "@/lib/execution-worker";
 import { listarEquivalentesComEstoque } from "./trocas-equivalencia";
@@ -194,6 +199,56 @@ export async function planejarTrocaRoteamento(args: {
 }
 
 /**
+ * Galpões REMOTOS (≠ casa) ordenados por geo-priority em relação aos
+ * preferenciais da empresa. Alimenta a troca remota.
+ */
+async function galpoesRemotosOrdenados(
+  empresaId: string,
+  galpaoCasaId: string,
+): Promise<string[]> {
+  const sb = createServiceClient();
+  const { data: prefRows } = await sb
+    .from("siso_empresa_galpoes_preferenciais")
+    .select("galpao_id")
+    .eq("empresa_id", empresaId);
+  const prefIds = new Set((prefRows ?? []).map((r) => r.galpao_id as string));
+
+  const { data: galpoes } = await sb
+    .from("siso_galpoes")
+    .select("id, cidade, estado")
+    .eq("ativo", true);
+  const lista = (galpoes ?? []) as GalpaoLite[];
+  const homes = lista.filter((g) => prefIds.has(g.id));
+
+  return lista
+    .filter((g) => g.id !== galpaoCasaId)
+    .sort((a, b) => geoPriority(a, homes) - geoPriority(b, homes))
+    .map((g) => g.id);
+}
+
+/**
+ * Troca REMOTA (nível 4 do roteamento): quando NEM o original NEM um equivalente
+ * cobrem no galpão-casa (rota=oc), procura um galpão remoto onde TODOS os itens
+ * fechem (original + equivalente), em ordem geo. Retorna o primeiro que cobre,
+ * ou null. Reusa `planejarTrocaRoteamento` por galpão (single-galpão por pedido).
+ *
+ * Só deve ser chamado quando rota=oc — transferência (original em outro galpão,
+ * nível 3) vence a troca remota (nível 4); troca local (nível 2) vence ambas.
+ */
+export async function planejarTrocaRemota(args: {
+  empresaId: string;
+  galpaoCasaId: string;
+  itens: ItemRotearTroca[];
+}): Promise<{ plano: PlanoTrocaRoteamento; galpaoId: string } | null> {
+  const galpoes = await galpoesRemotosOrdenados(args.empresaId, args.galpaoCasaId);
+  for (const g of galpoes) {
+    const plano = await planejarTrocaRoteamento({ galpaoId: g, itens: args.itens });
+    if (plano) return { plano, galpaoId: g };
+  }
+  return null;
+}
+
+/**
  * Aplica os swaps do plano nos itens recém-upsertados do pedido.
  *   - auto: cria a troca já 'aprovada' (system) + seta o substituto no item.
  *     A reserva do substituto é a R reserva_pedido criada pelo caller (rota).
@@ -204,6 +259,11 @@ export async function aplicarTrocasRoteamento(args: {
   pedidoId: string;
   galpaoId: string;
   swaps: SwapPlanejado[];
+  /**
+   * Troca remota: força TODA troca a 'pendente' + R reserva_troca (ignora
+   * swap.auto). Remoto sempre exige aprovação humana (igual transferência).
+   */
+  forcarPendente?: boolean;
 }): Promise<void> {
   const sb = createServiceClient();
   const source = "wms.trocas-roteamento";
@@ -225,6 +285,9 @@ export async function aplicarTrocasRoteamento(args: {
     // Idempotência (re-entrega de webhook): auto já aplicado → skip.
     if (item.produto_wms_substituto_id) continue;
 
+    // Remoto força pendente (aprovação humana), mesmo se a regra deu 'livre'.
+    const ehAuto = swap.auto && !args.forcarPendente;
+
     const base = {
       pedido_id: args.pedidoId,
       pedido_item_id: item.id,
@@ -240,7 +303,7 @@ export async function aplicarTrocasRoteamento(args: {
       tier_substituto_snapshot: swap.tier_substituto,
     };
 
-    if (swap.auto) {
+    if (ehAuto) {
       const { data: troca, error } = await sb
         .from("siso_trocas_equivalencia")
         .insert({ ...base, status: "aprovada", decidido_em: new Date().toISOString() })

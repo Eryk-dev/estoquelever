@@ -5194,6 +5194,12 @@ Libera R vivas do produto VENDIDO do item (precedente P2-CMP-04) + RPC `wms_apro
 
 RPC `wms_encerrar_troca_atomico` (libera R de troca + fecha). Origem ROTEAMENTO → re-roteia automático (`reRotearPedidoPosTroca`): propria auto-aprova / transferencia volta pro painel / oc auto-enfileira (resposta inclui `re_roteado`).
 
+### POST /api/wms/trocas/[id]/trocar-substituto
+
+**Auth:** `vendas.aprovar_troca` · **Body:** `{ novo_sku }`
+
+Troca o substituto sugerido de uma troca PENDENTE por outro equivalente (operador no modal escolhe entre as opções). Valida regra/saldo em TS (`resolverRealocacao` no galpão da troca) → RPC `wms_trocar_substituto_atomico` move a R `reserva_troca` do substituto antigo pro novo (L antiga + R nova, atômico — sem R órfã). A troca segue pendente; operador aprova depois.
+
 ### GET /api/wms/trocas/equivalentes
 
 **Query:** `sku`, `galpao_id`

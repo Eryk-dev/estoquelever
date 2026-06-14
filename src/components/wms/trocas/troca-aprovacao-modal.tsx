@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Modal, Icon, fmtNum, fmtRelative } from "@/components/wms/ui/wms-ui";
 import {
@@ -13,6 +13,7 @@ import {
   TIER_LABEL,
   type TierQualidade,
   type TrocaTipo,
+  type ParVerificacao,
 } from "@/lib/wms/trocas-equivalencia-regra";
 
 // ──────────────────────────────────────────────────────────────────
@@ -285,11 +286,25 @@ export function TrocaAprovacaoModal({
   } | null>(null);
   const [comparando, setComparando] = useState(false);
 
+  // Substituto exibido: começa do da troca; muda ao vivo quando o operador
+  // escolhe outra opção (sem fechar o modal). Aprovar usa o troca.id (intocado).
+  const [subOverride, setSubOverride] = useState<{
+    sku: string;
+    produto: TrocaProdutoLado;
+    tipo: TrocaTipo;
+    tier: TierQualidade | null;
+  } | null>(null);
+
   const pendente = troca.status === "pendente";
-  const tipo = TIPO_LABEL[troca.tipo] ?? TIPO_LABEL.mesmo_nivel;
+
+  const subSku = subOverride?.sku ?? troca.sku_substituto;
+  const subProduto = subOverride?.produto ?? troca.produto_substituto;
+  const subTipo = subOverride?.tipo ?? troca.tipo;
+
+  const tipo = TIPO_LABEL[subTipo] ?? TIPO_LABEL.mesmo_nivel;
 
   const fotosVendido = imagensDe(troca.produto_vendido);
-  const fotosSubstituto = imagensDe(troca.produto_substituto);
+  const fotosSubstituto = imagensDe(subProduto);
   const podeComparar = fotosVendido.length > 0 && fotosSubstituto.length > 0;
 
   // ESC/backdrop fecham primeiro o visualizador aberto, só então o modal.
@@ -323,7 +338,7 @@ export function TrocaAprovacaoModal({
         throw new Error(b.error || `HTTP ${r.status}`);
       }
       if (sku === troca.sku_vendido) setTierVendido(tier);
-      if (sku === troca.sku_substituto) setTierSubstituto(tier);
+      if (sku === subSku) setTierSubstituto(tier);
       toast.success(
         `${sku} classificado como ${tier ? TIER_LABEL[tier] : "sem classificação"}`,
       );
@@ -346,7 +361,7 @@ export function TrocaAprovacaoModal({
       }
     },
     onSuccess: () => {
-      toast.success(`Troca aprovada — ${troca.sku_vendido} → ${troca.sku_substituto}`);
+      toast.success(`Troca aprovada — ${troca.sku_vendido} → ${subSku}`);
       invalidar();
       onDecidido?.();
       onClose();
@@ -519,20 +534,47 @@ export function TrocaAprovacaoModal({
         </div>
         <ProdutoLadoCard
           rotulo="Substituto (físico)"
-          produto={troca.produto_substituto}
+          produto={subProduto}
           tierLocal={tierSubstituto}
-          onClassificar={(t) => classificar(troca.sku_substituto, t)}
+          onClassificar={(t) => classificar(subSku, t)}
           podeClassificar={podeClassificar}
-          classificando={classificandoSku === troca.sku_substituto}
+          classificando={classificandoSku === subSku}
           onAbrirFotos={() =>
             setLightbox({
               imagens: fotosSubstituto,
-              sku: troca.sku_substituto,
-              descricao: troca.produto_substituto?.descricao ?? "",
+              sku: subSku,
+              descricao: subProduto?.descricao ?? "",
             })
           }
         />
       </div>
+
+      {/* Outras opções de substituto (só em troca pendente, quem decide) */}
+      {podeDecidir && pendente && (
+        <OutrasOpcoes
+          trocaId={troca.id}
+          skuVendido={troca.sku_vendido}
+          galpaoId={troca.galpao_id}
+          skuSubstitutoAtual={subSku}
+          quantidade={troca.quantidade}
+          onTrocado={(e, tipoNovo) => {
+            setSubOverride({
+              sku: e.sku,
+              produto: {
+                sku: e.sku,
+                descricao: e.descricao,
+                imagem_url: e.imagem_url,
+                imagens: e.imagem_url ? [e.imagem_url] : null,
+                tier_qualidade: e.tier_qualidade,
+              },
+              tipo: tipoNovo,
+              tier: e.tier_qualidade,
+            });
+            setTierSubstituto(e.tier_qualidade);
+            invalidar();
+          }}
+        />
+      )}
 
       {/* Campo de motivo da rejeição */}
       {mostrarRejeicao && (
@@ -609,13 +651,218 @@ export function TrocaAprovacaoModal({
           }}
           direita={{
             rotulo: "Substituto (físico)",
-            sku: troca.sku_substituto,
-            descricao: troca.produto_substituto?.descricao ?? "",
+            sku: subSku,
+            descricao: subProduto?.descricao ?? "",
             imagens: fotosSubstituto,
           }}
           onClose={() => setComparando(false)}
         />
       )}
     </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Outras opções de substituto — lista os equivalentes com saldo no galpão da
+// troca e troca o substituto via POST /trocas/[id]/trocar-substituto.
+
+interface EquivalenteOpcao {
+  produto_id: string;
+  sku: string;
+  descricao: string | null;
+  imagem_url: string | null;
+  tier_qualidade: TierQualidade | null;
+  par_verificacao: ParVerificacao;
+  disponivel_galpao: number;
+}
+
+function OutrasOpcoes({
+  trocaId,
+  skuVendido,
+  galpaoId,
+  skuSubstitutoAtual,
+  quantidade,
+  onTrocado,
+}: {
+  trocaId: string;
+  skuVendido: string;
+  galpaoId: string | null;
+  skuSubstitutoAtual: string;
+  quantidade: number;
+  onTrocado: (e: EquivalenteOpcao, tipoNovo: TrocaTipo) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [trocando, setTrocando] = useState<string | null>(null);
+
+  const { data } = useQuery({
+    queryKey: ["wms-trocas-candidatos", trocaId, skuVendido, galpaoId],
+    queryFn: async () => {
+      const r = await sisoFetch(
+        `/api/wms/trocas/equivalentes?sku=${encodeURIComponent(skuVendido)}&galpao_id=${encodeURIComponent(galpaoId ?? "")}`,
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{ equivalentes: EquivalenteOpcao[] }>;
+    },
+    enabled: aberto && !!galpaoId,
+  });
+
+  // Outras opções: saldo suficiente, par não bloqueado, ≠ substituto atual.
+  const opcoes = useMemo(
+    () =>
+      (data?.equivalentes ?? []).filter(
+        (e) =>
+          e.sku !== skuSubstitutoAtual &&
+          e.par_verificacao !== "bloqueado" &&
+          e.disponivel_galpao >= quantidade,
+      ),
+    [data?.equivalentes, skuSubstitutoAtual, quantidade],
+  );
+
+  async function trocar(e: EquivalenteOpcao) {
+    setTrocando(e.sku);
+    try {
+      const r = await sisoFetch(`/api/wms/trocas/${trocaId}/trocar-substituto`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ novo_sku: e.sku }),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        ok?: boolean;
+        troca?: { tipo: TrocaTipo };
+        error?: string;
+      };
+      if (!r.ok || !body.troca) {
+        toast.error(body.error ?? "Erro ao trocar substituto");
+        return;
+      }
+      toast.success(`Substituto trocado para ${e.sku}`);
+      setAberto(false);
+      onTrocado(e, body.troca.tipo);
+    } catch {
+      toast.error("Erro de conexão ao trocar substituto");
+    } finally {
+      setTrocando(null);
+    }
+  }
+
+  if (!galpaoId) return null;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        type="button"
+        className="wms-btn wms-btn-ghost wms-btn-sm"
+        onClick={() => setAberto((v) => !v)}
+      >
+        {aberto ? "▾ Ocultar outras opções" : "▸ Ver outras opções de substituto"}
+      </button>
+
+      {aberto && (
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          {opcoes.length === 0 ? (
+            <div className="wms-td-mute" style={{ fontSize: 12, padding: "4px 2px" }}>
+              Nenhum outro equivalente com saldo suficiente neste galpão.
+            </div>
+          ) : (
+            opcoes.map((e) => {
+              const verificado = e.par_verificacao === "verificado";
+              return (
+                <div
+                  key={e.produto_id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "6px 8px",
+                    border: "1px solid var(--wms-c-border)",
+                    borderRadius: "var(--wms-r-3)",
+                    background: "var(--wms-c-faint)",
+                  }}
+                >
+                  {e.imagem_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={e.imagem_url}
+                      alt={e.sku}
+                      className="wms-thumb wms-thumb-xs"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div
+                      className="wms-thumb wms-thumb-xs"
+                      style={{
+                        display: "grid",
+                        placeItems: "center",
+                        background: "var(--wms-c-panel-2)",
+                      }}
+                    >
+                      <Icon name="box" size={12} className="wms-td-mute" />
+                    </div>
+                  )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span className="wms-mono" style={{ fontWeight: 600, fontSize: 12.5 }}>
+                        {e.sku}
+                      </span>
+                      <span
+                        className={`wms-badge ${e.tier_qualidade ? "wms-badge-info" : "wms-badge-mute"}`}
+                        style={{ fontSize: 10 }}
+                      >
+                        {e.tier_qualidade ? TIER_LABEL[e.tier_qualidade] : "Sem classificação"}
+                      </span>
+                      <span
+                        className={`wms-badge ${verificado ? "wms-badge-ok" : "wms-badge-mute"}`}
+                        style={{ fontSize: 10 }}
+                        title={
+                          verificado
+                            ? "Par verificado por humano"
+                            : "Par não verificado — troca exige aprovação"
+                        }
+                      >
+                        {verificado ? "✓ Verificado" : "Não verificado"}
+                      </span>
+                    </div>
+                    <div
+                      className="wms-td-mute"
+                      style={{
+                        fontSize: 11,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {e.descricao}
+                    </div>
+                  </div>
+                  <div
+                    className="wms-mono wms-tar"
+                    style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}
+                    title="Disponível neste galpão"
+                  >
+                    {fmtNum(e.disponivel_galpao)}
+                  </div>
+                  <button
+                    type="button"
+                    className="wms-btn wms-btn-sm wms-btn-ghost"
+                    disabled={trocando !== null}
+                    onClick={() => trocar(e)}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {trocando === e.sku ? "Trocando…" : "Usar esta"}
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
   );
 }

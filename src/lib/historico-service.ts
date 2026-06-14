@@ -110,7 +110,8 @@ export type EventoPedido =
   | "troca_auto_aplicada"
   | "troca_aprovada"
   | "troca_rejeitada"
-  | "troca_cancelada";
+  | "troca_cancelada"
+  | "troca_substituto_alterado";
 
 /**
  * Record a single event in the order history.

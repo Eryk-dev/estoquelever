@@ -81,6 +81,7 @@ export class TrocaError extends Error {
       | "TROCA_PENDENTE_EXISTE"
       | "SUBSTITUTO_NAO_ENCONTRADO"
       | "SUBSTITUTO_IGUAL_VENDIDO"
+      | "SUBSTITUTO_IGUAL_ATUAL"
       | "PRODUTO_VENDIDO_NAO_MAPEADO"
       | "PAR_BLOQUEADO"
       | "SEM_SALDO_SUBSTITUTO"
@@ -522,6 +523,151 @@ export async function aprovarTroca(args: {
       sku_substituto: troca.sku_substituto,
       tipo: troca.tipo,
       quantidade: troca.quantidade,
+    },
+  });
+
+  const { data: final } = await sb
+    .from("siso_trocas_equivalencia")
+    .select("*")
+    .eq("id", args.trocaId)
+    .single();
+  return final as TrocaEquivalencia;
+}
+
+/**
+ * Troca o SUBSTITUTO de uma troca PENDENTE por outro equivalente (operador no
+ * modal de aprovação escolhe entre as opções). Valida em TS (regra/saldo) e
+ * muta as reservas via RPC atômica `wms_trocar_substituto_atomico` — libera as
+ * R reserva_troca do substituto antigo e cria as do novo numa única tx (sem R
+ * órfã). Não auto-aprova: segue pendente, operador clica Aprovar depois.
+ */
+export async function trocarSubstitutoDaTroca(args: {
+  trocaId: string;
+  novoSku: string;
+  usuarioId: string;
+  usuarioNome?: string | null;
+}): Promise<TrocaEquivalencia> {
+  const sb = createServiceClient();
+  const source = "wms.trocas-equivalencia";
+
+  const { data: troca } = await sb
+    .from("siso_trocas_equivalencia")
+    .select("*")
+    .eq("id", args.trocaId)
+    .maybeSingle();
+  if (!troca) throw new TrocaError("TROCA_NAO_ENCONTRADA", "troca não encontrada");
+  if (troca.status !== "pendente") {
+    throw new TrocaError("TROCA_NAO_PENDENTE", `troca em status '${troca.status}'`);
+  }
+  if (args.novoSku === troca.sku_substituto) {
+    throw new TrocaError("SUBSTITUTO_IGUAL_ATUAL", "substituto já é o atual da troca");
+  }
+
+  // Novo substituto (catálogo WMS)
+  const { data: novo } = await sb
+    .from("siso_produtos")
+    .select("id, sku, tier_qualidade")
+    .eq("sku", args.novoSku)
+    .maybeSingle();
+  if (!novo) {
+    throw new TrocaError(
+      "SUBSTITUTO_NAO_ENCONTRADO",
+      `SKU "${args.novoSku}" não encontrado no catálogo WMS`,
+    );
+  }
+  if (novo.id === troca.produto_vendido_id) {
+    throw new TrocaError("SUBSTITUTO_IGUAL_VENDIDO", "substituto é o próprio produto vendido");
+  }
+
+  // Regra (recalcula tipo sobre o novo par). misto = item já com pick parcial.
+  const { data: item } = await sb
+    .from("siso_pedido_itens")
+    .select("quantidade_pega")
+    .eq("id", troca.pedido_item_id)
+    .maybeSingle();
+  const misto = Number(item?.quantidade_pega ?? 0) > 0;
+  const parVerificacao = await buscarParVerificacao(
+    troca.sku_vendido as string,
+    novo.sku as string,
+  );
+  const regra = regraTroca({
+    tierVendido: (troca.tier_vendido_snapshot as TierQualidade | null) ?? null,
+    tierSubstituto: (novo.tier_qualidade as TierQualidade | null) ?? null,
+    parVerificacao,
+    misto,
+  });
+  if (regra.resultado === "bloqueada") {
+    throw new TrocaError(
+      "PAR_BLOQUEADO",
+      `par ${troca.sku_vendido} ↔ ${novo.sku} está BLOQUEADO pra troca (curadoria)`,
+    );
+  }
+
+  // Saldo do novo substituto no MESMO galpão da troca (cascade picking>overstock)
+  const resolver = await resolverRealocacao({
+    produto_id: novo.id as string,
+    galpao_id: troca.galpao_id as string,
+    qty_residual: Number(troca.quantidade),
+  });
+  if (resolver.status === "sem_cobertura") {
+    throw new TrocaError(
+      "SEM_SALDO_SUBSTITUTO",
+      `substituto ${novo.sku} sem saldo disponível que cubra ${troca.quantidade} un. no galpão`,
+    );
+  }
+  const pReservas = resolver.realocacoes.map((r) => ({
+    localizacao_id: r.localizacao_id,
+    qty: r.quantidade,
+  }));
+
+  const { error: rpcErr } = await sb.rpc("wms_trocar_substituto_atomico", {
+    p_troca_id: args.trocaId,
+    p_usuario_id: args.usuarioId,
+    p_novo_produto_id: novo.id,
+    p_novo_sku: novo.sku,
+    p_novo_tipo: regra.tipo,
+    p_novo_tier: novo.tier_qualidade ?? null,
+    p_reservas: pReservas,
+  });
+  if (rpcErr) {
+    if (rpcErr.message.includes("TROCA_NAO_PENDENTE")) {
+      throw new TrocaError("TROCA_NAO_PENDENTE", rpcErr.message);
+    }
+    if (rpcErr.message.includes("TROCA_NAO_ENCONTRADA")) {
+      throw new TrocaError("TROCA_NAO_ENCONTRADA", rpcErr.message);
+    }
+    if (rpcErr.message.includes("SUBSTITUTO_IGUAL_VENDIDO")) {
+      throw new TrocaError("SUBSTITUTO_IGUAL_VENDIDO", rpcErr.message);
+    }
+    // TOCTOU: saldo do substituto caiu entre o resolver (TS) e a RPC → a tx
+    // reverteu (R antiga sobrevive). Devolve erro claro em vez de 5xx genérico.
+    if (rpcErr.message.includes("reserva excede saldo")) {
+      throw new TrocaError(
+        "SEM_SALDO_SUBSTITUTO",
+        "saldo do substituto mudou durante a troca — tente de novo",
+      );
+    }
+    throw new Error(`wms_trocar_substituto_atomico falhou: ${rpcErr.message}`);
+  }
+
+  logger.info(source, "substituto da troca alterado", {
+    troca_id: args.trocaId,
+    pedido_id: troca.pedido_id,
+    de: troca.sku_substituto,
+    para: novo.sku,
+    tipo: regra.tipo,
+  });
+
+  await registrarEvento({
+    pedidoId: String(troca.pedido_id),
+    evento: "troca_substituto_alterado",
+    usuarioId: args.usuarioId,
+    usuarioNome: args.usuarioNome ?? undefined,
+    detalhes: {
+      troca_id: args.trocaId,
+      sku_anterior: troca.sku_substituto,
+      sku_novo: novo.sku,
+      tipo: regra.tipo,
     },
   });
 

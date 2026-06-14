@@ -31,6 +31,7 @@ import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
 import {
   planejarTrocaRoteamento,
+  planejarTrocaRemota,
   aplicarTrocasRoteamento,
   type PlanoTrocaRoteamento,
 } from "./wms/trocas-roteamento";
@@ -454,25 +455,45 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //     local vence transferência). Falha no planejamento NUNCA derruba o
   //     webhook — segue a rota normal.
   let planoTroca: PlanoTrocaRoteamento | null = null;
+  let planoGalpao = galpaoOrigemId;
+  let trocaRemota = false;
   if (rota.decisao !== "propria" && itensPraRotear.length > 0) {
+    const itensTroca = itensResolvidos
+      .filter((i) => i.produtoIdWms)
+      .map((i) => ({
+        tiny_id: String(i.tinyProdutoId),
+        sku: i.sku,
+        produto_uuid: i.produtoIdWms as string,
+        qty: i.quantidade,
+      }));
     try {
+      // Nível 2: troca local (galpão-casa) — vence transferência (D10).
       planoTroca = await planejarTrocaRoteamento({
         galpaoId: galpaoOrigemId,
-        itens: itensResolvidos
-          .filter((i) => i.produtoIdWms)
-          .map((i) => ({
-            tiny_id: String(i.tinyProdutoId),
-            sku: i.sku,
-            produto_uuid: i.produtoIdWms as string,
-            qty: i.quantidade,
-          })),
+        itens: itensTroca,
       });
+      // Nível 4: troca remota — só quando NEM o original cobre em galpão nenhum
+      // (rota=oc). Transferência (original remoto, nível 3) vence a troca remota.
+      if (!planoTroca && rota.decisao === "oc") {
+        const remoto = await planejarTrocaRemota({
+          empresaId: empresaOrigemId,
+          galpaoCasaId: galpaoOrigemId,
+          itens: itensTroca,
+        });
+        if (remoto) {
+          planoTroca = remoto.plano;
+          planoGalpao = remoto.galpaoId;
+          trocaRemota = true;
+        }
+      }
     } catch (e) {
       logger.warn("processor.wms", "falha planejando troca de equivalência (segue rota normal)", {
         pedidoId: pedido.id,
         error: e instanceof Error ? e.message : String(e),
       });
       planoTroca = null;
+      planoGalpao = galpaoOrigemId;
+      trocaRemota = false;
     }
   }
 
@@ -484,15 +505,17 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   let separacaoGalpaoId: string;
   let motivo: string;
 
-  if (planoTroca && planoTroca.todosAuto) {
+  if (planoTroca && planoTroca.todosAuto && !trocaRemota) {
     sugestao = "propria";
     separacaoGalpaoId = galpaoOrigemId;
     motivo =
       "Troca de equivalência automática — substituto mesmo nível (par verificado) no galpão casa";
   } else if (planoTroca) {
     sugestao = "troca_equivalente";
-    separacaoGalpaoId = galpaoOrigemId;
-    motivo = "Equivalente em estoque no galpão casa — aguardando aprovação de troca";
+    separacaoGalpaoId = planoGalpao;
+    motivo = trocaRemota
+      ? "Equivalente em estoque em outro galpão — aguardando aprovação de troca (remota)"
+      : "Equivalente em estoque no galpão casa — aguardando aprovação de troca";
   } else {
     switch (rota.decisao) {
       case "propria":
@@ -705,8 +728,9 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   if (planoTroca) {
     await aplicarTrocasRoteamento({
       pedidoId: pedido.id,
-      galpaoId: galpaoOrigemId,
+      galpaoId: planoGalpao,
       swaps: planoTroca.swaps,
+      forcarPendente: trocaRemota,
     });
   }
 
@@ -714,23 +738,24 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    P085: se qualquer item falhar, throw → webhook vira 'erro' (Tiny retenta);
   //    NÃO enfileira lancar_estoque com pedido meio-aprovado.
   //    Com plano de troca: R reserva_pedido pros itens cobertos pelo ORIGINAL +
-  //    swaps AUTO (substituto). Swaps pendentes já têm R reserva_troca (7b).
+  //    swaps AUTO (substituto), no galpão do plano (casa ou remoto). Swaps
+  //    pendentes já têm R reserva_troca (7b). Remoto força tudo pendente → sem
+  //    auto-swaps aqui.
   if (planoTroca) {
+    const autoSwaps = trocaRemota ? [] : planoTroca.swaps.filter((s) => s.auto);
     const rotasTroca = [
       ...planoTroca.cobertosOriginal.map((c) => ({
         produto_id: c.produto_uuid,
-        galpao_id: galpaoOrigemId,
+        galpao_id: planoGalpao,
         localizacao_id: c.localizacao_id,
         qty: c.qty,
       })),
-      ...planoTroca.swaps
-        .filter((s) => s.auto)
-        .map((s) => ({
-          produto_id: s.produto_substituto_id,
-          galpao_id: galpaoOrigemId,
-          localizacao_id: s.localizacao_id,
-          qty: s.qty,
-        })),
+      ...autoSwaps.map((s) => ({
+        produto_id: s.produto_substituto_id,
+        galpao_id: planoGalpao,
+        localizacao_id: s.localizacao_id,
+        qty: s.qty,
+      })),
     ];
     if (rotasTroca.length > 0) {
       await criarReservasRotaAtomico({ pedidoId: pedido.id, rotas: rotasTroca });

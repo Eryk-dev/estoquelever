@@ -564,7 +564,12 @@ export function TrocaAprovacaoModal({
                 sku: e.sku,
                 descricao: e.descricao,
                 imagem_url: e.imagem_url,
-                imagens: e.imagem_url ? [e.imagem_url] : null,
+                imagens:
+                  e.imagens && e.imagens.length > 0
+                    ? e.imagens
+                    : e.imagem_url
+                      ? [e.imagem_url]
+                      : null,
                 tier_qualidade: e.tier_qualidade,
               },
               tipo: tipoNovo,
@@ -671,6 +676,7 @@ interface EquivalenteOpcao {
   sku: string;
   descricao: string | null;
   imagem_url: string | null;
+  imagens: string[] | null;
   tier_qualidade: TierQualidade | null;
   par_verificacao: ParVerificacao;
   disponivel_galpao: number;

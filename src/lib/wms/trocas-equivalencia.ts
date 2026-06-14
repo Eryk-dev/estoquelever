@@ -769,6 +769,7 @@ export interface EquivalenteComEstoque {
   sku: string;
   descricao: string | null;
   imagem_url: string | null;
+  imagens: string[] | null;
   tier_qualidade: TierQualidade | null;
   par_verificacao: ParVerificacao;
   disponivel_galpao: number;
@@ -795,7 +796,7 @@ export async function listarEquivalentesComEstoque(args: {
 
   const { data: produtos } = await sb
     .from("siso_produtos")
-    .select("id, sku, descricao, imagem_url, tier_qualidade")
+    .select("id, sku, descricao, imagem_url, imagens, tier_qualidade")
     .in("sku", skus)
     .eq("ativo", true);
   if (!produtos || produtos.length === 0) return [];
@@ -832,6 +833,7 @@ export async function listarEquivalentesComEstoque(args: {
       sku: p.sku as string,
       descricao: (p.descricao as string | null) ?? null,
       imagem_url: (p.imagem_url as string | null) ?? null,
+      imagens: (p.imagens as string[] | null) ?? null,
       tier_qualidade: (p.tier_qualidade as TierQualidade | null) ?? null,
       par_verificacao: parPorSku.get(p.sku as string) ?? null,
       disponivel_galpao: dispPorProduto.get(p.id as string) ?? 0,

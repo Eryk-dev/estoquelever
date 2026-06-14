@@ -770,6 +770,43 @@
 .wms-lb-thumb.is-active { border-color: #fff; }
 .wms-lb-thumb:hover { border-color: rgba(255,255,255,.5); }
 
+.wms-lb-empty {
+  color: rgba(255,255,255,.5);
+  font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Comparador lado a lado · dois carrosséis independentes */
+.wms-lb-split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  min-height: 0;
+}
+.wms-lb-pane {
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  gap: 10px;
+}
+.wms-lb-pane-hd {
+  text-align: center;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.wms-lb-pane-rotulo {
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+  color: rgba(255,255,255,.5);
+}
+.wms-lb-pane-sku { color: #fff; font-weight: 600; font-family: var(--wms-font-mono); font-size: 13px; }
+.wms-lb-pane-desc {
+  color: rgba(255,255,255,.65); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .wms-lb-split { grid-template-columns: 1fr; overflow-y: auto; }
+}
+
 /* Grid de fotos na aba Fotos do drawer */
 .wms-photos-grid {
   display: grid;

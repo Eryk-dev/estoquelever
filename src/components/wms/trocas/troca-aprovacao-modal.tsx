@@ -4,6 +4,10 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Modal, Icon, fmtNum, fmtRelative } from "@/components/wms/ui/wms-ui";
+import {
+  ProdutoLightbox,
+  ProdutoComparador,
+} from "@/components/wms/produto-lightbox";
 import { sisoFetch, usePermissoes } from "@/lib/auth-context";
 import {
   TIER_LABEL,
@@ -24,7 +28,15 @@ export interface TrocaProdutoLado {
   sku: string;
   descricao: string | null;
   imagem_url: string | null;
+  imagens: string[] | null;
   tier_qualidade: TierQualidade | null;
+}
+
+/** Lista de fotos do produto: array completo, com fallback pra capa. */
+function imagensDe(p: TrocaProdutoLado | null): string[] {
+  if (!p) return [];
+  if (p.imagens && p.imagens.length > 0) return p.imagens;
+  return p.imagem_url ? [p.imagem_url] : [];
 }
 
 export interface Troca {
@@ -109,6 +121,7 @@ function ProdutoLadoCard({
   onClassificar,
   podeClassificar,
   classificando,
+  onAbrirFotos,
 }: {
   rotulo: string;
   produto: TrocaProdutoLado | null;
@@ -116,8 +129,10 @@ function ProdutoLadoCard({
   onClassificar: (tier: TierQualidade | null) => void;
   podeClassificar: boolean;
   classificando: boolean;
+  onAbrirFotos: () => void;
 }) {
   const semTier = !tierLocal;
+  const fotos = imagensDe(produto);
   return (
     <div
       style={{
@@ -136,13 +151,46 @@ function ProdutoLadoCard({
         {rotulo}
       </div>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        {produto?.imagem_url ? (
-          <img
-            src={produto.imagem_url}
-            alt=""
-            loading="lazy"
-            className="wms-thumb wms-thumb-sm"
-          />
+        {fotos.length > 0 ? (
+          <button
+            type="button"
+            onClick={onAbrirFotos}
+            title="Ver fotos"
+            style={{
+              position: "relative",
+              padding: 0,
+              border: "none",
+              background: "none",
+              cursor: "zoom-in",
+              flexShrink: 0,
+            }}
+          >
+            <img
+              src={fotos[0]}
+              alt=""
+              loading="lazy"
+              className="wms-thumb wms-thumb-sm wms-thumb-click"
+            />
+            {fotos.length > 1 && (
+              <span
+                className="wms-mono"
+                style={{
+                  position: "absolute",
+                  bottom: -4,
+                  right: -4,
+                  background: "var(--wms-c-fg)",
+                  color: "var(--wms-c-bg)",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  padding: "2px 4px",
+                  borderRadius: 999,
+                }}
+              >
+                {fotos.length}
+              </span>
+            )}
+          </button>
         ) : (
           <div
             className="wms-thumb wms-thumb-sm"
@@ -229,8 +277,27 @@ export function TrocaAprovacaoModal({
   const [mostrarRejeicao, setMostrarRejeicao] = useState(false);
   const [motivo, setMotivo] = useState("");
 
+  // Visualizador de fotos: lightbox de um produto + comparador lado a lado.
+  const [lightbox, setLightbox] = useState<{
+    imagens: string[];
+    sku: string;
+    descricao: string;
+  } | null>(null);
+  const [comparando, setComparando] = useState(false);
+
   const pendente = troca.status === "pendente";
   const tipo = TIPO_LABEL[troca.tipo] ?? TIPO_LABEL.mesmo_nivel;
+
+  const fotosVendido = imagensDe(troca.produto_vendido);
+  const fotosSubstituto = imagensDe(troca.produto_substituto);
+  const podeComparar = fotosVendido.length > 0 && fotosSubstituto.length > 0;
+
+  // ESC/backdrop fecham primeiro o visualizador aberto, só então o modal.
+  function fechar() {
+    if (lightbox) return setLightbox(null);
+    if (comparando) return setComparando(false);
+    onClose();
+  }
 
   function invalidar() {
     qc.invalidateQueries({ queryKey: ["wms-trocas"] });
@@ -311,11 +378,12 @@ export function TrocaAprovacaoModal({
   const ocupado = aprovarMut.isPending || rejeitarMut.isPending;
 
   return (
+    <>
     <Modal
       title="Troca de equivalência"
       subtitle={`Pedido #${troca.pedido_id} · ${ORIGEM_LABEL[troca.origem_solicitacao] ?? troca.origem_solicitacao}`}
       width={720}
-      onClose={onClose}
+      onClose={fechar}
       footer={
         podeDecidir && pendente ? (
           mostrarRejeicao ? (
@@ -338,6 +406,17 @@ export function TrocaAprovacaoModal({
             </>
           ) : (
             <>
+              {podeComparar && (
+                <button
+                  className="wms-btn wms-btn-ghost"
+                  onClick={() => setComparando(true)}
+                  disabled={ocupado}
+                  style={{ marginRight: "auto" }}
+                >
+                  <Icon name="columns" size={11} />
+                  Comparar
+                </button>
+              )}
               <button
                 className="wms-btn wms-btn-ghost"
                 onClick={() => setMostrarRejeicao(true)}
@@ -357,9 +436,21 @@ export function TrocaAprovacaoModal({
             </>
           )
         ) : (
-          <button className="wms-btn wms-btn-ghost" onClick={onClose}>
-            Fechar
-          </button>
+          <>
+            {podeComparar && (
+              <button
+                className="wms-btn wms-btn-ghost"
+                onClick={() => setComparando(true)}
+                style={{ marginRight: "auto" }}
+              >
+                <Icon name="columns" size={11} />
+                Comparar
+              </button>
+            )}
+            <button className="wms-btn wms-btn-ghost" onClick={onClose}>
+              Fechar
+            </button>
+          </>
         )
       }
     >
@@ -397,6 +488,13 @@ export function TrocaAprovacaoModal({
           onClassificar={(t) => classificar(troca.sku_vendido, t)}
           podeClassificar={podeClassificar}
           classificando={classificandoSku === troca.sku_vendido}
+          onAbrirFotos={() =>
+            setLightbox({
+              imagens: fotosVendido,
+              sku: troca.sku_vendido,
+              descricao: troca.produto_vendido?.descricao ?? "",
+            })
+          }
         />
         <div
           style={{
@@ -426,6 +524,13 @@ export function TrocaAprovacaoModal({
           onClassificar={(t) => classificar(troca.sku_substituto, t)}
           podeClassificar={podeClassificar}
           classificando={classificandoSku === troca.sku_substituto}
+          onAbrirFotos={() =>
+            setLightbox({
+              imagens: fotosSubstituto,
+              sku: troca.sku_substituto,
+              descricao: troca.produto_substituto?.descricao ?? "",
+            })
+          }
         />
       </div>
 
@@ -482,5 +587,35 @@ export function TrocaAprovacaoModal({
         <span className="wms-mono wms-td-mute">Pedido #{troca.pedido_id}</span>
       </div>
     </Modal>
+
+      {/* Lightbox de um produto (clique na foto) */}
+      {lightbox && (
+        <ProdutoLightbox
+          imagens={lightbox.imagens}
+          sku={lightbox.sku}
+          descricao={lightbox.descricao}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+
+      {/* Comparador lado a lado (vendido × substituto) */}
+      {comparando && (
+        <ProdutoComparador
+          esquerda={{
+            rotulo: "Vendido (anunciado)",
+            sku: troca.sku_vendido,
+            descricao: troca.produto_vendido?.descricao ?? "",
+            imagens: fotosVendido,
+          }}
+          direita={{
+            rotulo: "Substituto (físico)",
+            sku: troca.sku_substituto,
+            descricao: troca.produto_substituto?.descricao ?? "",
+            imagens: fotosSubstituto,
+          }}
+          onClose={() => setComparando(false)}
+        />
+      )}
+    </>
   );
 }

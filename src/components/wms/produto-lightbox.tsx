@@ -139,3 +139,120 @@ export function ProdutoLightbox({
     </div>
   );
 }
+
+// ──────────────────────────────────────────────────────────────────
+
+export interface LadoComparacao {
+  rotulo: string;
+  sku?: string;
+  descricao?: string;
+  imagens: string[];
+}
+
+/** Um painel do comparador: foto grande + prev/next + strip, índice próprio. */
+function ComparePane({ lado }: { lado: LadoComparacao }) {
+  const { imagens, sku, descricao, rotulo } = lado;
+  const [idx, setIdx] = useState(0);
+  const prev = () => setIdx((i) => (i - 1 + imagens.length) % imagens.length);
+  const next = () => setIdx((i) => (i + 1) % imagens.length);
+
+  return (
+    <div className="wms-lb-pane" onClick={(e) => e.stopPropagation()}>
+      <div className="wms-lb-pane-hd">
+        <span className="wms-lb-pane-rotulo">{rotulo}</span>
+        {sku && <span className="wms-lb-pane-sku">{sku}</span>}
+        {descricao && <span className="wms-lb-pane-desc">{descricao}</span>}
+        <span className="wms-lb-counter">
+          {imagens.length > 0 ? `${idx + 1} / ${imagens.length}` : "sem fotos"}
+        </span>
+      </div>
+
+      <div className="wms-lb-stage">
+        {imagens.length > 1 && (
+          <button
+            type="button"
+            className="wms-lb-nav wms-lb-nav-prev"
+            onClick={prev}
+            aria-label="Anterior"
+          >
+            <Icon name="chevron-l" size={20} />
+          </button>
+        )}
+        {imagens.length > 0 ? (
+          <img key={imagens[idx]} src={imagens[idx]} alt={descricao ?? ""} className="wms-lb-img" />
+        ) : (
+          <div className="wms-lb-empty">Sem fotos</div>
+        )}
+        {imagens.length > 1 && (
+          <button
+            type="button"
+            className="wms-lb-nav wms-lb-nav-next"
+            onClick={next}
+            aria-label="Próxima"
+          >
+            <Icon name="chevron-r" size={20} />
+          </button>
+        )}
+      </div>
+
+      {imagens.length > 1 && (
+        <div className="wms-lb-strip">
+          {imagens.map((src, i) => (
+            <button
+              key={src + i}
+              type="button"
+              className={`wms-lb-thumb ${i === idx ? "is-active" : ""}`}
+              onClick={() => setIdx(i)}
+              aria-label={`Foto ${i + 1}`}
+            >
+              <img src={src} alt="" loading="lazy" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Comparador lado a lado de dois produtos. Cada painel tem seu próprio
+ * carrossel (avança/retrocede individualmente). ESC ou clique fora fecha.
+ */
+export function ProdutoComparador({
+  esquerda,
+  direita,
+  onClose,
+}: {
+  esquerda: LadoComparacao;
+  direita: LadoComparacao;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="wms-lb-overlay" onClick={onClose} role="dialog" aria-modal="true">
+      <button
+        type="button"
+        className="wms-lb-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        aria-label="Fechar"
+      >
+        <Icon name="x" size={18} />
+      </button>
+
+      <div className="wms-lb-split">
+        <ComparePane lado={esquerda} />
+        <ComparePane lado={direita} />
+      </div>
+    </div>
+  );
+}

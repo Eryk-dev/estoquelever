@@ -27,8 +27,8 @@ export async function GET(request: NextRequest) {
     .from("siso_trocas_equivalencia")
     .select(
       `*,
-       produto_vendido:siso_produtos!siso_trocas_equivalencia_produto_vendido_id_fkey(sku, descricao, imagem_url, tier_qualidade),
-       produto_substituto:siso_produtos!siso_trocas_equivalencia_produto_substituto_id_fkey(sku, descricao, imagem_url, tier_qualidade),
+       produto_vendido:siso_produtos!siso_trocas_equivalencia_produto_vendido_id_fkey(sku, descricao, imagem_url, imagens, tier_qualidade),
+       produto_substituto:siso_produtos!siso_trocas_equivalencia_produto_substituto_id_fkey(sku, descricao, imagem_url, imagens, tier_qualidade),
        solicitante:siso_usuarios!siso_trocas_equivalencia_solicitado_por_fkey(nome),
        galpao:siso_galpoes(nome)`,
     )

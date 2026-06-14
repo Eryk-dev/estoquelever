@@ -7,9 +7,10 @@
  *
  * Cobertura por marketplace:
  * - Mercado Livre: ZPL de comandos (^BC Code128, ^BQ QR) — extraível daqui.
- * - Shopee: gráfico raster (~DG/^XG), SEM comandos de barcode — o valor entra
- *   via codigoRastreio da expedição Tiny (passado como extra em
- *   montarBarcodesEtiqueta), nunca do ZPL.
+ * - Shopee: gráfico raster (~DG/^XG), SEM comandos de barcode — nada é
+ *   extraível daqui. Os códigos (rastreio BR... + DANFE) são lidos do bitmap
+ *   por `extrairBarcodesDoRaster` (etiqueta-barcode-raster.ts) e passados como
+ *   extras a montarBarcodesEtiqueta. O codigoRastreio do Tiny vem vazio.
  */
 
 /** Comandos ZPL que iniciam um campo de barcode (o próximo ^FD é o dado). */

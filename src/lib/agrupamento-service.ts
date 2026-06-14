@@ -24,6 +24,7 @@ import {
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
+import { extrairBarcodesDoRaster } from "@/lib/etiqueta-barcode-raster";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -749,9 +750,11 @@ async function salvarEtiqueta(
   if (zpl) {
     updateData.etiqueta_zpl = zpl;
   }
-  // Barcodes pra conferência de embalagem: extraídos do ZPL (ML) + rastreio
-  // da expedição (única fonte pra Shopee raster).
-  const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio]);
+  // Barcodes pra conferência de embalagem: ZPL de comandos (ML) ou, quando a
+  // etiqueta é raster (Shopee), os barcodes/QR lidos do próprio bitmap — única
+  // fonte do rastreio (Tiny não expõe e nada vem como texto no ZPL).
+  const doRaster = await extrairBarcodesDoRaster(zpl);
+  const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio, ...doRaster]);
   if (barcodes.length > 0) {
     updateData.etiqueta_barcodes = barcodes;
   }

@@ -16,6 +16,7 @@ import { criarAgrupamento, concluirAgrupamento, obterAgrupamento, obterEtiquetas
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
+import { extrairBarcodesDoRaster } from "@/lib/etiqueta-barcode-raster";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
@@ -432,8 +433,10 @@ async function resolverZplFallback(
     const zpl = await baixarZpl(url);
     if (!zpl) return null;
 
-    // Cache for future use (+ barcodes pra conferência de embalagem)
-    const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio]);
+    // Cache for future use (+ barcodes pra conferência de embalagem).
+    // Raster (Shopee): lê os códigos do bitmap; comando (ML): do ZPL.
+    const doRaster = await extrairBarcodesDoRaster(zpl);
+    const barcodes = montarBarcodesEtiqueta(zpl, [codigoRastreio, ...doRaster]);
     await supabase
       .from("siso_pedidos")
       .update({

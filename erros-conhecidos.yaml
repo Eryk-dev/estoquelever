@@ -5735,3 +5735,42 @@ erros:
     - src/app/api/wms/worker/processar/route.ts
     - vercel.json
   tags: [fila, worker, varredura_pos_entrada, lancar_estoque, cron, snapshot-inicial, separacao, validacao_oc]
+
+- id: CONFERENCIA-SHOPEE-SO-DANFE
+  date: 2026-06-14
+  source: etiqueta-service
+  category: business_logic
+  message: >
+    Na conferência de embalagem, bipar a etiqueta Shopee só casava pelo
+    código da DANFE; o código de barras grande (rastreio BR...) e os QR
+    não encontravam pedido nenhum.
+  cause: >
+    A etiqueta de envio da Shopee vinda do Tiny é UMA imagem raster
+    (ZPL = ~DG bitmap + ^XG, zero campo de texto). Nem o rastreio, nem a
+    DANFE, nem os QR estão como texto no ZPL — extrairBarcodesDoZpl
+    (parser de comandos ^BC/^BQ, feito pro Mercado Livre) retornava [].
+    O extra montarBarcodesEtiqueta usava exp.logistica.codigoRastreio,
+    mas o Tiny devolve esse campo VAZIO pra Shopee (confirmado também em
+    transportador.codigoRastreamento do pedido e da NF — todos ""). Logo
+    etiqueta_barcodes ficava null e o único match possível era via
+    chave_acesso_nf (a DANFE). O scanner físico lê os barras impressos no
+    bitmap e devolve o valor, mas nada no banco batia com o rastreio.
+  fix: >
+    Novo módulo etiqueta-barcode-raster.ts: quando o ZPL é raster (~DG),
+    expande o bitmap 1bpp (parse ~DG + inflate :Z64:) e lê os barcodes/QR
+    com zxing-wasm — única fonte dos valores (rastreio BR... + chave
+    DANFE; os 3 QR Shopee também codificam o rastreio). Integrado nos 2
+    save sites (salvarEtiqueta em agrupamento-service, resolverZplFallback
+    em etiqueta-service): doRaster mesclado nos extras de
+    montarBarcodesEtiqueta. ML (ZPL de comandos, sem ~DG) não muda —
+    extrairBarcodesDoRaster retorna [] na hora. Falha de decode degrada
+    seguro ([], só warn). Backfill 1x via scripts/wms/backfill-barcodes-raster.ts.
+    next.config: zxing-wasm em serverExternalPackages + .wasm no
+    outputFileTracingIncludes (entra no trace do standalone).
+  files:
+    - src/lib/etiqueta-barcode-raster.ts
+    - src/lib/agrupamento-service.ts
+    - src/lib/etiqueta-service.ts
+    - scripts/wms/backfill-barcodes-raster.ts
+    - next.config.ts
+  tags: [conferencia, embalagem, shopee, etiqueta, etiqueta_barcodes, raster, zpl, barcode, rastreio, zxing, mercado_livre]

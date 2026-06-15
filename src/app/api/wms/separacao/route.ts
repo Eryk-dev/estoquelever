@@ -66,6 +66,13 @@ export async function GET(request: NextRequest) {
   const marketplaceFilter = searchParams.get("marketplace");
   const busca = searchParams.get("busca");
   const tagFilter = searchParams.get("tag");
+  // Filtro por prazo de envio (range calculado no cliente p/ respeitar o
+  // fuso local). prazoSem = só pedidos sem prazo. hasPrazo força os counts
+  // pro caminho legado (a RPC não filtra prazo).
+  const prazoDe = searchParams.get("prazo_de");
+  const prazoAte = searchParams.get("prazo_ate");
+  const prazoSem = searchParams.get("prazo_sem") === "1";
+  const hasPrazoFilter = !!(prazoDe || prazoAte || prazoSem);
 
   if (statusFilters.length > 0 && statusFilters.some((s) => !VALID_STATUSES.includes(s))) {
     return NextResponse.json(
@@ -146,6 +153,19 @@ export async function GET(request: NextRequest) {
       return q.or(parts.join(","));
     }
 
+    // Aplica o filtro de prazo de envio a qualquer query (lista + counts).
+    function applyPrazoFilter<T extends {
+      gte: (col: string, v: string) => T;
+      lt: (col: string, v: string) => T;
+      is: (col: string, v: null) => T;
+    }>(q: T): T {
+      if (prazoSem) return q.is("prazo_envio", null);
+      let out = q;
+      if (prazoDe) out = out.gte("prazo_envio", prazoDe);
+      if (prazoAte) out = out.lt("prazo_envio", prazoAte);
+      return out;
+    }
+
     // 1. Counts — antes 9 HEAD-counts paralelos, agora 1 RPC (wms_separacao_counts).
     // aguardando_compra skips separacao_galpao_id — filtered by supplier destination instead (post-filter)
     // legacyCounts() é o caminho antigo, intacto — usado só no fallback se a RPC falhar.
@@ -161,18 +181,20 @@ export async function GET(request: NextRequest) {
           else if (empresaIds.length > 1) q = q.in("empresa_origem_id", empresaIds);
           if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
           q = applyBuscaFilter(q);
+          q = applyPrazoFilter(q);
           if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
           return q;
         }),
       );
     }
 
-    // RPC de counts só aceita 1 empresa. Com multi-empresa, força o caminho
-    // legado (9 HEAD-counts com `.in`) reusando o fallback já existente.
-    const countsRpcPromise = multiEmpresa
+    // RPC de counts só aceita 1 empresa e não filtra prazo. Com multi-empresa
+    // ou filtro de prazo, força o caminho legado (9 HEAD-counts) reusando o
+    // fallback já existente.
+    const countsRpcPromise = multiEmpresa || hasPrazoFilter
       ? Promise.resolve({
           data: null,
-          error: { message: "multi-empresa: usar legacy counts" },
+          error: { message: "multi-empresa/prazo: usar legacy counts" },
         })
       : supabase.rpc("wms_separacao_counts", {
           p_galpao_id: activeGalpaoId ?? null,
@@ -225,6 +247,7 @@ export async function GET(request: NextRequest) {
       pedidosQuery = pedidosQuery.in("status_separacao", statusFilters);
     }
     pedidosQuery = applyBuscaFilter(pedidosQuery);
+    pedidosQuery = applyPrazoFilter(pedidosQuery);
     if (tagFilter) {
       pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
     }
@@ -251,10 +274,21 @@ export async function GET(request: NextRequest) {
     // 1d. For aguardando_compra badge count: fetch pedido IDs + item SKUs
     // to filter by supplier destination. Runs only when a galpão is active.
     async function fetchOcItems() {
-      const { data: ocPedidos } = await supabase
+      // Aplica os MESMOS filtros do toolbar (busca/empresa/marketplace/tag/
+      // prazo) ao count de Compras — aguardando_compra ignora galpão (é
+      // filtrado por fornecedor depois). Sem isso o badge "Compras" ficava
+      // estático, fora de sincronia com a busca/filtros.
+      let ocQ = supabase
         .from("siso_pedidos")
         .select("id")
         .eq("status_separacao", "aguardando_compra");
+      if (empresaIds.length === 1) ocQ = ocQ.eq("empresa_origem_id", empresaIds[0]);
+      else if (empresaIds.length > 1) ocQ = ocQ.in("empresa_origem_id", empresaIds);
+      if (marketplaceFilter) ocQ = ocQ.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      ocQ = applyBuscaFilter(ocQ);
+      ocQ = applyPrazoFilter(ocQ);
+      if (tagFilter) ocQ = ocQ.contains("separacao_tags", [tagFilter]);
+      const { data: ocPedidos } = await ocQ;
       if (!ocPedidos?.length) return [];
       const { data: items } = await supabase
         .from("siso_pedido_itens")

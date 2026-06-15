@@ -302,24 +302,25 @@ function fmtPrazo(iso: string | null | undefined): string | null {
   return `${dd}/${mm} ${hh}:${mi}`;
 }
 
-/** Filtro client-side por prazo de envio. Presets operacionais de SLA. */
-function matchPrazo(iso: string | null | undefined, filtro: string): boolean {
-  if (!filtro) return true;
-  if (filtro === "sem") return !iso;
-  if (!iso) return false;
-  const prazo = new Date(iso);
-  if (isNaN(prazo.getTime())) return false;
+/**
+ * Converte o preset de prazo num range [de, ate) — calculado no cliente p/
+ * respeitar o fuso local. O server filtra lista E counts com esse range
+ * (por isso os contadores do cabeçalho seguem o filtro).
+ */
+function prazoRange(preset: string): { de?: string; ate?: string; sem?: boolean } {
+  if (!preset) return {};
+  if (preset === "sem") return { sem: true };
   const now = new Date();
   const hoje0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const amanha0 = new Date(hoje0); amanha0.setDate(amanha0.getDate() + 1);
   const depois0 = new Date(hoje0); depois0.setDate(depois0.getDate() + 2);
-  const seteDias = new Date(hoje0); seteDias.setDate(seteDias.getDate() + 7);
-  switch (filtro) {
-    case "atrasado": return prazo < now;                              // deadline já passou
-    case "hoje": return prazo >= hoje0 && prazo < amanha0;
-    case "amanha": return prazo >= amanha0 && prazo < depois0;
-    case "7dias": return prazo >= hoje0 && prazo < seteDias;
-    default: return true;
+  const sete0 = new Date(hoje0); sete0.setDate(sete0.getDate() + 7);
+  switch (preset) {
+    case "atrasado": return { ate: now.toISOString() };                       // venceu
+    case "hoje": return { de: hoje0.toISOString(), ate: amanha0.toISOString() };
+    case "amanha": return { de: amanha0.toISOString(), ate: depois0.toISOString() };
+    case "7dias": return { de: hoje0.toISOString(), ate: sete0.toISOString() };
+    default: return {};
   }
 }
 
@@ -579,10 +580,18 @@ export default function WmsSeparacaoPage() {
         marketplace,
         tagFilter,
         empresaFilter,
+        prazoFilter,
         sort,
       ],
       queryFn: async () => {
-        const r = await sisoFetch(`/api/wms/separacao?${queryString}`);
+        // Range de prazo calculado fresco a cada fetch (mantém "atrasado"
+        // atual no refetch sem mudar a queryKey toda hora).
+        const params = new URLSearchParams(queryString);
+        const pr = prazoRange(prazoFilter);
+        if (pr.sem) params.set("prazo_sem", "1");
+        if (pr.de) params.set("prazo_de", pr.de);
+        if (pr.ate) params.set("prazo_ate", pr.ate);
+        const r = await sisoFetch(`/api/wms/separacao?${params.toString()}`);
         if (!r.ok) {
           const b = (await r.json().catch(() => ({}))) as { error?: string };
           throw new Error(b.error || `HTTP ${r.status}`);
@@ -629,19 +638,14 @@ export default function WmsSeparacaoPage() {
   const galpoesAll = data?.galpoes ?? [];
   const empresasAll = data?.empresas ?? [];
 
-  // Filtros client-side: prazo de envio (todas as tabs) + fornecedor
-  // (só aguardando_compra). A lista não é paginada, então filtrar aqui
-  // mantém contador/seleção/ações coerentes com o que aparece.
+  // Filtro client-side de fornecedor (só na tab aguardando_compra). Prazo,
+  // empresa, busca etc. são server-side (afetam também os counts do cabeçalho).
   const pedidos = useMemo(() => {
-    let out = pedidosRaw;
-    if (prazoFilter) out = out.filter((p) => matchPrazo(p.prazo_envio, prazoFilter));
-    if (tab === "aguardando_compra" && fornecedor) {
-      out = out.filter((p) =>
-        p.compra_stats?.itens?.some((it) => it.fornecedor_oc === fornecedor),
-      );
-    }
-    return out;
-  }, [pedidosRaw, tab, fornecedor, prazoFilter]);
+    if (tab !== "aguardando_compra" || !fornecedor) return pedidosRaw;
+    return pedidosRaw.filter((p) =>
+      p.compra_stats?.itens?.some((it) => it.fornecedor_oc === fornecedor),
+    );
+  }, [pedidosRaw, tab, fornecedor]);
 
   const fornecedorOpts = useMemo(() => {
     if (tab !== "aguardando_compra") return [] as string[];

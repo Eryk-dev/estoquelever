@@ -25,6 +25,10 @@ import { registrarEvento } from "./historico-service";
 import { kickWorker } from "./execution-worker";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { criarMarcadoresPedido } from "./tiny-api";
+import {
+  getActiveMlConnectionForEmpresa,
+  getMlShipmentSla,
+} from "./ml-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
@@ -769,6 +773,36 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
             error: msg,
           });
         }
+      }
+    })();
+  }
+
+  // 5c. Enrich: prazo de despacho (SLA) do Mercado Livre. O Tiny já gravou
+  //     `prazo_envio` com só o DIA (23:59:59); o ML traz a HORA exata do
+  //     limite de despacho via /shipments/{id}/sla → sobrescreve quando
+  //     disponível. Fire-and-forget: falha mantém o valor do Tiny.
+  if (pedido.nomeEcommerce === "Mercado Livre" && pedido.idPedidoEcommerce) {
+    const orderIdMl = pedido.idPedidoEcommerce;
+    void (async () => {
+      try {
+        const connId = await getActiveMlConnectionForEmpresa(empresaOrigemId);
+        if (!connId) return; // empresa sem conexão ML vinculada
+        const sla = await getMlShipmentSla(connId, orderIdMl);
+        if (!sla?.expectedDate) return;
+        await sb
+          .from("siso_pedidos")
+          .update({ prazo_envio: sla.expectedDate })
+          .eq("id", pedido.id);
+        logger.info("processor.wms", "prazo_envio atualizado via ML SLA", {
+          pedidoId: pedido.id,
+          shipmentId: sla.shipmentId,
+          expectedDate: sla.expectedDate,
+        });
+      } catch (err) {
+        logger.warn("processor.wms", "falha no enrich de prazo_envio (ML)", {
+          pedidoId: pedido.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     })();
   }

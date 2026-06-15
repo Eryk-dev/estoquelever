@@ -124,6 +124,10 @@ vi.mock("./wms/reservas", () => ({
 vi.mock("./tiny-api", () => ({
   criarMarcadoresPedido: vi.fn(async () => undefined),
 }));
+vi.mock("./ml-api", () => ({
+  getActiveMlConnectionForEmpresa: vi.fn(async () => null),
+  getMlShipmentSla: vi.fn(async () => null),
+}));
 vi.mock("./tiny-oauth", () => ({
   getValidTokenByEmpresa: vi.fn(async () => ({ token: "tok-1" })),
 }));

@@ -6,6 +6,7 @@
  * refresh do token e tentando de novo.
  */
 import { ML_API_BASE, getValidMlToken } from "./ml-oauth";
+import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import {
   isMlDisabled,
@@ -280,6 +281,87 @@ export async function getMlItemsDetails(
     });
   }
   return out;
+}
+
+// ─── Prazo de despacho (SLA) por pedido ─────────────────────────────
+
+interface MlOrderShippingRef {
+  shipping?: { id?: number | null } | null;
+}
+
+interface MlShipmentSla {
+  status?: string | null;
+  /** Prazo LIMITE de despacho (ship-by), ISO8601 com offset. Ex.: "2026-06-16T16:00:00-03:00". */
+  expected_date?: string | null;
+  service?: string | null;
+  last_updated?: string | null;
+}
+
+export interface MlShipmentSlaResult {
+  shipmentId: number;
+  /** Prazo limite de despacho (ISO8601) ou null se o envio não expõe SLA. */
+  expectedDate: string | null;
+  status: string | null;
+}
+
+/**
+ * Resolve a conexão ML ATIVA vinculada a uma empresa (1:1 via empresa_id).
+ * Retorna null se a empresa não tem conexão ML vinculada/ativa.
+ */
+export async function getActiveMlConnectionForEmpresa(
+  empresaId: string,
+): Promise<string | null> {
+  const sb = createServiceClient();
+  const { data } = await sb
+    .from("siso_ml_connections")
+    .select("id")
+    .eq("empresa_id", empresaId)
+    .eq("ativo", true)
+    .limit(1)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+/**
+ * Busca o prazo de despacho (SLA) de um pedido ML.
+ *
+ * Cadeia: GET /orders/{orderId} → shipping.id → GET /shipments/{id}/sla.
+ * O `expected_date` do SLA é a data+hora LIMITE de despacho ("você deve
+ * despachar até") — mais preciso que o `dataEnvio` do Tiny (que traz só o
+ * dia). Retorna null se não houver shipment ou se o envio não expõe SLA
+ * (alguns tipos de frete não têm — não é erro fatal).
+ */
+export async function getMlShipmentSla(
+  connectionId: string,
+  orderId: string,
+): Promise<MlShipmentSlaResult | null> {
+  if (isMlDisabled()) return null;
+
+  const order = await mlFetch<MlOrderShippingRef>(
+    connectionId,
+    `/orders/${orderId}`,
+  );
+  const shipmentId = order.shipping?.id;
+  if (!shipmentId) return null;
+
+  let expectedDate: string | null = null;
+  let status: string | null = null;
+  try {
+    const sla = await mlFetch<MlShipmentSla>(
+      connectionId,
+      `/shipments/${shipmentId}/sla`,
+    );
+    expectedDate = sla.expected_date ?? null;
+    status = sla.status ?? null;
+  } catch (err) {
+    // 404/sem-SLA é esperado p/ alguns fretes — degrada sem quebrar.
+    logger.info("ml-api", "shipment sem SLA disponível", {
+      connectionId,
+      shipmentId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return { shipmentId, expectedDate, status };
 }
 
 // ─── Test connection ────────────────────────────────────────────────

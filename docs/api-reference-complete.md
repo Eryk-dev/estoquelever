@@ -5261,6 +5261,12 @@ Equivalentes do cluster cross presentes em `siso_produtos`, com `tier_qualidade`
 
 Curadoria do par (normalizado `sku_a < sku_b`) em `siso_equivalencias_verificadas`. DELETE volta o par a "não curado".
 
+### POST /api/wms/cross/produtos/[sku]/cross-ref
+
+**Auth:** `produtos.editar` · **Body:** `{ sku_alvo }`
+
+Adiciona manualmente um SKU como cross-reference e JÁ aprova o par, numa chamada (evita estado parcial link-sem-curadoria): sinca o `sku_alvo` no catálogo cross se faltar (lazy fetch Tiny, 404/503 se indisponível) → cria link manual em `siso_produto_links` (tolera 23505 se já linkado) → upsert do par como `verificado` em `siso_equivalencias_verificadas`. Só curadoria — não mexe na regra de tier da troca (`regraTroca` segue exigindo tiers iguais pra auto-troca).
+
 ### POST /api/wms/cross/produtos/[sku]/tier
 
 **Auth:** `produtos.editar` · **Body:** `{ tier: 'original'|'primeira_linha'|'segunda_linha'|null }`

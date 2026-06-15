@@ -200,6 +200,29 @@ export default function WmsCrossDetalhePage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const addCrossRefMut = useMutation({
+    mutationFn: async (skuAlvo: string) => {
+      const r = await sisoFetch(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/cross-ref`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sku_alvo: skuAlvo }),
+        },
+      );
+      const json = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+      return json;
+    },
+    onSuccess: () => {
+      toast.success("Cross-ref adicionado e par aprovado");
+      queryClient.invalidateQueries({
+        queryKey: ["wms-cross-equivalentes-rapidos", sku],
+      });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const refetchTinyMut = useMutation({
     mutationFn: async () => {
       const r = await sisoFetch(
@@ -307,6 +330,7 @@ export default function WmsCrossDetalhePage() {
   });
 
   const [novoOem, setNovoOem] = useState("");
+  const [novoCrossSku, setNovoCrossSku] = useState("");
   const [novoVeic, setNovoVeic] = useState({
     marca: "",
     modelo: "",
@@ -585,6 +609,32 @@ export default function WmsCrossDetalhePage() {
 
       {/* Equivalências (curadoria) */}
       <h2 className="wms-sec-h">Equivalências (curadoria) ({equivalentes.length})</h2>
+      {podeEditar && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <input
+            className="wms-input wms-mono"
+            placeholder="Cole SKU de cross-reference (já cai aprovado)..."
+            value={novoCrossSku}
+            onChange={(e) => setNovoCrossSku(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && novoCrossSku.trim()) {
+                addCrossRefMut.mutate(novoCrossSku.trim());
+                setNovoCrossSku("");
+              }
+            }}
+          />
+          <button
+            className="wms-btn wms-btn-primary"
+            disabled={!novoCrossSku.trim() || addCrossRefMut.isPending}
+            onClick={() => {
+              addCrossRefMut.mutate(novoCrossSku.trim());
+              setNovoCrossSku("");
+            }}
+          >
+            <Icon name="plus" size={11} /> Adicionar cross-ref
+          </button>
+        </div>
+      )}
       <div className="wms-tbl" style={{ marginBottom: 24 }}>
         <table>
           <thead>

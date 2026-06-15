@@ -113,7 +113,7 @@ interface SeparacaoPedido {
 interface SeparacaoResponse {
   counts: Record<StatusServer, number>;
   pedidos: SeparacaoPedido[];
-  empresas: { id: string; nome: string }[]; // ignorado (D4)
+  empresas: { id: string; nome: string }[]; // usado no filtro de empresa
   galpoes: { id: string; nome: string }[];
 }
 
@@ -287,6 +287,7 @@ export default function WmsSeparacaoPage() {
   const tagFilter = searchParams?.get("tag") ?? "";
   const sort = searchParams?.get("sort") ?? "data_pedido";
   const fornecedor = searchParams?.get("fornecedor") ?? "";
+  const empresaFilter = searchParams?.get("empresa") ?? "";
 
   // Realtime: auto-refresh quando outros operadores mudam status (paridade legado)
   useRealtimeSeparacao();
@@ -365,9 +366,10 @@ export default function WmsSeparacaoPage() {
     if (busca) params.set("busca", busca);
     if (marketplace) params.set("marketplace", marketplace);
     if (tagFilter) params.set("tag", tagFilter);
+    if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
     if (sort && sort !== "data_pedido") params.set("sort", sort);
     return params.toString();
-  }, [tab, busca, marketplace, tagFilter, sort]);
+  }, [tab, busca, marketplace, tagFilter, empresaFilter, sort]);
 
   const { data, isLoading, isError, error, refetch } =
     useQuery<SeparacaoResponse>({
@@ -378,6 +380,7 @@ export default function WmsSeparacaoPage() {
         busca,
         marketplace,
         tagFilter,
+        empresaFilter,
         sort,
       ],
       queryFn: async () => {
@@ -426,6 +429,7 @@ export default function WmsSeparacaoPage() {
 
   const pedidosRaw = data?.pedidos ?? [];
   const galpoesAll = data?.galpoes ?? [];
+  const empresasAll = data?.empresas ?? [];
 
   // Filtro client-side de fornecedor (só na tab aguardando_compra).
   const pedidos = useMemo(() => {
@@ -817,6 +821,22 @@ export default function WmsSeparacaoPage() {
             </option>
           ))}
         </select>
+
+        {empresasAll.length > 0 && (
+          <select
+            className="wms-select"
+            value={empresaFilter}
+            onChange={(e) => updateParam("empresa", e.target.value)}
+            style={{ width: 180 }}
+          >
+            <option value="">Todas empresas</option>
+            {empresasAll.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.nome}
+              </option>
+            ))}
+          </select>
+        )}
 
         <select
           className="wms-select"

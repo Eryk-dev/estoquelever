@@ -113,6 +113,13 @@ function WmsEmbalagemPage() {
   // Pedidos concluídos durante esta sessão (mantém visíveis mesmo
   // após o GET parar de retorná-los, pra permitir reimprimir).
   const completedIdsRef = useRef<Set<string>>(new Set());
+  // Pedido do último bip — sobe pro topo, expandido e destacado, pra o
+  // operador ver na hora o que ainda falta bipar pra completar.
+  const [lastScan, setLastScan] = useState<{
+    pedidoId: string;
+    sku: string;
+  } | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   // ─── Query: pedidos ─────────────────────────────────────────────
   const pedidosQueryKey = useMemo(
@@ -267,7 +274,7 @@ function WmsEmbalagemPage() {
         }
         return (await r.json()) as BiparResult;
       },
-      onSuccess: (data) => {
+      onSuccess: (data, sku) => {
         if (data.pedido_completo) {
           completedIdsRef.current.add(data.pedido_id);
           const etiq = data.etiqueta_status;
@@ -296,15 +303,18 @@ function WmsEmbalagemPage() {
             });
             toast.success("Pedido embalado");
           }
-          // Expande automaticamente o pedido recém-concluído pra mostrar
-          // o botão Reimprimir sem precisar clicar.
-          setExpanded((prev) => new Set(prev).add(data.pedido_id));
         } else {
           setScanFeedback({
             text: `Bipado (${data.quantidade_bipada})`,
             tone: "neutral",
           });
         }
+        // Sobe o pedido bipado pro topo, expandido e destacado — o
+        // operador vê na hora o que ainda falta pra completar (e, quando
+        // concluído, o card abre já mostrando o botão Reimprimir).
+        setLastScan({ pedidoId: data.pedido_id, sku });
+        setExpanded((prev) => new Set(prev).add(data.pedido_id));
+        setHighlightId(data.pedido_id);
         queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
         queryClient.invalidateQueries({ queryKey: itemsQueryKey });
       },
@@ -492,6 +502,13 @@ function WmsEmbalagemPage() {
     return () => clearTimeout(id);
   }, [scanFeedback]);
 
+  // Apaga o destaque do pedido bipado após 2s (ele continua no topo).
+  useEffect(() => {
+    if (!highlightId) return;
+    const id = setTimeout(() => setHighlightId(null), 2_000);
+    return () => clearTimeout(id);
+  }, [highlightId]);
+
   // TODO: redirecionar char prints globais pro input do HandheldScan.
   // Por ora confiamos no autoFocus + refoco no pending change do componente,
   // que é suficiente pra fluxo de pistola com cursor já posicionado.
@@ -517,13 +534,27 @@ function WmsEmbalagemPage() {
     );
   }
 
-  const activos = pedidosOrdenados.filter(
+  const activosTodos = pedidosOrdenados.filter(
     (p) =>
       !completedIdsRef.current.has(p.id) && p.status_separacao !== "embalado",
   );
-  const concluidos = pedidosOrdenados.filter(
+  const concluidosTodos = pedidosOrdenados.filter(
     (p) =>
       completedIdsRef.current.has(p.id) || p.status_separacao === "embalado",
+  );
+
+  // Pedido do último bip — destacado no topo; sai das listas de baixo pra
+  // não duplicar. Estado "completo" vem dos buckets (sem reler o ref).
+  const focoPedido = lastScan
+    ? pedidosOrdenados.find((p) => p.id === lastScan.pedidoId)
+    : undefined;
+  const focoCompleted = focoPedido
+    ? concluidosTodos.some((p) => p.id === focoPedido.id)
+    : false;
+
+  const activos = activosTodos.filter((p) => p.id !== lastScan?.pedidoId);
+  const concluidos = concluidosTodos.filter(
+    (p) => p.id !== lastScan?.pedidoId,
   );
 
   const subtitle = `${pedidoIds.length} pedido(s) · ${
@@ -627,6 +658,35 @@ function WmsEmbalagemPage() {
         </div>
       )}
 
+      {/* Pedido do último bip — sobe pro topo, expandido, pra ver o que falta */}
+      {focoPedido && (
+        <div style={{ marginTop: 4, marginBottom: 14 }}>
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 11, marginBottom: 4 }}
+          >
+            Último bip: <span className="wms-mono">{lastScan?.sku}</span>
+          </div>
+          <PedidoCardWms
+            pedido={focoPedido}
+            items={itemsByPedido.get(focoPedido.id) ?? []}
+            itemsLoading={itemsQuery.isLoading}
+            completed={focoCompleted}
+            expanded
+            highlighted={highlightId === focoPedido.id}
+            qtyPegaPorItem={qtyPegaPorItem}
+            onToggle={() => toggleExpand(focoPedido.id)}
+            onConfirm={(item, delta) => confirmarMut.mutate({ item, delta })}
+            onFecharComoParcial={fecharComoParcial}
+            onReimprimir={() => reimprimirMut.mutate(focoPedido.id)}
+            reimprimindo={
+              reimprimirMut.isPending &&
+              reimprimirMut.variables === focoPedido.id
+            }
+          />
+        </div>
+      )}
+
       {/* Pedidos ativos */}
       {activos.length > 0 && (
         <div style={{ marginTop: 4 }}>
@@ -684,7 +744,8 @@ function WmsEmbalagemPage() {
 
       {!pedidosQuery.isLoading &&
         activos.length === 0 &&
-        concluidos.length === 0 && (
+        concluidos.length === 0 &&
+        !focoPedido && (
           <div className="wms-empty-block">
             <h3>Nada por aqui</h3>
             <p>
@@ -705,6 +766,7 @@ function PedidoCardWms({
   itemsLoading,
   completed,
   expanded,
+  highlighted,
   qtyPegaPorItem,
   onToggle,
   onConfirm,
@@ -717,6 +779,7 @@ function PedidoCardWms({
   itemsLoading: boolean;
   completed: boolean;
   expanded: boolean;
+  highlighted?: boolean;
   qtyPegaPorItem: Map<string, number>;
   onToggle: () => void;
   onConfirm: (item: PedidoItem, delta: number) => void;
@@ -732,7 +795,15 @@ function PedidoCardWms({
     : "";
 
   return (
-    <div className="wms-pcard" style={{ marginBottom: 10 }}>
+    <div
+      className="wms-pcard"
+      style={{
+        marginBottom: 10,
+        ...(highlighted && {
+          boxShadow: "0 0 0 2px var(--wms-c-info)",
+        }),
+      }}
+    >
       <div
         className="wms-pcard-h"
         onClick={onToggle}

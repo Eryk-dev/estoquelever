@@ -840,3 +840,121 @@ export async function listarEquivalentesComEstoque(args: {
     }))
     .sort((a, b) => b.disponivel_galpao - a.disponivel_galpao);
 }
+
+export interface SaldoGalpaoEquivalente {
+  galpao_id: string;
+  galpao_nome: string;
+  disponivel: number;
+}
+
+export interface EquivalenteParaCompra {
+  produto_id: string;
+  sku: string;
+  descricao: string | null;
+  imagem_url: string | null;
+  tier_qualidade: TierQualidade | null;
+  par_verificacao: ParVerificacao;
+  /** Saldo disponível por galpão (todos os galpões). Informativo. */
+  saldo_por_galpao: SaldoGalpaoEquivalente[];
+  total_disponivel: number;
+}
+
+/**
+ * Equivalentes do SKU (cluster cross) pro fluxo de COMPRAS (decisão Eryk
+ * 2026-06-14). Diferente de `listarEquivalentesComEstoque` (separação):
+ *  - lista TODOS os equivalentes do catálogo WMS, COM ou SEM saldo (o comprador
+ *    pode trocar mesmo sem estoque pra comprar o equivalente de outro fornecedor);
+ *  - traz o saldo disponível por galpão de CADA equivalente (locs picking+overstock,
+ *    mesma definição de sellable do roteamento) — só informativo;
+ *  - não recebe galpão nem reserva nada.
+ */
+export async function listarEquivalentesParaCompra(args: {
+  sku: string;
+}): Promise<EquivalenteParaCompra[]> {
+  const sb = createServiceClient();
+
+  const { data: cluster, error } = await sb.rpc("siso_cross_cluster_skus", {
+    p_sku: args.sku,
+  });
+  if (error || !cluster || cluster.length === 0) return [];
+  const skus = (cluster as Array<{ sku: string } | string>).map((r) =>
+    typeof r === "string" ? r : r.sku,
+  );
+
+  const { data: produtos } = await sb
+    .from("siso_produtos")
+    .select("id, sku, descricao, imagem_url, tier_qualidade")
+    .in("sku", skus)
+    .eq("ativo", true);
+  if (!produtos || produtos.length === 0) return [];
+
+  const produtoIds = produtos.map((p) => p.id as string);
+
+  // Saldo por galpão (todos os galpões), locs picking+overstock (sellable).
+  const { data: estoque } = await sb
+    .from("siso_estoque")
+    .select("produto_id, galpao_id, disponivel, siso_localizacoes!inner(tipo)")
+    .in("produto_id", produtoIds)
+    .in("siso_localizacoes.tipo", ["picking", "overstock"])
+    .gt("disponivel", 0);
+
+  const porProduto = new Map<string, Map<string, number>>();
+  const galpaoIds = new Set<string>();
+  for (const e of estoque ?? []) {
+    const pid = e.produto_id as string;
+    const gid = e.galpao_id as string;
+    galpaoIds.add(gid);
+    if (!porProduto.has(pid)) porProduto.set(pid, new Map());
+    const m = porProduto.get(pid)!;
+    m.set(gid, (m.get(gid) ?? 0) + Number(e.disponivel ?? 0));
+  }
+
+  const nomePorGalpao = new Map<string, string>();
+  if (galpaoIds.size > 0) {
+    const { data: galpoes } = await sb
+      .from("siso_galpoes")
+      .select("id, nome")
+      .in("id", [...galpaoIds]);
+    for (const g of galpoes ?? [])
+      nomePorGalpao.set(g.id as string, g.nome as string);
+  }
+
+  // Curadoria dos pares (sku base ↔ cada equivalente)
+  const { data: pares } = await sb
+    .from("siso_equivalencias_verificadas")
+    .select("sku_a, sku_b, status")
+    .or(`sku_a.eq.${args.sku},sku_b.eq.${args.sku}`);
+  const parPorSku = new Map<string, ParVerificacao>();
+  for (const p of pares ?? []) {
+    const outro = p.sku_a === args.sku ? (p.sku_b as string) : (p.sku_a as string);
+    parPorSku.set(outro, p.status as ParVerificacao);
+  }
+
+  return produtos
+    .filter((p) => p.sku !== args.sku)
+    .map((p) => {
+      const m = porProduto.get(p.id as string) ?? new Map<string, number>();
+      const saldo_por_galpao: SaldoGalpaoEquivalente[] = [...m.entries()]
+        .map(([galpao_id, disponivel]) => ({
+          galpao_id,
+          galpao_nome: nomePorGalpao.get(galpao_id) ?? "",
+          disponivel,
+        }))
+        .sort((a, b) => b.disponivel - a.disponivel);
+      const total_disponivel = saldo_por_galpao.reduce(
+        (s, g) => s + g.disponivel,
+        0,
+      );
+      return {
+        produto_id: p.id as string,
+        sku: p.sku as string,
+        descricao: (p.descricao as string | null) ?? null,
+        imagem_url: (p.imagem_url as string | null) ?? null,
+        tier_qualidade: (p.tier_qualidade as TierQualidade | null) ?? null,
+        par_verificacao: parPorSku.get(p.sku as string) ?? null,
+        saldo_por_galpao,
+        total_disponivel,
+      };
+    })
+    .sort((a, b) => b.total_disponivel - a.total_disponivel);
+}

@@ -24,7 +24,7 @@ import {
   fmtDateTime,
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
-import { EquivalentesPanel } from "@/components/wms/trocas/equivalentes-panel";
+import { EquivalentesCompra } from "@/components/wms/compras/equivalentes-compra";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
@@ -317,7 +317,6 @@ function TabComprar({
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // Lazy: painel de equivalentes só monta quando o comprador expande a linha.
-  const [equivExpanded, setEquivExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [qtyOverrides, setQtyOverrides] = useState<Map<string, number>>(
     new Map(),
@@ -945,12 +944,6 @@ function TabComprar({
                     const qty =
                       qtyOverrides.get(itemKey) ?? item.quantidade_necessaria;
                     const itemAg = agingClass(item.aging_dias);
-                    // Troca de equivalência: galpão sugerido do fornecedor +
-                    // primeiro pedido_item_id vinculado. Sem galpão → sem painel.
-                    const equivGalpaoId = f.galpao_sugerido_id;
-                    const equivPedidoItemId = item.pedidos[0]?.item_id ?? null;
-                    const podeVerEquiv = !!equivGalpaoId && !!equivPedidoItemId;
-                    const equivAberto = equivExpanded.has(itemKey);
                     return (
                       <div key={item.sku}>
                       <div
@@ -1071,29 +1064,15 @@ function TabComprar({
                               .join(", ")}
                             {item.pedidos.length > 3 ? "…" : ""}
                           </div>
-                          {podeVerEquiv && (
-                            <button
-                              type="button"
-                              className="wms-btn wms-btn-sm wms-btn-ghost"
-                              style={{ marginTop: 6 }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setEquivExpanded((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(itemKey)) next.delete(itemKey);
-                                  else next.add(itemKey);
-                                  return next;
-                                });
-                              }}
-                              title="Usar peça equivalente em estoque em vez de comprar"
-                            >
-                              <Icon
-                                name={equivAberto ? "chevron-u" : "chevron-d"}
-                                size={10}
-                              />
-                              Equivalentes
-                            </button>
-                          )}
+                          <EquivalentesCompra
+                            sku={item.sku}
+                            itemIds={item.pedidos.map((p) => p.item_id)}
+                            onAplicado={() =>
+                              queryClient.invalidateQueries({
+                                queryKey: ["wms-compras"],
+                              })
+                            }
+                          />
                         </div>
                         <div
                           className="wms-tar wms-mono"
@@ -1121,25 +1100,6 @@ function TabComprar({
                           onTrocarFornecedor={() => onTrocarFornecedor(item)}
                         />
                       </div>
-                      {podeVerEquiv && equivAberto && (
-                        <div
-                          style={{ padding: "4px 12px 10px 42px" }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <EquivalentesPanel
-                            sku={item.sku}
-                            galpaoId={equivGalpaoId!}
-                            pedidoItemId={equivPedidoItemId!}
-                            origem="compras"
-                            onTrocaCriada={() => {
-                              // Auto ou pendente: revalida a lista de compras.
-                              queryClient.invalidateQueries({
-                                queryKey: ["wms-compras"],
-                              });
-                            }}
-                          />
-                        </div>
-                      )}
                       </div>
                     );
                   })}

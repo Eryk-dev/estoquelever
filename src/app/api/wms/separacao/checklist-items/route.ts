@@ -81,6 +81,7 @@ export async function GET(request: NextRequest) {
         descricao: string | null;
         gtin: string | null;
         imagem_url: string | null;
+        imagens: string[];
       }
     >();
     if (substitutoIds.length > 0) {
@@ -95,7 +96,33 @@ export async function GET(request: NextRequest) {
           descricao: (s.descricao as string | null) ?? null,
           gtin: (s.gtin as string | null) ?? null,
           imagem_url: imgs[0] ?? null,
+          imagens: imgs,
         });
+      }
+    }
+
+    // Galeria completa (todas as fotos) por SKU — siso_produtos.imagens.
+    // O item normal só carrega imagem_url (capa); aqui buscamos o array todo
+    // pra galeria do lightbox. Substitutos já trazem imagens via substitutoMap.
+    const skusGaleria = Array.from(
+      new Set(
+        (items ?? [])
+          .filter((i) => !i.produto_wms_substituto_id)
+          .map((i) => i.sku)
+          .filter((x): x is string => !!x),
+      ),
+    );
+    const imagensPorSku = new Map<string, string[]>();
+    if (skusGaleria.length > 0) {
+      const { data: prods } = await supabase
+        .from("siso_produtos")
+        .select("sku, imagens")
+        .in("sku", skusGaleria);
+      for (const p of prods ?? []) {
+        imagensPorSku.set(
+          p.sku as string,
+          (p.imagens as string[] | null) ?? [],
+        );
       }
     }
     // SKU efetivo = o do substituto (peça física) quando há troca, senão o vendido.
@@ -405,6 +432,10 @@ export async function GET(request: NextRequest) {
         status: r.status,
         criado_em: r.criado_em,
       }));
+      const capaImagem = sub?.imagem_url ?? item.imagem_url ?? null;
+      const galeriaImagens = item.produto_wms_substituto_id
+        ? (sub?.imagens ?? [])
+        : (imagensPorSku.get(item.sku ?? "") ?? []);
       return {
         id: item.id,
         pedido_id: item.pedido_id,
@@ -418,7 +449,13 @@ export async function GET(request: NextRequest) {
         separacao_marcado_em: item.separacao_marcado_em,
         quantidade_bipada: item.quantidade_bipada ?? 0,
         bipado_completo: item.bipado_completo ?? false,
-        imagem_url: sub?.imagem_url ?? item.imagem_url ?? null,
+        imagem_url: capaImagem,
+        imagens:
+          galeriaImagens.length > 0
+            ? galeriaImagens
+            : capaImagem
+              ? [capaImagem]
+              : [],
         compra_status: item.compra_status ?? null,
         localizacao: live?.localizacao ?? null,
         saldo: live?.saldo ?? 0,

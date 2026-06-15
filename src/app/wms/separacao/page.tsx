@@ -2016,6 +2016,7 @@ interface ChecklistItem {
   quantidade_bipada: number;
   bipado_completo: boolean;
   imagem_url: string | null;
+  imagens: string[];
   compra_status: string | null;
   localizacao: string | null;
   saldo: number;
@@ -2118,6 +2119,7 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
                       {it.imagem_url ? (
                         <FotoProdutoZoom
                           src={it.imagem_url}
+                          imagens={it.imagens}
                           sku={it.sku}
                           descricao={it.descricao}
                           style={{

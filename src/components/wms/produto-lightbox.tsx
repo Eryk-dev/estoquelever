@@ -150,18 +150,23 @@ export function ProdutoLightbox({
  */
 export function FotoProdutoZoom({
   src,
+  imagens,
   sku,
   descricao,
   className,
   style,
 }: {
   src: string;
+  /** Galeria completa do produto (siso_produtos.imagens). Cai pra [src] se vazia. */
+  imagens?: string[] | null;
   sku?: string | null;
   descricao?: string | null;
   className?: string;
   style?: CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
+  const galeria = imagens && imagens.length > 0 ? imagens : [src];
+  const startIdx = Math.max(galeria.indexOf(src), 0);
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -178,7 +183,8 @@ export function FotoProdutoZoom({
       />
       {open && (
         <ProdutoLightbox
-          imagens={[src]}
+          imagens={galeria}
+          initialIndex={startIdx}
           sku={sku ?? undefined}
           descricao={descricao ?? undefined}
           onClose={() => setOpen(false)}

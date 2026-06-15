@@ -48,6 +48,7 @@ interface ChecklistItem {
   separacao_marcado_em: string | null;
   localizacao: string | null;
   imagem_url: string | null;
+  imagens: string[];
   empresa_origem_id: string | null;
   separacao_galpao_id: string | null;
   saldo: number;
@@ -78,6 +79,7 @@ interface ConsolidatedProduct {
   gtin: string | null;
   descricao: string;
   imagem_url: string | null;
+  imagens: string[];
   localizacao: string | null;
   empresa_origem_id: string | null;
   separacao_galpao_id: string | null;
@@ -202,6 +204,7 @@ function consolidar(items: ChecklistItem[]): {
         gtin: it.gtin,
         descricao: it.descricao,
         imagem_url: it.imagem_url,
+        imagens: it.imagens,
         localizacao: it.localizacao,
         empresa_origem_id: it.empresa_origem_id,
         separacao_galpao_id: it.separacao_galpao_id,
@@ -1547,6 +1550,7 @@ function ItemRow({
       {produto.imagem_url ? (
         <FotoProdutoZoom
           src={produto.imagem_url}
+          imagens={produto.imagens}
           sku={produto.sku}
           descricao={produto.descricao}
           className="wms-thumb wms-thumb-sm"
@@ -1699,6 +1703,7 @@ function ItemRowOC({
       {produto.imagem_url ? (
         <FotoProdutoZoom
           src={produto.imagem_url}
+          imagens={produto.imagens}
           sku={produto.sku}
           descricao={produto.descricao}
           className="wms-thumb wms-thumb-sm"
@@ -1904,6 +1909,7 @@ function RealocacaoRow({
       {item.imagem_url ? (
         <FotoProdutoZoom
           src={item.imagem_url}
+          imagens={item.imagens}
           sku={item.sku}
           descricao={item.descricao}
           className="wms-thumb wms-thumb-sm"

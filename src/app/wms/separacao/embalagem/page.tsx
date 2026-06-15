@@ -47,6 +47,7 @@ interface PedidoItem {
   bipado_completo: boolean;
   localizacao: string | null;
   imagem_url: string | null;
+  imagens: string[];
   quantidade_pega: number | null;
   separacao_parcial: boolean;
   realocacoes?: PedidoItemRealocacao[];
@@ -893,6 +894,7 @@ function ItemRow({
         {item.imagem_url ? (
           <FotoProdutoZoom
             src={item.imagem_url}
+            imagens={item.imagens}
             sku={item.sku}
             descricao={item.descricao}
             className="wms-thumb wms-thumb-md"

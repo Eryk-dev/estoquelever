@@ -21,6 +21,7 @@ interface ItemConferencia {
   descricao: string | null;
   quantidade_pedida: number;
   imagem_url: string | null;
+  imagens: string[];
 }
 
 interface PedidoBipado {
@@ -497,6 +498,7 @@ function ItensGrid({ itens }: { itens: ItemConferencia[] }) {
               {item.imagem_url ? (
                 <FotoProdutoZoom
                   src={item.imagem_url}
+                  imagens={item.imagens}
                   sku={item.sku}
                   descricao={item.descricao}
                 />

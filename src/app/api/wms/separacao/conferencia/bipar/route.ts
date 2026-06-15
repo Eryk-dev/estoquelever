@@ -35,6 +35,7 @@ interface ItemConferencia {
   descricao: string | null;
   quantidade_pedida: number;
   imagem_url: string | null;
+  imagens: string[];
 }
 
 export async function POST(request: NextRequest) {
@@ -179,16 +180,43 @@ export async function POST(request: NextRequest) {
       .from("siso_pedido_itens")
       .select("id, sku, gtin, descricao, quantidade_pedida, imagem_url, compra_status")
       .eq("pedido_id", pedido.id);
+
+    // Galeria completa por SKU (siso_produtos.imagens) — pra navegar todas as
+    // fotos no lightbox. O item só carrega a capa (imagem_url).
+    const skusConf = Array.from(
+      new Set(
+        (itens ?? []).map((i) => i.sku).filter((x): x is string => !!x),
+      ),
+    );
+    const imagensPorSku = new Map<string, string[]>();
+    if (skusConf.length > 0) {
+      const { data: prods } = await supabase
+        .from("siso_produtos")
+        .select("sku, imagens")
+        .in("sku", skusConf);
+      for (const p of prods ?? []) {
+        imagensPorSku.set(
+          p.sku as string,
+          (p.imagens as string[] | null) ?? [],
+        );
+      }
+    }
+
     const itensVisiveis: ItemConferencia[] = (itens ?? [])
       .filter((i) => i.compra_status !== "indisponivel" && i.compra_status !== "cancelado")
-      .map((i) => ({
-        id: i.id,
-        sku: i.sku,
-        gtin: i.gtin,
-        descricao: i.descricao,
-        quantidade_pedida: i.quantidade_pedida,
-        imagem_url: i.imagem_url ?? null,
-      }));
+      .map((i) => {
+        const capa = i.imagem_url ?? null;
+        const galeria = imagensPorSku.get(i.sku ?? "") ?? [];
+        return {
+          id: i.id,
+          sku: i.sku,
+          gtin: i.gtin,
+          descricao: i.descricao,
+          quantidade_pedida: i.quantidade_pedida,
+          imagem_url: capa,
+          imagens: galeria.length > 0 ? galeria : capa ? [capa] : [],
+        };
+      });
 
     // Nomes pros badges "embalado por X" / "conferido por Y"
     const usuarioIds = [pedido.embalado_real_por, pedido.conferido_por].filter(

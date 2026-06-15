@@ -325,11 +325,14 @@ export async function getActiveMlConnectionForEmpresa(
 /**
  * Busca o prazo de despacho (SLA) de um pedido ML.
  *
- * Cadeia: GET /orders/{orderId} → shipping.id → GET /shipments/{id}/sla.
- * O `expected_date` do SLA é a data+hora LIMITE de despacho ("você deve
- * despachar até") — mais preciso que o `dataEnvio` do Tiny (que traz só o
- * dia). Retorna null se não houver shipment ou se o envio não expõe SLA
- * (alguns tipos de frete não têm — não é erro fatal).
+ * O `id_pedido_ecommerce` que o Tiny envia pode ser um **order_id** OU um
+ * **pack_id** (carrinho com vários itens). Por isso resolve o shipment dos
+ * dois jeitos:
+ *   - GET /orders/{id}  → shipping.id           (pedido simples)
+ *   - GET /packs/{id}   → shipment.id           (carrinho; /orders dá 404)
+ * Depois: GET /shipments/{id}/sla → expected_date (hora LIMITE de despacho,
+ * mais preciso que o `dataEnvio` do Tiny, que traz só o dia). Retorna null
+ * se não houver shipment ou se o envio não expõe SLA (não é erro fatal).
  */
 export async function getMlShipmentSla(
   connectionId: string,
@@ -337,11 +340,30 @@ export async function getMlShipmentSla(
 ): Promise<MlShipmentSlaResult | null> {
   if (isMlDisabled()) return null;
 
-  const order = await mlFetch<MlOrderShippingRef>(
-    connectionId,
-    `/orders/${orderId}`,
-  );
-  const shipmentId = order.shipping?.id;
+  let shipmentId: number | null | undefined;
+  try {
+    const order = await mlFetch<MlOrderShippingRef>(
+      connectionId,
+      `/orders/${orderId}`,
+    );
+    shipmentId = order.shipping?.id;
+  } catch {
+    // /orders dá 404 quando o id é um pack_id (carrinho) — tenta /packs.
+    try {
+      const pack = await mlFetch<{ shipment?: { id?: number | null } | null }>(
+        connectionId,
+        `/packs/${orderId}`,
+      );
+      shipmentId = pack.shipment?.id;
+    } catch (err) {
+      logger.info("ml-api", "id não resolve como order nem pack", {
+        connectionId,
+        orderId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
   if (!shipmentId) return null;
 
   let expectedDate: string | null = null;

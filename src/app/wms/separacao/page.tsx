@@ -266,6 +266,19 @@ function getEcommerceAbbr(nome: string | null | undefined): string {
 
 // ─── Page ─────────────────────────────────────────────────────────────────
 
+/** dd/mm HH:MM:SS — timestamp com segundos (fmtDateTime corta no minuto). */
+function fmtHoraSeg(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${dd}/${mm} ${hh}:${mi}:${ss}`;
+}
+
 export default function WmsSeparacaoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1227,6 +1240,14 @@ export default function WmsSeparacaoPage() {
                   (p.status_separacao === "aguardando_separacao" ||
                     p.status_separacao === "em_separacao") &&
                   galpoesAll.filter((g) => g.id !== p.galpao_id).length > 0;
+                const podeReimprimir =
+                  p.status_separacao === "embalado" ||
+                  p.status_separacao === "conferido";
+                const reimprimindoEste =
+                  reimprimirMut.isPending &&
+                  (reimprimirMut.variables as string[] | undefined)?.includes(
+                    p.id,
+                  );
                 return (
                   <Fragment key={p.id}>
                   <tr
@@ -1371,6 +1392,17 @@ export default function WmsSeparacaoPage() {
                     </td>
                     <td className="wms-td-mute" style={{ fontSize: 11 }}>
                       {p.data_pedido ? fmtRelative(p.data_pedido) : "—"}
+                      {p.embalagem_concluida_em && (
+                        <div style={{ marginTop: 2 }} title="Embalado em">
+                          <span style={{ fontSize: 9.5 }}>emb </span>
+                          <span
+                            className="wms-mono"
+                            style={{ fontSize: 10.5, color: "var(--wms-c-fg-2)" }}
+                          >
+                            {fmtHoraSeg(p.embalagem_concluida_em)}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="wms-tar wms-mono">
                       {fmtNum(p.total_itens)}
@@ -1424,6 +1456,21 @@ export default function WmsSeparacaoPage() {
                           }
                           pending={encaminharMut.isPending}
                         />
+                      )}
+                      {podeReimprimir && (
+                        <button
+                          type="button"
+                          className="wms-btn-icon"
+                          title="Reimprimir etiqueta na sua impressora"
+                          onClick={() => reimprimirMut.mutate([p.id])}
+                          disabled={reimprimindoEste}
+                        >
+                          {reimprimindoEste ? (
+                            <Loader2 className="animate-spin" size={13} />
+                          ) : (
+                            <Icon name="printer" size={13} />
+                          )}
+                        </button>
                       )}
                     </td>
                   </tr>

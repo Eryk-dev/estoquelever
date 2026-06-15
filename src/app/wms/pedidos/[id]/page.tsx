@@ -25,6 +25,8 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { TimelinePedido } from "@/components/wms/vendas/timeline-pedido";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
+import { ProdutoCombo } from "@/components/wms/ui/modals";
+import type { Produto } from "@/lib/wms/types";
 import {
   EstoquePorGalpaoBar,
   DecisaoLabel,
@@ -53,6 +55,8 @@ interface DetalheEstoqueDeposito {
 interface DetalheItem {
   id: string;
   produto_id: number;
+  /** true quando produto_id=0 (item sem vínculo de produto no Tiny) — exige SKU manual */
+  requer_sku?: boolean;
   sku: string;
   descricao: string;
   quantidade: number;
@@ -127,6 +131,13 @@ interface PedidoDetalhe {
   separacao_iniciada_em: string | null;
   separacao_concluida_em: string | null;
   embalagem_concluida_em: string | null;
+  embalado_por_nome: string | null;
+  embalado_em: string | null;
+  embalado_real_por_nome: string | null;
+  embalado_real_em: string | null;
+  impressora_nome: string | null;
+  impressora_id: number | null;
+  etiqueta_impressa_em: string | null;
   etiqueta_status: string | null;
   etiqueta_url: string | null;
   agrupamento_expedicao_id: string | null;
@@ -547,6 +558,30 @@ export default function WmsPedidoDetalhePage() {
               : undefined
           }
         />
+        {(p.embalado_por_nome || p.embalado_real_por_nome) && (
+          <Kpi
+            label="Embalado por"
+            value={p.embalado_por_nome ?? p.embalado_real_por_nome ?? "—"}
+            sub={
+              p.embalado_em || p.embalado_real_em
+                ? `embalado ${formatRelativeTime(
+                    (p.embalado_em ?? p.embalado_real_em)!,
+                  )}`
+                : undefined
+            }
+          />
+        )}
+        {(p.impressora_nome || p.impressora_id) && (
+          <Kpi
+            label="Impressora"
+            value={p.impressora_nome ?? `#${p.impressora_id}`}
+            sub={
+              p.etiqueta_impressa_em
+                ? `impressa ${formatRelativeTime(p.etiqueta_impressa_em)}`
+                : undefined
+            }
+          />
+        )}
         {totalReservadoOrigem > 0 && (
           <Kpi
             label="Reserva"
@@ -704,6 +739,32 @@ function TabItens({
     descricao: string;
   } | null>(null);
 
+  // Definir SKU pra item sem produto vinculado (produto_id=0).
+  const queryClient = useQueryClient();
+  const [definirSku, setDefinirSku] = useState<{ itemId: string; descricao: string } | null>(
+    null,
+  );
+  const [produtoSel, setProdutoSel] = useState<Produto | null>(null);
+  const definirSkuMutation = useMutation({
+    mutationFn: async ({ itemId, sku }: { itemId: string; sku: string }) => {
+      const r = await sisoFetch(`/api/wms/pedidos/${pedido.id}/itens/${itemId}/definir-sku`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Falha ao definir SKU");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("SKU definido — pedido reprocessado");
+      setDefinirSku(null);
+      setProdutoSel(null);
+      queryClient.invalidateQueries({ queryKey: ["wms-pedido-detalhe", pedido.id] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao definir SKU"),
+  });
+
   return (
     <div className="wms-tbl">
       <table>
@@ -781,7 +842,22 @@ function TabItens({
                     />
                   )}
                 </td>
-                <td className="wms-mono">{item.sku}</td>
+                <td className="wms-mono">
+                  {item.requer_sku || Number(item.produto_id) === 0 ? (
+                    <button
+                      type="button"
+                      className="wms-badge wms-badge-warn"
+                      title="Item sem produto vinculado no Tiny — defina o SKU pra processar"
+                      onClick={() =>
+                        setDefinirSku({ itemId: item.id, descricao: item.descricao })
+                      }
+                    >
+                      <Icon name="alert" size={10} /> Definir SKU
+                    </button>
+                  ) : (
+                    item.sku
+                  )}
+                </td>
                 <td className="wms-td-desc" title={item.descricao}>
                   {item.descricao}
                 </td>
@@ -852,6 +928,71 @@ function TabItens({
           descricao={lightbox.descricao}
           onClose={() => setLightbox(null)}
         />
+      )}
+      {definirSku && (
+        <div
+          className="wms-md-overlay"
+          onClick={() => {
+            if (!definirSkuMutation.isPending) {
+              setDefinirSku(null);
+              setProdutoSel(null);
+            }
+          }}
+        >
+          <div
+            className="wms-md"
+            style={{ width: 520, maxWidth: "92vw" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="wms-md-hd">
+              <div>
+                <h3>Definir SKU do item</h3>
+                <p className="wms-td-mute" style={{ fontSize: 12.5 }}>
+                  Item sem produto vinculado no Tiny: <b>{definirSku.descricao || "—"}</b>.
+                  Escolha o produto correto — o pedido é reprocessado e roteado automaticamente.
+                </p>
+              </div>
+              <button
+                className="wms-btn-icon wms-btn-icon-lg"
+                onClick={() => {
+                  setDefinirSku(null);
+                  setProdutoSel(null);
+                }}
+                aria-label="Fechar"
+                disabled={definirSkuMutation.isPending}
+              >
+                <Icon name="x" />
+              </button>
+            </div>
+            <div className="wms-md-body">
+              <ProdutoCombo value={produtoSel} onChange={setProdutoSel} autoFocus />
+            </div>
+            <div className="wms-md-ft">
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                disabled={definirSkuMutation.isPending}
+                onClick={() => {
+                  setDefinirSku(null);
+                  setProdutoSel(null);
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                disabled={!produtoSel || definirSkuMutation.isPending}
+                onClick={() =>
+                  produtoSel &&
+                  definirSkuMutation.mutate({ itemId: definirSku.itemId, sku: produtoSel.sku })
+                }
+              >
+                {definirSkuMutation.isPending ? "Definindo…" : "Definir SKU"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -163,7 +163,7 @@ export async function buscarEImprimirEtiqueta(pedidoId: string, operadorOverride
     registrarEvento({
       pedidoId,
       evento: "etiqueta_impressa",
-      detalhes: { printerId: printer.printerId, cached: !!pedido.etiqueta_zpl },
+      detalhes: { printerId: printer.printerId, printerNome: printer.printerNome, cached: !!pedido.etiqueta_zpl },
     }).catch(() => {});
     logger.info(LOG_SOURCE, "Etiqueta ZPL impressa", {
       pedidoId,
@@ -259,7 +259,7 @@ export async function imprimirEtiquetaDireta(data: EtiquetaPreClaimed): Promise<
     registrarEvento({
       pedidoId: data.pedidoId,
       evento: "etiqueta_impressa",
-      detalhes: { printerId: printer.printerId, cached: !!pedido.etiqueta_zpl, directPath: true },
+      detalhes: { printerId: printer.printerId, printerNome: printer.printerNome, cached: !!pedido.etiqueta_zpl, directPath: true },
     }).catch(() => {});
     logger.info(LOG_SOURCE, "Etiqueta impressa (direta)", {
       pedidoId: data.pedidoId,

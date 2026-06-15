@@ -28,6 +28,7 @@ import { criarMarcadoresPedido } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
+import { ensureProdutoFromTiny } from "./wms/sync-tiny";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
 import {
   planejarTrocaRoteamento,
@@ -81,6 +82,54 @@ async function resolverItensWms(
   const wmsByTinyId = new Map<number, string>();
   for (const m of mappings ?? []) {
     wmsByTinyId.set(Number(m.tiny_produto_id), m.produto_id);
+  }
+
+  // Auto-provisionamento: itens com tiny_produto_id válido (>0) que ainda não
+  // existem em siso_produto_empresas são puxados do Tiny (GET /produtos/{id} via
+  // ensureProdutoFromTiny → cria siso_produtos + bridge + sincroniza todos os
+  // dados). Produto id=0 (sem vínculo Tiny) NÃO entra aqui — exige SKU manual
+  // na aba de pedidos. Falha no Tiny não derruba o webhook: o item segue sem
+  // mapeamento (pulado no roteamento, como antes).
+  const skuPorTiny = new Map<number, string>();
+  for (const it of pedido.itens) {
+    if (it.produto.id > 0 && it.produto.sku) skuPorTiny.set(it.produto.id, it.produto.sku);
+  }
+  const faltantes = Array.from(new Set(tinyIds)).filter(
+    (id) => id > 0 && !wmsByTinyId.has(id),
+  );
+  for (const tinyId of faltantes) {
+    const sku = skuPorTiny.get(tinyId);
+    if (!sku) continue; // sem SKU não há como criar/sincronizar
+    try {
+      const produtoId = await ensureProdutoFromTiny(sku, empresaOrigemId, tinyId);
+      wmsByTinyId.set(tinyId, produtoId);
+      logger.info("processor.wms", "produto auto-provisionado do Tiny", {
+        pedidoId: pedido.id,
+        tinyProdutoId: tinyId,
+        sku,
+      });
+    } catch (e) {
+      logger.warn("processor.wms", "falha auto-provisionando produto do Tiny (segue sem mapeamento)", {
+        pedidoId: pedido.id,
+        tinyProdutoId: tinyId,
+        sku,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  // Recupera criações parciais: ensureProdutoFromTiny pode ter criado o produto
+  // + bridge e falhado depois no sync (Tiny intermitente) — nesse caso o mapeamento
+  // já existe no banco mas não entrou no Map acima. Re-consulta os que sobraram.
+  const aindaFaltam = faltantes.filter((id) => !wmsByTinyId.has(id));
+  if (aindaFaltam.length > 0) {
+    const { data: recheck } = await sb
+      .from("siso_produto_empresas")
+      .select("produto_id, tiny_produto_id")
+      .eq("empresa_id", empresaOrigemId)
+      .in("tiny_produto_id", aindaFaltam);
+    for (const m of recheck ?? []) {
+      wmsByTinyId.set(Number(m.tiny_produto_id), m.produto_id);
+    }
   }
 
   const produtoIds = Array.from(wmsByTinyId.values());
@@ -440,6 +489,19 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     });
   }
 
+  // 1b. Itens com produto_id=0 (sem vínculo de produto no Tiny — ex. anúncio
+  //     sem produto, "VERIFICAR LADO"): não dá pra resolver nem auto-provisionar.
+  //     O pedido é PARQUEADO como pendente (sem auto-OC, sem reservas, sem job)
+  //     com marcador REQUER_SKU até um operador definir o SKU na aba de pedidos
+  //     (POST .../itens/[itemId]/definir-sku → reprocessa nativo).
+  const requerSku = itensResolvidos.some((i) => i.tinyProdutoId === 0);
+  if (requerSku) {
+    logger.warn("processor.wms", "pedido com item sem produto vinculado (id 0) — exige SKU manual", {
+      pedidoId: pedido.id,
+      skus: itensResolvidos.filter((i) => i.tinyProdutoId === 0).map((i) => i.sku),
+    });
+  }
+
   // 3. Roteamento via algoritmo WMS
   const itensPraRotear = itensResolvidos
     .filter((i) => i.produtoIdWms)
@@ -539,8 +601,13 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     }
   }
 
-  const isAuto = sugestao === "propria";
-  const autoEnfileiraOc = sugestao === "oc";
+  // requerSku bloqueia qualquer auto-aprovação: o pedido fica pendente até o SKU
+  // ser definido. O motivo exibido prioriza a pendência de SKU.
+  if (requerSku) {
+    motivo = "Item sem produto vinculado (id 0) — defina o SKU na aba de pedidos";
+  }
+  const isAuto = sugestao === "propria" && !requerSku;
+  const autoEnfileiraOc = sugestao === "oc" && !requerSku;
   const autoAprova = isAuto || autoEnfileiraOc;
   const status = autoAprova ? "executando" : "pendente";
   const tipoResolucao = autoAprova ? "auto" : null;
@@ -667,9 +734,11 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       status_separacao: isAuto ? "aguardando_nf" : null,
       prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
       processado_em: null,
-      marcadores: isAuto
-        ? [galpaoOrigemNome, "LVR"]
-        : (autoEnfileiraOc ? ["OC", galpaoOrigemNome, "LVR"] : ["LVR"]),
+      marcadores: requerSku
+        ? ["REQUER_SKU", "LVR"]
+        : isAuto
+          ? [galpaoOrigemNome, "LVR"]
+          : (autoEnfileiraOc ? ["OC", galpaoOrigemNome, "LVR"] : ["LVR"]),
       payload_original: pedido,
       vendedor_id: vendedorIdFinal,
       vendedor_nome: vendedorNomeFinal,
@@ -751,7 +820,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // 7b. Troca de equivalência: aplica os swaps nos itens recém-upsertados —
   //     auto vira troca 'aprovada' + substituto no item; com aprovação vira
   //     troca 'pendente' + R forte (reserva_troca) no substituto.
-  if (planoTroca) {
+  if (planoTroca && !requerSku) {
     await aplicarTrocasRoteamento({
       pedidoId: pedido.id,
       galpaoId: planoGalpao,
@@ -767,7 +836,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    swaps AUTO (substituto), no galpão do plano (casa ou remoto). Swaps
   //    pendentes já têm R reserva_troca (7b). Remoto força tudo pendente → sem
   //    auto-swaps aqui.
-  if (planoTroca) {
+  if (requerSku) {
+    // Pedido parqueado aguardando SKU — não cria reservas. Serão criadas no
+    // reprocessamento nativo após o operador definir o SKU.
+  } else if (planoTroca) {
     const autoSwaps = trocaRemota ? [] : planoTroca.swaps.filter((s) => s.auto);
     const rotasTroca = [
       ...planoTroca.cobertosOriginal.map((c) => ({

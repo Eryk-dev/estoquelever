@@ -589,6 +589,44 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/wms/pedidos/[id]/itens/[itemId]/definir-sku
+
+**File:** `src/app/api/wms/pedidos/[id]/itens/[itemId]/definir-sku/route.ts` (2026-06-14)
+
+**Purpose:** Resolve um item que veio do Tiny SEM vínculo de produto (`siso_pedido_itens.produto_id=0` — ex. anúncio sem produto, "VERIFICAR LADO"). O operador informa o SKU; o endpoint vincula o produto WMS, corrige o `payload_original` e REPROCESSA o pedido nativo (roteamento + reservas + fila) via `processWebhookWms`. Pedidos com item id=0 ficam parqueados como `pendente` com marcador `REQUER_SKU` até isso acontecer.
+
+**Auth:** X-Session-Id (required) + `userCan(session, "pedidos.aprovar")`
+
+**Request Body:**
+```json
+{ "sku": "string" }
+```
+
+**Response (200):**
+```json
+{ "ok": true, "sku": "EW162.60562", "tiny_produto_id": 923951335, "pedido": { "status": "executando", "sugestao": "propria" } }
+```
+
+**Response (401):** `{ "error": "sessao_invalida" }`
+**Response (403):** `{ "error": "Acesso negado" }`
+**Response (400):** `{ "error": "Envie { sku: string }" }`
+**Response (404):** item/pedido/SKU não encontrado
+**Response (409):** item já tem produto vinculado · item em separação · pedido com estoque lançado
+**Response (422):** pedido sem empresa/galpão/payload · SKU sem produto no Tiny da empresa
+**Response (502):** falha ao resolver o produto no Tiny
+
+**Business Logic:**
+- Guards: `produto_id=0`, sem picking (`quantidade_pega=0`, `!separacao_parcial`), `!estoque_lancado`
+- Resolve `siso_produtos` por SKU; resolve `tiny_produto_id` da empresa via `siso_produto_empresas`; se faltar, busca no Tiny (`buscarProdutoPorSku`) e auto-provisiona (`ensureProdutoFromTiny`)
+- Patch do item id=0 no `siso_pedidos.payload_original` (id/sku/descricao)
+- Reprocessa via `processWebhookWms(payloadCorrigido)` — guarda de idempotência passa (pedido `pendente`, sem job)
+
+**Side Effects:**
+- UPDATE `siso_pedidos.payload_original`; possível INSERT em `siso_produtos`/`siso_produto_empresas` (auto-provision)
+- Reprocessamento completo: upsert pedido/itens, reservas (R), fila `lancar_estoque`
+
+---
+
 ### POST /api/wms/pedidos/[id]/liberar-reservas
 
 **File:** `src/app/api/wms/pedidos/[id]/liberar-reservas/route.ts` (Fix-Final A T25 — 2026-05-27)
@@ -748,6 +786,13 @@ This is the **authoritative, comprehensive reference** for every API route in th
   "separacao_iniciada_em": "ISO datetime | null",
   "separacao_concluida_em": "ISO datetime | null",
   "embalagem_concluida_em": "ISO datetime | null",
+  "embalado_por_nome": "string | null (nome do embalagem_operador_id — quem embalou/emitiu a etiqueta)",
+  "embalado_em": "ISO datetime | null (= embalagem_concluida_em)",
+  "embalado_real_por_nome": "string | null (nome de embalado_real_por — embalador físico via conferência, se houve)",
+  "embalado_real_em": "ISO datetime | null",
+  "impressora_nome": "string | null (nome amigável da impressora do último evento etiqueta_impressa)",
+  "impressora_id": "number | null (printer_id PrintNode; usado quando o nome não foi gravado)",
+  "etiqueta_impressa_em": "ISO datetime | null (criado_em do último evento etiqueta_impressa)",
   "etiqueta_status": "string | null",
   "etiqueta_url": "string | null",
   "agrupamento_expedicao_id": "string | null",

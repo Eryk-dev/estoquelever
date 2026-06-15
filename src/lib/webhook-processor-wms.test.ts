@@ -139,6 +139,10 @@ vi.mock("./execution-worker", () => ({
 vi.mock("./sku-fornecedor", () => ({
   getFornecedorBySku: vi.fn(() => null),
 }));
+const ensureProdutoFromTinyMock = vi.fn(async () => "uuid-new");
+vi.mock("./wms/sync-tiny", () => ({
+  ensureProdutoFromTiny: (...args: unknown[]) => ensureProdutoFromTinyMock(...args),
+}));
 
 import { processWebhookWms } from "./webhook-processor-wms";
 import type { TinyPedidoDetalhe } from "./tiny-api";
@@ -220,5 +224,40 @@ describe("processWebhookWms — idempotência de re-entrega (regressão #51426)"
     expect(res.status).toBe("executando");
     expect(rec.pedidoUpserts).toHaveLength(1);
     expect(rec.jobInserts).toHaveLength(1);
+  });
+});
+
+describe("processWebhookWms — produto não vinculado / auto-provisionamento", () => {
+  it("item com produto_id=0 → pedido PENDENTE com marcador REQUER_SKU, sem job e sem reserva", async () => {
+    const pedidoZero = {
+      ...PEDIDO,
+      itens: [{ produto: { id: 0, sku: "VERIFICAR LADO", descricao: "Farol" }, quantidade: 1 }],
+    } as unknown as TinyPedidoDetalhe;
+
+    const res = await processWebhookWms({ ...input(), pedido: pedidoZero });
+
+    expect(res.status).toBe("pendente");
+    expect(rec.jobInserts).toHaveLength(0); // não auto-aprova OC
+    expect(rec.pedidoUpserts).toHaveLength(1);
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      status: "pendente",
+      decisao_final: null,
+      status_separacao: null,
+      marcadores: ["REQUER_SKU", "LVR"],
+    });
+    // id=0 não dispara auto-provisionamento (não há como buscar no Tiny)
+    expect(ensureProdutoFromTinyMock).not.toHaveBeenCalled();
+  });
+
+  it("item com tiny_produto_id válido mas sem mapeamento → auto-provisiona do Tiny", async () => {
+    state.mappings = []; // id 111 não mapeado ainda
+    state.produtos = [
+      { id: "uuid-new", sku: "ACD003", descricao: "Barra", gtin: null, imagem_url: null, eh_kit: false },
+    ];
+
+    const res = await processWebhookWms(input());
+
+    expect(ensureProdutoFromTinyMock).toHaveBeenCalledWith("ACD003", "emp-1", 111);
+    expect(res.status).toBe("executando"); // resolvido → roteia propria normal
   });
 });

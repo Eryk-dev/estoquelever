@@ -156,6 +156,9 @@ export async function GET(
       return {
         id: item.id,
         produto_id: item.produto_id,
+        // produto_id=0 → item sem vínculo de produto no Tiny: exige SKU manual
+        // antes do pedido poder ser processado (ver REQUER_SKU no processor).
+        requer_sku: Number(item.produto_id) === 0,
         sku: item.sku ?? "",
         descricao: item.descricao ?? "",
         quantidade: item.quantidade_pedida ?? 0,
@@ -192,6 +195,44 @@ export async function GET(
       criado_em: o.criado_em,
     }));
 
+    // Embalagem & etiqueta (aba embalados): quem embalou/emitiu a etiqueta +
+    // em qual impressora. Resolve UUIDs → nomes; a impressora vem do último
+    // evento etiqueta_impressa (printerNome novo; printerId p/ impressões
+    // anteriores ao enriquecimento do evento).
+    const embaladorIds = Array.from(
+      new Set(
+        [pedido.embalagem_operador_id, pedido.embalado_real_por].filter(
+          (v): v is string => !!v,
+        ),
+      ),
+    );
+    const nomesEmbalador = new Map<string, string>();
+    if (embaladorIds.length > 0) {
+      const { data: us } = await supabase
+        .from("siso_usuarios")
+        .select("id, nome")
+        .in("id", embaladorIds);
+      for (const u of (us ?? []) as { id: string; nome: string }[]) {
+        nomesEmbalador.set(u.id, u.nome);
+      }
+    }
+
+    let impressoraNome: string | null = null;
+    let impressoraId: number | null = null;
+    let etiquetaImpressaEm: string | null = null;
+    for (let i = historico.length - 1; i >= 0; i--) {
+      if (historico[i].evento !== "etiqueta_impressa") continue;
+      const d = (historico[i].detalhes ?? {}) as {
+        printerNome?: unknown;
+        printerId?: unknown;
+      };
+      impressoraNome =
+        typeof d.printerNome === "string" && d.printerNome ? d.printerNome : null;
+      impressoraId = typeof d.printerId === "number" ? d.printerId : null;
+      etiquetaImpressaEm = historico[i].criado_em;
+      break;
+    }
+
     // Build response
     const result = {
       id: pedido.id,
@@ -220,6 +261,17 @@ export async function GET(
       separacao_iniciada_em: pedido.separacao_iniciada_em ?? null,
       separacao_concluida_em: pedido.separacao_concluida_em ?? null,
       embalagem_concluida_em: pedido.embalagem_concluida_em ?? null,
+      embalado_por_nome: pedido.embalagem_operador_id
+        ? (nomesEmbalador.get(pedido.embalagem_operador_id) ?? null)
+        : null,
+      embalado_em: pedido.embalagem_concluida_em ?? null,
+      embalado_real_por_nome: pedido.embalado_real_por
+        ? (nomesEmbalador.get(pedido.embalado_real_por) ?? null)
+        : null,
+      embalado_real_em: pedido.embalado_real_em ?? null,
+      impressora_nome: impressoraNome,
+      impressora_id: impressoraId,
+      etiqueta_impressa_em: etiquetaImpressaEm,
       etiqueta_status: pedido.etiqueta_status ?? null,
       etiqueta_url: pedido.etiqueta_url ?? null,
       agrupamento_expedicao_id: pedido.agrupamento_expedicao_id ?? null,

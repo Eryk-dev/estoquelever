@@ -1357,7 +1357,7 @@ Caminhos suportados:
 
 **File:** `src/app/api/wms/separacao/bipar-checklist/route.ts`
 
-**Purpose:** Scan a barcode during wave-picking to auto-check matching items across given pedidos.
+**Purpose:** Scan a barcode during wave-picking to auto-check matching items across given pedidos. Match: SKU do item → GTIN do item → **fallback troca de equivalência** (resolve `siso_produtos` por sku→gtin e casa via `produto_wms_substituto_id`, pra aceitar bipar a peça FÍSICA do substituto). O pick resolve o produto efetivo (substituto) na baixa.
 
 **Auth:** None
 
@@ -1700,7 +1700,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 
 **File:** `src/app/api/wms/separacao/checklist-items/route.ts`
 
-**Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa.
+**Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa. **Troca de equivalência:** quando o item tem `produto_wms_substituto_id`, `localizacao`/`saldo`/`disponivel` refletem a peça FÍSICA (substituto) e a resposta inclui `sku_substituto`/`descricao_substituto`/`gtin_substituto`/`produto_wms_substituto_id` (o `sku`/`gtin`/`descricao` seguem sendo os do SKU vendido — D3).
 
 **Auth:** X-Session-Id (required)
 
@@ -5186,7 +5186,11 @@ Solicita troca: valida estado do item/pedido, aplica `regraTroca` (mesmo tier + 
 
 **Auth:** `vendas.aprovar_troca`
 
-Libera R vivas do produto VENDIDO do item (precedente P2-CMP-04) + RPC `wms_aprovar_troca_atomico` (converte reserva, aplica substituto no item). Se a troca nasceu no ROTEAMENTO e era a última pendente do pedido → aprova o pedido como `propria` via `wms_aprovar_e_enfileirar` + kickWorker (resposta inclui `pedido_aprovado`).
+Libera R vivas do produto VENDIDO do item (precedente P2-CMP-04) + RPC `wms_aprovar_troca_atomico` (converte reserva, aplica substituto no item). Liberação do pedido por origem:
+- **ROTEAMENTO** (última pendente do pedido `troca_equivalente`) → aprova o pedido como `propria` via `wms_aprovar_e_enfileirar` + kickWorker.
+- **compras / separação / painel** → se o pedido está parado em OC (`aguardando_compra`/`validacao_oc`) e todos os itens já cobertos, `liberarPedidoPosTrocaOC` tira o item de compras e transiciona OC → `propria` (`aguardando_separacao` se NF já emitida, senão `aguardando_nf`) + enfileira `lancar_estoque` + kickWorker (espelha reconciliador-oc). No-op se o pedido já está em separação.
+
+Resposta inclui `pedido_aprovado` (true quando o pedido foi aprovado/liberado).
 
 ### POST /api/wms/trocas/[id]/rejeitar
 

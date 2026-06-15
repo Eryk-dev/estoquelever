@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { aprovarTroca, TrocaError } from "@/lib/wms/trocas-equivalencia";
-import { aprovarPedidoPosTroca } from "@/lib/wms/trocas-roteamento";
+import { aprovarPedidoPosTroca, liberarPedidoPosTrocaOC } from "@/lib/wms/trocas-roteamento";
 import { trocaErrorResponse } from "@/lib/wms/trocas-api";
 
 /**
@@ -44,6 +44,26 @@ export async function POST(
       pedidoAprovado = r.aprovado;
       if (!r.aprovado) {
         logger.info("api.wms.trocas.aprovar", "pedido não aprovado pós-troca", {
+          troca_id: id,
+          pedido_id: troca.pedido_id,
+          motivo: r.motivo,
+        });
+      }
+    } else {
+      // Troca origem compras/separação/painel: se o pedido está parado em OC
+      // (aguardando_compra/validacao_oc), tira o item de compras e libera o
+      // pedido de volta pro fluxo (self-gate em estado OC; no-op se já em
+      // separação). Sem isso o pedido fica preso na OC com o substituto
+      // reservado (bug: troca aprovava mas pedido não saía da OC).
+      const r = await liberarPedidoPosTrocaOC({
+        pedidoId: String(troca.pedido_id),
+        pedidoItemId: troca.pedido_item_id,
+        usuarioId: session.id,
+        usuarioNome: session.nome,
+      });
+      pedidoAprovado = r.liberado;
+      if (!r.liberado) {
+        logger.info("api.wms.trocas.aprovar", "pedido não liberado pós-troca", {
           troca_id: id,
           pedido_id: troca.pedido_id,
           motivo: r.motivo,

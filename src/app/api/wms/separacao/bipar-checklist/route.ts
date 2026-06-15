@@ -60,6 +60,31 @@ export async function POST(request: NextRequest) {
       fetchError = gtinResult.error;
     }
 
+    // Fallback troca de equivalência: o operador bipa o código da peça FÍSICA
+    // (substituto). O item mantém o SKU vendido (D3), então casa via
+    // produto_wms_substituto_id — resolve o substituto por SKU, depois GTIN.
+    if (!fetchError && (!items || items.length === 0)) {
+      let subProd = (
+        await supabase.from("siso_produtos").select("id").eq("sku", sku)
+      ).data;
+      if (!subProd || subProd.length === 0) {
+        subProd = (
+          await supabase.from("siso_produtos").select("id").eq("gtin", sku)
+        ).data;
+      }
+      const subIds = (subProd ?? []).map((p) => p.id as string);
+      if (subIds.length > 0) {
+        const subResult = await supabase
+          .from("siso_pedido_itens")
+          .select("id, pedido_id, sku, gtin, compra_status")
+          .in("pedido_id", pedido_ids)
+          .eq("separacao_marcado", false)
+          .in("produto_wms_substituto_id", subIds);
+        items = subResult.data;
+        fetchError = subResult.error;
+      }
+    }
+
     if (fetchError) {
       logger.error("separacao-bipar-checklist", "Failed to fetch items", {
         error: fetchError.message,

@@ -42,6 +42,13 @@ interface ChecklistItem {
   sku: string;
   gtin: string | null;
   descricao: string;
+  // Troca de equivalência: peça FÍSICA a pegar (null quando não há troca). O
+  // item mantém o SKU vendido (sku/gtin/descricao); loc/saldo já refletem o
+  // substituto. Origem: checklist-items.
+  produto_wms_substituto_id: string | null;
+  sku_substituto: string | null;
+  descricao_substituto: string | null;
+  gtin_substituto: string | null;
   quantidade: number;
   separacao_marcado: boolean;
   separacao_marcado_em: string | null;
@@ -76,6 +83,8 @@ interface ConsolidatedProduct {
   sku: string;
   gtin: string | null;
   descricao: string;
+  /** Troca de equivalência: SKU da peça física a pegar (null se não há troca). */
+  sku_substituto: string | null;
   imagem_url: string | null;
   localizacao: string | null;
   empresa_origem_id: string | null;
@@ -200,6 +209,7 @@ function consolidar(items: ChecklistItem[]): {
         sku: it.sku,
         gtin: it.gtin,
         descricao: it.descricao,
+        sku_substituto: it.sku_substituto ?? null,
         imagem_url: it.imagem_url,
         localizacao: it.localizacao,
         empresa_origem_id: it.empresa_origem_id,
@@ -1584,6 +1594,15 @@ function ItemRow({
               · GTIN {produto.gtin}
             </span>
           )}
+          {produto.sku_substituto && (
+            <span
+              className="wms-badge wms-badge-warn"
+              style={{ fontSize: 10, fontWeight: 800 }}
+              title={`Troca de equivalência: o pedido pede ${produto.sku}, mas pegue a peça FÍSICA ${produto.sku_substituto}`}
+            >
+              ⇄ PEGUE {produto.sku_substituto}
+            </span>
+          )}
           {isPego && (
             <span
               className="wms-badge wms-badge-ok"
@@ -1739,6 +1758,15 @@ function ItemRowOC({
           >
             OC
           </span>
+          {produto.sku_substituto && (
+            <span
+              className="wms-badge wms-badge-warn"
+              style={{ fontSize: 10, fontWeight: 800 }}
+              title={`Troca de equivalência: pegue a peça FÍSICA ${produto.sku_substituto}`}
+            >
+              ⇄ PEGUE {produto.sku_substituto}
+            </span>
+          )}
         </div>
         <div
           className="wms-td-mute"

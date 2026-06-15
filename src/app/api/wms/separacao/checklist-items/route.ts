@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status, quantidade_pega, separacao_parcial, parcial_motivo, parcial_em",
+        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status, quantidade_pega, separacao_parcial, parcial_motivo, parcial_em, produto_wms_substituto_id",
       )
       .in("pedido_id", pedido_ids);
 
@@ -62,6 +62,42 @@ export async function GET(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    // 1b. Troca de equivalência: resolve o produto FÍSICO (substituto) pra exibir
+    //     SKU/descrição/loc/saldo da peça que o operador realmente pega — o item
+    //     mantém o SKU vendido (D3), mas o estoque vive no substituto.
+    const substitutoIds = Array.from(
+      new Set(
+        (items ?? [])
+          .map((i) => i.produto_wms_substituto_id)
+          .filter((x): x is string => !!x),
+      ),
+    );
+    const substitutoMap = new Map<
+      string,
+      { sku: string; descricao: string | null; gtin: string | null }
+    >();
+    if (substitutoIds.length > 0) {
+      const { data: subs } = await supabase
+        .from("siso_produtos")
+        .select("id, sku, descricao, gtin")
+        .in("id", substitutoIds);
+      for (const s of subs ?? []) {
+        substitutoMap.set(s.id as string, {
+          sku: s.sku as string,
+          descricao: (s.descricao as string | null) ?? null,
+          gtin: (s.gtin as string | null) ?? null,
+        });
+      }
+    }
+    // SKU efetivo = o do substituto (peça física) quando há troca, senão o vendido.
+    const skuEfetivo = (item: {
+      sku: string | null;
+      produto_wms_substituto_id?: string | null;
+    }): string | null =>
+      item.produto_wms_substituto_id
+        ? (substitutoMap.get(item.produto_wms_substituto_id)?.sku ?? item.sku)
+        : item.sku;
 
     // 2. Fetch empresa_origem_id + separacao_galpao_id per pedido
     const { data: pedidos } = await supabase
@@ -129,7 +165,9 @@ export async function GET(request: NextRequest) {
     //    Loc exibida = a com maior saldo individual no galpão.
     const sepGalpaoIds = Array.from(new Set(pedidoSepGalpaoMap.values()));
     const skus = Array.from(
-      new Set((items ?? []).map((i) => i.sku).filter((s): s is string => !!s)),
+      new Set(
+        (items ?? []).map((i) => skuEfetivo(i)).filter((s): s is string => !!s),
+      ),
     );
 
     // Map: `${galpao_id}:${sku}` -> { localizacao_codigo, saldo, disponivel }
@@ -270,8 +308,12 @@ export async function GET(request: NextRequest) {
     const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;
       const sepGalpaoId = pedidoSepGalpaoMap.get(item.pedido_id) ?? null;
-      const liveKey = sepGalpaoId && item.sku ? `${sepGalpaoId}:${item.sku}` : null;
+      const efetivo = skuEfetivo(item);
+      const liveKey = sepGalpaoId && efetivo ? `${sepGalpaoId}:${efetivo}` : null;
       const live = liveKey ? liveStockMap.get(liveKey) : undefined;
+      const sub = item.produto_wms_substituto_id
+        ? (substitutoMap.get(item.produto_wms_substituto_id) ?? null)
+        : null;
 
       const itemRealocacoes = (realocacoesPorItem.get(String(item.id)) ?? []).map((r) => ({
         id: r.id,
@@ -294,6 +336,12 @@ export async function GET(request: NextRequest) {
         sku: item.sku,
         gtin: item.gtin,
         descricao: item.descricao,
+        // Troca de equivalência: peça FÍSICA a pegar (null se não há troca).
+        // O loc/saldo abaixo já refletem o substituto quando presente.
+        produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
+        sku_substituto: sub?.sku ?? null,
+        descricao_substituto: sub?.descricao ?? null,
+        gtin_substituto: sub?.gtin ?? null,
         quantidade: item.quantidade_pedida,
         separacao_marcado: item.separacao_marcado ?? false,
         separacao_marcado_em: item.separacao_marcado_em,

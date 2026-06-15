@@ -481,6 +481,155 @@ export async function aprovarPedidoPosTroca(args: {
 }
 
 /**
+ * Libera o PEDIDO de volta pro fluxo de separação depois que uma troca origem
+ * compras/separação/painel foi aprovada (plano cross-troca, §3 "Compras":
+ * "Aprovada → item sai de compras, volta pro fluxo de separação com substituto").
+ *
+ * A R do substituto já existe como reserva_pedido (RPC wms_aprovar_troca_atomico).
+ * Aqui só tira o item da fila de compras e — se TODOS os itens já estão cobertos
+ * — transiciona o pedido OC → propria, espelhando reconciliador-oc
+ * (transicionarPedidoSeReconciliado): mesmo gate de estado, mesma transição,
+ * mesmo enfileiramento idempotente de lancar_estoque.
+ *
+ * Só age quando o pedido está em estado OC (aguardando_compra/validacao_oc) —
+ * troca aprovada em pedido já em separação é no-op (o produto efetivo resolve no
+ * pick). Chamado pela ROTA de aprovar troca (não pelo serviço — evita ciclo).
+ */
+export async function liberarPedidoPosTrocaOC(args: {
+  pedidoId: string;
+  pedidoItemId: number;
+  usuarioId: string;
+  usuarioNome?: string | null;
+}): Promise<{ liberado: boolean; motivo?: string }> {
+  const sb = createServiceClient();
+  const source = "wms.trocas-roteamento";
+
+  // 1. Item sai da fila de compras (substituto já reservado). Clamp em
+  //    compra_status pendente = idempotente sob re-aprovação / corrida; se já
+  //    foi limpo, segue mesmo assim pra reavaliar a transição.
+  const { error: itemErr } = await sb
+    .from("siso_pedido_itens")
+    .update({
+      compra_status: null,
+      ordem_compra_id: null,
+      compra_quantidade_solicitada: 0,
+      compra_solicitada_em: null,
+      fornecedor_oc: null,
+    })
+    .eq("id", args.pedidoItemId)
+    .in("compra_status", ["aguardando_compra", "oc_pendente", "comprado"]);
+  if (itemErr) {
+    logger.logError({
+      error: itemErr,
+      source,
+      message: `Falha ao tirar item ${args.pedidoItemId} da fila de compras pós-troca`,
+      category: "database",
+    });
+    return { liberado: false, motivo: itemErr.message };
+  }
+
+  const { data: pedido } = await sb
+    .from("siso_pedidos")
+    .select(
+      "id, status, status_separacao, empresa_origem_id, separacao_galpao_id, nota_fiscal_id, chave_acesso_nf",
+    )
+    .eq("id", args.pedidoId)
+    .maybeSingle();
+  if (!pedido) return { liberado: false, motivo: "pedido não encontrado" };
+
+  // 2. Só estados OC reentram no portão de NF (igual reconciliador-oc I2).
+  const statusSep = pedido.status_separacao as string | null;
+  if (statusSep !== "aguardando_compra" && statusSep !== "validacao_oc") {
+    return { liberado: false, motivo: `pedido em '${statusSep}' (não-OC) — nada a liberar` };
+  }
+
+  // 3. Todos os itens cobertos? Se algum ainda está em compra, espera.
+  const { data: itens } = await sb
+    .from("siso_pedido_itens")
+    .select("compra_status")
+    .eq("pedido_id", args.pedidoId);
+  const aindaEmCompra = (itens ?? []).some(
+    (i) =>
+      i.compra_status === "aguardando_compra" ||
+      i.compra_status === "oc_pendente" ||
+      i.compra_status === "comprado",
+  );
+  if (aindaEmCompra) return { liberado: false, motivo: "ainda há itens em compra" };
+
+  // 4. OC → propria + reentra no portão de NF. O filtro .in torna a transição
+  //    condicional: corrida que já avançou → 0 linhas → não enfileira (anti
+  //    lancar_estoque órfão / regressão). NF já emitida (portado) →
+  //    aguardando_separacao; senão aguardando_nf (worker gera a NF).
+  const { data: transRows, error: updErr } = await sb
+    .from("siso_pedidos")
+    .update({
+      decisao_final: "propria",
+      status: "executando",
+      status_separacao:
+        pedido.nota_fiscal_id && pedido.chave_acesso_nf
+          ? "aguardando_separacao"
+          : "aguardando_nf",
+    })
+    .eq("id", args.pedidoId)
+    .in("status_separacao", ["aguardando_compra", "validacao_oc"])
+    .select("id");
+  if (updErr) {
+    logger.logError({
+      error: updErr,
+      source,
+      message: `Falha ao transicionar pedido ${args.pedidoId} OC → propria pós-troca`,
+      category: "database",
+    });
+    return { liberado: false, motivo: updErr.message };
+  }
+  if (!transRows || transRows.length === 0) {
+    return { liberado: false, motivo: "corrida — pedido já avançou" };
+  }
+
+  // 5. Enfileira lancar_estoque (idempotente via uq_fila_release_pedido).
+  const { data: jobExistente } = await sb
+    .from("siso_fila_execucao")
+    .select("id")
+    .eq("pedido_id", args.pedidoId)
+    .eq("tipo", "lancar_estoque")
+    .in("status", ["pendente", "executando"])
+    .maybeSingle();
+  if (!jobExistente) {
+    const { error: insErr } = await sb.from("siso_fila_execucao").insert({
+      pedido_id: args.pedidoId,
+      tipo: "lancar_estoque",
+      empresa_id: pedido.empresa_origem_id,
+      decisao: "propria",
+    });
+    if (insErr && insErr.code !== "23505") {
+      logger.logError({
+        error: insErr,
+        source,
+        message: `Falha ao enfileirar lancar_estoque pós-troca pedido ${args.pedidoId}`,
+        category: "database",
+      });
+    }
+  }
+
+  registrarEvento({
+    pedidoId: args.pedidoId,
+    evento: "aprovado",
+    usuarioId: args.usuarioId,
+    usuarioNome: args.usuarioNome ?? undefined,
+    detalhes: { decisao: "propria", via: "troca_equivalente_compras" },
+  }).catch(() => {});
+
+  kickWorker().catch((err) => {
+    logger.warn(source, "kickWorker falhou pós-troca compras (não-fatal)", {
+      pedido_id: args.pedidoId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  });
+
+  return { liberado: true };
+}
+
+/**
  * Re-roteia o pedido depois de uma troca de roteamento REJEITADA (D8):
  * libera as R reserva_pedido vivas, roda o roteamento de novo e aplica o
  * caminho normal (propria auto / transferencia pro painel / oc auto).

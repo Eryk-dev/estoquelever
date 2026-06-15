@@ -5880,3 +5880,79 @@ erros:
       Mitiga, não elimina, o timeout do polling: aprovados/notas ainda podem não
       completar numa run. Fix maior (paginar/limitar janelas ou separar crons)
       fica pra depois. nfs-presas garantido é o que destrava os presos.
+
+  - id: TROCA-COMPRAS-NAO-LIBERA-PEDIDO-OC
+    date: 2026-06-14
+    source: api.wms.trocas.aprovar
+    category: business_logic
+    message: >
+      Troca de equivalência aprovada pela aba Compras não trocava/liberava o
+      pedido — pedido ficava preso em OC (status_separacao=aguardando_compra)
+      com o substituto reservado. Cobaia: pedido 1046251315 (GE5307 →
+      EW004.309), troca origem='compras'.
+    cause: >
+      A rota POST /api/wms/trocas/[id]/aprovar só transicionava o PEDIDO quando
+      `troca.origem_solicitacao === 'roteamento'` (chamava aprovarPedidoPosTroca).
+      Pra origens 'compras'/'separacao'/'painel', a RPC wms_aprovar_troca_atomico
+      rodava certo (R reserva_troca → L liberacao_troca → R reserva_pedido no
+      substituto + produto_wms_substituto_id no item), mas NADA tirava o pedido
+      da OC. Reconciliador-oc não pega: só dispara em entrada de estoque (mov E),
+      e a troca usa estoque que já existe (sem E). Fio-solto da Fase 3 do plano
+      2026-06-12-cross-troca-equivalencia (linha 116: "Aprovada → item sai de
+      compras, volta pro fluxo de separação"); só a Fase 4 (roteamento) foi ligada.
+    fix: >
+      Novo `liberarPedidoPosTrocaOC` em trocas-roteamento.ts (espelha
+      reconciliador-oc.transicionarPedidoSeReconciliado): tira o item de compras
+      (compra_status=null + limpa campos OC), e se o pedido está em estado OC
+      (aguardando_compra/validacao_oc) com TODOS os itens cobertos, transiciona
+      OC → propria (aguardando_separacao se NF já emitida — portado —, senão
+      aguardando_nf) + enfileira lancar_estoque (idempotente) + kickWorker.
+      Self-gate em estado OC: no-op se o pedido já está em separação. A rota
+      aprovar chama esse helper pras origens não-roteamento. Pedido 1046251315
+      destravado rodando o próprio helper (end-to-end). lancar_estoque é seguro
+      pro portado: gerarNotaFiscalPedido retorna a NF existente sem reemitir.
+    files:
+      - src/lib/wms/trocas-roteamento.ts
+      - src/app/api/wms/trocas/[id]/aprovar/route.ts
+      - src/lib/wms/trocas-roteamento.test.ts
+    tags: [troca, equivalencia, compras, OC, aguardando_compra, reserva_pedido, liberarPedidoPosTrocaOC, reconciliador-oc, origem_solicitacao]
+    notes: >
+      Marcador "OC" stale fica no pedido após OC → propria (igual reconciliador-oc,
+      que também não limpa marcadores) — cosmético no Tiny, fora de escopo.
+
+  - id: SEPARACAO-NAO-MOSTRA-SUBSTITUTO-TROCA
+    date: 2026-06-14
+    source: api.wms.separacao.checklist-items
+    category: business_logic
+    message: >
+      Pedido com troca de equivalência na separação não mostrava a peça física
+      (substituto). Checklist exibia o SKU vendido (GE5307) com loc=null e
+      saldo 0; busca/bipe não achavam pelo SKU do substituto (EW004.309).
+    cause: >
+      A separação resolvia loc/saldo e o match do bipe pelo SKU VENDIDO do item
+      (item.sku, intocado por D3). Só o caminho de ESCRITA (marcar-item/
+      bipar-checklist pick) resolvia o produto efetivo via produto_wms_substituto_id;
+      o caminho de EXIBIÇÃO (checklist-items) e o MATCH do bipe não. GE5307 não
+      tem estoque (foi pra OC), então o picker via "sem loc, saldo 0" e não sabia
+      pegar EW004.309. Afeta TODO pedido com troca que chega na separação (auto,
+      roteamento, compras) — não estava na lista de "callers que resolvem produto
+      efetivo" do plano cross-troca (faltou o caminho de display/match).
+    fix: >
+      checklist-items resolve o substituto (siso_produtos por
+      produto_wms_substituto_id) e passa a chavear loc/saldo pelo SKU EFETIVO
+      (substituto quando há troca) + expõe sku_substituto/descricao_substituto/
+      gtin_substituto. bipar-checklist ganha fallback: se o scan não casa por
+      sku/gtin do item, resolve o produto por sku→gtin e casa via
+      produto_wms_substituto_id (aceita bipar a peça física). UI do checklist
+      mostra badge "⇄ PEGUE {sku_substituto}". Verificado end-to-end no pedido
+      1046251315 (retorna EW004.309 @ H-03-5).
+    files:
+      - src/app/api/wms/separacao/checklist-items/route.ts
+      - src/app/api/wms/separacao/bipar-checklist/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/api/wms/separacao/bipar-checklist/substituto-match.test.ts
+    tags: [troca, equivalencia, separacao, checklist, bipe, substituto, produto_wms_substituto_id, picking, EW004.309]
+    notes: >
+      descricao/sku/gtin do item seguem sendo os do SKU vendido (contexto NF/D3);
+      só loc/saldo + badge refletem o substituto. Embalagem/lista consomem
+      checklist-items mas ignoram os campos novos (aditivos, sem quebra).

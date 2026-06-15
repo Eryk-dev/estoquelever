@@ -57,7 +57,12 @@ export async function GET(request: NextRequest) {
   const statusFilters: StatusSeparacao[] = statusFilterRaw
     ? (statusFilterRaw.split(",") as StatusSeparacao[])
     : [];
-  const empresaFilter = searchParams.get("empresa_origem_id");
+  const empresaFilterRaw = searchParams.get("empresa_origem_id");
+  // Multi-empresa: aceita lista separada por vírgula (filtro multi-select).
+  const empresaIds = empresaFilterRaw
+    ? empresaFilterRaw.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
+  const multiEmpresa = empresaIds.length > 1;
   const marketplaceFilter = searchParams.get("marketplace");
   const busca = searchParams.get("busca");
   const tagFilter = searchParams.get("tag");
@@ -152,7 +157,8 @@ export async function GET(request: NextRequest) {
             .select("*", { count: "exact", head: true })
             .eq("status_separacao", status);
           if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
-          if (empresaFilter) q = q.eq("empresa_origem_id", empresaFilter);
+          if (empresaIds.length === 1) q = q.eq("empresa_origem_id", empresaIds[0]);
+          else if (empresaIds.length > 1) q = q.in("empresa_origem_id", empresaIds);
           if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
           q = applyBuscaFilter(q);
           if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
@@ -161,14 +167,21 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const countsRpcPromise = supabase.rpc("wms_separacao_counts", {
-      p_galpao_id: activeGalpaoId ?? null,
-      p_empresa_id: empresaFilter ?? null,
-      p_marketplace: marketplaceFilter ?? null,
-      p_tag: tagFilter ?? null,
-      p_busca: busca ?? null,
-      p_busca_pedido_ids: buscaItemPedidoIds,
-    });
+    // RPC de counts só aceita 1 empresa. Com multi-empresa, força o caminho
+    // legado (9 HEAD-counts com `.in`) reusando o fallback já existente.
+    const countsRpcPromise = multiEmpresa
+      ? Promise.resolve({
+          data: null,
+          error: { message: "multi-empresa: usar legacy counts" },
+        })
+      : supabase.rpc("wms_separacao_counts", {
+          p_galpao_id: activeGalpaoId ?? null,
+          p_empresa_id: empresaIds[0] ?? null,
+          p_marketplace: marketplaceFilter ?? null,
+          p_tag: tagFilter ?? null,
+          p_busca: busca ?? null,
+          p_busca_pedido_ids: buscaItemPedidoIds,
+        });
 
     // 1b. Fetch distinct origin empresas inside the current separation context
     let empresasPromise = supabase
@@ -184,7 +197,7 @@ export async function GET(request: NextRequest) {
     let pedidosQuery = supabase
       .from("siso_pedidos")
       .select(
-        `id, numero, data, id_pedido_ecommerce, cliente_nome,
+        `id, numero, data, prazo_envio, id_pedido_ecommerce, cliente_nome,
          nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores, separacao_tags,
          empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
          nota_fiscal_id, agrupamento_expedicao_id,
@@ -197,8 +210,10 @@ export async function GET(request: NextRequest) {
     if (activeGalpaoId && !isAguardandoCompraOnly) {
       pedidosQuery = pedidosQuery.eq("separacao_galpao_id", activeGalpaoId);
     }
-    if (empresaFilter) {
-      pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaFilter);
+    if (empresaIds.length === 1) {
+      pedidosQuery = pedidosQuery.eq("empresa_origem_id", empresaIds[0]);
+    } else if (empresaIds.length > 1) {
+      pedidosQuery = pedidosQuery.in("empresa_origem_id", empresaIds);
     }
     if (marketplaceFilter) {
       pedidosQuery = pedidosQuery.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
@@ -431,6 +446,7 @@ export async function GET(request: NextRequest) {
         cidade: null,
         forma_envio: p.forma_envio_descricao,
         data_pedido: p.data,
+        prazo_envio: p.prazo_envio ?? null,
         embalagem_concluida_em: p.embalagem_concluida_em ?? null,
         empresa_origem_nome: empresa?.nome ?? null,
         filial_origem: p.filial_origem ?? null,

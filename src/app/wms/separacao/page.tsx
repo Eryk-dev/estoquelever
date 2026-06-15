@@ -92,6 +92,7 @@ interface SeparacaoPedido {
   cidade: string | null;
   forma_envio: string | null;
   data_pedido: string | null;
+  prazo_envio: string | null;
   embalagem_concluida_em: string | null;
   empresa_origem_nome: string | null; // ignorado (D4)
   filial_origem: string | null;
@@ -176,6 +177,15 @@ const SORT_OPTS = [
   { value: "data_pedido", label: "Ordenar: data" },
   { value: "localizacao", label: "Ordenar: localização" },
   { value: "sku", label: "Ordenar: SKU" },
+];
+
+const PRAZO_OPTS = [
+  { value: "", label: "Prazo envio: todos" },
+  { value: "atrasado", label: "Atrasados" },
+  { value: "hoje", label: "Vence hoje" },
+  { value: "amanha", label: "Vence amanhã" },
+  { value: "7dias", label: "Próx. 7 dias" },
+  { value: "sem", label: "Sem prazo" },
 ];
 
 // Move targets (admin) — espelha o STATUS_ORDER da API (voltar-etapa).
@@ -280,6 +290,175 @@ function fmtHoraSeg(iso: string | null | undefined): string | null {
   return `${dd}/${mm} ${hh}:${mi}:${ss}`;
 }
 
+/** Prazo de despacho (data envio do ML) → "dd/mm HH:mm". */
+function fmtPrazo(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm} ${hh}:${mi}`;
+}
+
+/** Filtro client-side por prazo de envio. Presets operacionais de SLA. */
+function matchPrazo(iso: string | null | undefined, filtro: string): boolean {
+  if (!filtro) return true;
+  if (filtro === "sem") return !iso;
+  if (!iso) return false;
+  const prazo = new Date(iso);
+  if (isNaN(prazo.getTime())) return false;
+  const now = new Date();
+  const hoje0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const amanha0 = new Date(hoje0); amanha0.setDate(amanha0.getDate() + 1);
+  const depois0 = new Date(hoje0); depois0.setDate(depois0.getDate() + 2);
+  const seteDias = new Date(hoje0); seteDias.setDate(seteDias.getDate() + 7);
+  switch (filtro) {
+    case "atrasado": return prazo < now;                              // deadline já passou
+    case "hoje": return prazo >= hoje0 && prazo < amanha0;
+    case "amanha": return prazo >= amanha0 && prazo < depois0;
+    case "7dias": return prazo >= hoje0 && prazo < seteDias;
+    default: return true;
+  }
+}
+
+/** Dropdown com checkboxes pra filtrar por múltiplas empresas. */
+function EmpresaMultiSelect({
+  empresas,
+  selected,
+  onChange,
+}: {
+  empresas: { id: string; nome: string }[];
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const selectedSet = new Set(selected);
+  const label =
+    selected.length === 0
+      ? "Todas empresas"
+      : selected.length === 1
+        ? (empresas.find((e) => e.id === selected[0])?.nome ?? "1 empresa")
+        : `${selected.length} empresas`;
+
+  const toggle = (id: string) => {
+    const next = new Set(selectedSet);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange([...next]);
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="wms-select"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 180,
+          textAlign: "left",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        <Icon name="chevron-r" size={11} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 30,
+            minWidth: 200,
+            maxHeight: 300,
+            overflowY: "auto",
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+            padding: 4,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            style={{
+              display: "flex",
+              width: "100%",
+              alignItems: "center",
+              padding: "6px 8px",
+              fontSize: 12,
+              color:
+                selected.length === 0
+                  ? "var(--wms-c-fg)"
+                  : "var(--wms-c-fg-2)",
+              fontWeight: selected.length === 0 ? 600 : 400,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            Todas empresas
+          </button>
+          {empresas.map((emp) => (
+            <label
+              key={emp.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 8px",
+                fontSize: 12,
+                cursor: "pointer",
+                borderRadius: 6,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedSet.has(emp.id)}
+                onChange={() => toggle(emp.id)}
+              />
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {emp.nome}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WmsSeparacaoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -302,6 +481,11 @@ export default function WmsSeparacaoPage() {
   const sort = searchParams?.get("sort") ?? "data_pedido";
   const fornecedor = searchParams?.get("fornecedor") ?? "";
   const empresaFilter = searchParams?.get("empresa") ?? "";
+  const prazoFilter = searchParams?.get("prazo") ?? "";
+  // Multi-select de empresa: `empresa` é lista separada por vírgula.
+  const selectedEmpresaIds = empresaFilter
+    ? empresaFilter.split(",").filter(Boolean)
+    : [];
 
   // Realtime: auto-refresh quando outros operadores mudam status (paridade legado)
   useRealtimeSeparacao();
@@ -445,13 +629,19 @@ export default function WmsSeparacaoPage() {
   const galpoesAll = data?.galpoes ?? [];
   const empresasAll = data?.empresas ?? [];
 
-  // Filtro client-side de fornecedor (só na tab aguardando_compra).
+  // Filtros client-side: prazo de envio (todas as tabs) + fornecedor
+  // (só aguardando_compra). A lista não é paginada, então filtrar aqui
+  // mantém contador/seleção/ações coerentes com o que aparece.
   const pedidos = useMemo(() => {
-    if (tab !== "aguardando_compra" || !fornecedor) return pedidosRaw;
-    return pedidosRaw.filter((p) =>
-      p.compra_stats?.itens?.some((it) => it.fornecedor_oc === fornecedor),
-    );
-  }, [pedidosRaw, tab, fornecedor]);
+    let out = pedidosRaw;
+    if (prazoFilter) out = out.filter((p) => matchPrazo(p.prazo_envio, prazoFilter));
+    if (tab === "aguardando_compra" && fornecedor) {
+      out = out.filter((p) =>
+        p.compra_stats?.itens?.some((it) => it.fornecedor_oc === fornecedor),
+      );
+    }
+    return out;
+  }, [pedidosRaw, tab, fornecedor, prazoFilter]);
 
   const fornecedorOpts = useMemo(() => {
     if (tab !== "aguardando_compra") return [] as string[];
@@ -837,20 +1027,25 @@ export default function WmsSeparacaoPage() {
         </select>
 
         {empresasAll.length > 0 && (
-          <select
-            className="wms-select"
-            value={empresaFilter}
-            onChange={(e) => updateParam("empresa", e.target.value)}
-            style={{ width: 180 }}
-          >
-            <option value="">Todas empresas</option>
-            {empresasAll.map((emp) => (
-              <option key={emp.id} value={emp.id}>
-                {emp.nome}
-              </option>
-            ))}
-          </select>
+          <EmpresaMultiSelect
+            empresas={empresasAll}
+            selected={selectedEmpresaIds}
+            onChange={(ids) => updateParam("empresa", ids.join(","))}
+          />
         )}
+
+        <select
+          className="wms-select"
+          value={prazoFilter}
+          onChange={(e) => updateParam("prazo", e.target.value)}
+          style={{ width: 170 }}
+        >
+          {PRAZO_OPTS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
 
         <select
           className="wms-select"
@@ -1222,6 +1417,7 @@ export default function WmsSeparacaoPage() {
                 <th>Decisão</th>
                 <th>Status</th>
                 <th>Idade</th>
+                <th>Data envio</th>
                 <th className="wms-tar">Itens</th>
                 <th>Tags</th>
                 <th style={{ width: 36 }}></th>
@@ -1405,6 +1601,33 @@ export default function WmsSeparacaoPage() {
                         </div>
                       )}
                     </td>
+                    <td className="wms-mono" style={{ fontSize: 11 }}>
+                      {(() => {
+                        const txt = fmtPrazo(p.prazo_envio);
+                        if (!txt)
+                          return <span className="wms-td-mute">—</span>;
+                        const atrasado =
+                          new Date(p.prazo_envio as string).getTime() <
+                          Date.now();
+                        return (
+                          <span
+                            title={
+                              atrasado
+                                ? "Prazo de despacho vencido (ML)"
+                                : "Prazo de despacho (ML)"
+                            }
+                            style={{
+                              color: atrasado
+                                ? "var(--wms-c-danger)"
+                                : "var(--wms-c-fg-2)",
+                              fontWeight: atrasado ? 600 : 400,
+                            }}
+                          >
+                            {txt}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="wms-tar wms-mono">
                       {fmtNum(p.total_itens)}
                     </td>
@@ -1480,7 +1703,7 @@ export default function WmsSeparacaoPage() {
                       className="wms-tr-expansion"
                       style={{ background: "var(--wms-c-faint)" }}
                     >
-                      <td colSpan={12} style={{ padding: 0 }}>
+                      <td colSpan={13} style={{ padding: 0 }}>
                         <PedidoExpansaoPanel pedido={p} />
                       </td>
                     </tr>

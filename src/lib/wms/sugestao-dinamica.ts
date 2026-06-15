@@ -52,6 +52,14 @@ interface LockRow {
   localizacao_id: string;
 }
 
+interface ReservaRow {
+  pedido_id: string;
+  produto_id: string;
+  galpao_id: string;
+  tipo: string;
+  quantidade: number | string;
+}
+
 const toNum = (v: number | string | null | undefined): number => {
   if (v === null || v === undefined) return 0;
   return typeof v === "number" ? v : Number(v) || 0;
@@ -62,17 +70,25 @@ const toNum = (v: number | string | null | undefined): number => {
  * atual de `siso_estoque`. Reusa `rotearPedido` (mesma função pura que
  * o webhook usa), garantindo consistência de comportamento.
  *
- * Custo: 5 queries fixas independente do número de pedidos:
+ * Custo: 6 queries fixas independente do número de pedidos:
  *   1. SELECT produtos por SKU
  *   2. SELECT galpões ativos
  *   3. SELECT preferenciais das empresas envolvidas
  *   4. SELECT siso_estoque dos produtos envolvidos (com tipo da loc)
  *   5. SELECT locs com lock ativo
+ *   6. SELECT reservas próprias dos pedidos (movs R/L do ledger)
  *
  * `siso_estoque.disponivel` já é GENERATED (saldo - reservado), então
  * reservas R do ledger são naturalmente respeitadas — dois pedidos do
  * mesmo SKU não conseguem ambos virar "propria" sem que o primeiro
  * libere/cancele a reserva.
+ *
+ * PORÉM a reserva do PRÓPRIO pedido (R reserva_pedido/reserva_troca criada
+ * no webhook) também desconta de `disponivel`. Sem corrigir, o pedido
+ * computa a própria reserva como indisponível e uma transferência legítima
+ * vira "oc" espúrio (e some da lista de aprovação, que filtra por sugestão
+ * viva). Por isso somamos de volta a reserva ATIVA do próprio pedido (net
+ * R−L por produto+galpão) ao avaliar a cobertura DELE.
  */
 export async function recomputarSugestaoBatch(
   sb: SupabaseClient,
@@ -87,8 +103,9 @@ export async function recomputarSugestaoBatch(
     ),
   ];
   const empresaIds = [...new Set(pedidos.map((p) => p.empresaOrigemId))];
+  const pedidoIds = [...new Set(pedidos.map((p) => p.pedidoId))];
 
-  const [produtosRes, galpoesRes, prefRes, locksRes] = await Promise.all([
+  const [produtosRes, galpoesRes, prefRes, locksRes, reservasRes] = await Promise.all([
     todosSkus.length > 0
       ? sb.from("siso_produtos").select("id, sku").in("sku", todosSkus)
       : Promise.resolve({ data: [] as ProdutoRow[] }),
@@ -100,6 +117,16 @@ export async function recomputarSugestaoBatch(
           .in("empresa_id", empresaIds)
       : Promise.resolve({ data: [] as PrefRow[] }),
     sb.from("siso_localizacao_locks").select("localizacao_id").is("finalizado_em", null),
+    // Reservas próprias dos pedidos sendo recomputados: net R−L por
+    // (pedido, produto, galpão). Somadas de volta ao disponivel pra que o
+    // pedido não compute a própria reserva como indisponível (ver docstring).
+    pedidoIds.length > 0
+      ? sb
+          .from("siso_movimentacoes")
+          .select("pedido_id, produto_id, galpao_id, tipo, quantidade")
+          .in("pedido_id", pedidoIds)
+          .in("tipo", ["R", "L"])
+      : Promise.resolve({ data: [] as ReservaRow[] }),
   ]);
 
   const skuToProdutoId = new Map<string, string>(
@@ -163,6 +190,15 @@ export async function recomputarSugestaoBatch(
 
   const galpaoNomeById = new Map(galpoesRows.map((g) => [g.id, g.nome]));
 
+  // Reserva ATIVA do próprio pedido por chave `pedido::produto::galpão`
+  // (net R−L do ledger). Somada de volta ao `disponivel` em buscarLinha.
+  const reservaPropriaPorChave = new Map<string, number>();
+  for (const r of (reservasRes.data ?? []) as ReservaRow[]) {
+    const k = `${r.pedido_id}::${r.produto_id}::${r.galpao_id}`;
+    const delta = r.tipo === "R" ? toNum(r.quantidade) : -toNum(r.quantidade);
+    reservaPropriaPorChave.set(k, (reservaPropriaPorChave.get(k) ?? 0) + delta);
+  }
+
   for (const pedido of pedidos) {
     const itensRotear: Array<{ produto_id: string; qty: number }> = [];
     let temSkuNaoMapeado = false;
@@ -195,12 +231,21 @@ export async function recomputarSugestaoBatch(
       buscarLinha: async (q) => {
         const key = `${q.produto_id}::${q.galpao_id}`;
         const candidatos = estoquePorChave.get(key) ?? [];
-        const cobre = candidatos.find((c) => c.disponivel >= q.qty);
+        // Soma de volta a reserva ativa DESTE pedido nessa (produto, galpão):
+        // ela já desconta de siso_estoque.disponivel, então sem isso o pedido
+        // veria a própria reserva como indisponível (transferência → oc espúrio).
+        const ownRes = Math.max(
+          0,
+          reservaPropriaPorChave.get(
+            `${pedido.pedidoId}::${q.produto_id}::${q.galpao_id}`,
+          ) ?? 0,
+        );
+        const cobre = candidatos.find((c) => c.disponivel + ownRes >= q.qty);
         return cobre
           ? {
               id: cobre.id,
               localizacao_id: cobre.localizacao_id,
-              disponivel: cobre.disponivel,
+              disponivel: cobre.disponivel + ownRes,
             }
           : null;
       },

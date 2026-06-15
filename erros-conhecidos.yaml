@@ -6003,3 +6003,41 @@ erros:
       separação (display + bipe) mostra/casa o substituto. marcar-item/parcial/
       validar-oc são id-based (não dependem do sku exibido); o pick resolve o
       produto efetivo server-side.
+
+  - id: wms-recompute-sugestao-ignora-reserva-propria
+    date: "2026-06-15"
+    source: src/lib/wms/sugestao-dinamica.ts
+    category: business_logic
+    message: "Recompute de sugestão contava a reserva do PRÓPRIO pedido como indisponível → transferência legítima virava 'oc' espúrio e sumia da aba Pendentes (home 'Aprovação' contava 8, lista mostrava 0; número piscava 0↔8)"
+    cause: >
+      recomputarSugestaoBatch lê siso_estoque.disponivel (GENERATED saldo-reservado).
+      Todo pedido propria/transferencia cria uma R reserva_pedido no webhook sobre o
+      galpão que cobre — essa R já desconta do disponivel. Ao recomputar a rota do
+      próprio pedido, o galpão-cobertura aparecia com disponivel insuficiente (a
+      própria reserva), rotearPedido não achava cobertura 100% e caía em 'oc'. A aba
+      Pendentes de /wms/pedidos filtra status=pendente AND sugestao(VIVA)='transferencia'
+      (page.tsx), então os pedidos sumiam. A home (dashboard-tarefas.ts) conta o
+      SNAPSHOT siso_pedidos.sugestao='transferencia' (não recomputa) → divergência
+      home=8 × lista=0. O recompute tem .catch que degrada pro snapshot (route.ts),
+      então sob erro/timeout a lista voltava a mostrar os 8 — o número "piscava".
+      Efeito colateral do fix wms-lista-sugestao-oc-stale-snapshot (2026-06-02), que
+      introduziu o recompute vivo sem somar de volta a reserva própria.
+    fix: >
+      recomputarSugestaoBatch passou a somar de volta a reserva ATIVA do próprio
+      pedido (net R−L de siso_movimentacoes por pedido+produto+galpão) ao disponivel
+      em buscarLinha. 1 query batch extra (6 fixas no total, independente de N).
+      Assinatura inalterada → callers (route.ts da lista + detalhe) não mudam.
+      Validado por prova de dados NÃO-destrutiva em staging: 8 pedidos
+      pendente+transferencia (snapshot) recomputavam 7 oc + 1 propria ANTES; com o
+      addback recomputam 7 transferencia + 1 propria — a lista volta a mostrar os 7.
+      O 1 (#1046297031) virou propria de verdade (CWB reabasteceu 11 un. de 024497)
+      e segue preso em pendente porque nada re-roteia pendente quando estoque chega
+      (gap separado — reconciliador-oc só trata OC).
+    files:
+      - src/lib/wms/sugestao-dinamica.ts
+    tags: [wms, sugestao, recompute, reserva-propria, transferencia, oc, disponivel, aprovacao, dashboard, recomputarSugestaoBatch, listagem]
+    notes: >
+      Causa raiz da divergência home(8) × lista(0): home conta snapshot, lista conta
+      sugestão viva — só batem 100% se o snapshot estiver fresco OU o pendente for
+      re-roteado quando a rota viva muda. Relacionado:
+      wms-lista-sugestao-oc-stale-snapshot (introduziu o recompute vivo).

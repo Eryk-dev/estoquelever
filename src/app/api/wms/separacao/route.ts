@@ -40,7 +40,8 @@ const COUNT_STATUSES: (keyof SeparacaoCounts)[] = [
  *   status_separacao — filter by status
  *   empresa_origem_id — filter by origin empresa
  *   sort — data_pedido (default) | localizacao | sku
- *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome, item sku, item gtin)
+ *   busca — search string (matches numero, id_pedido_ecommerce, cliente_nome, item sku/gtin
+ *           vendido E sku/gtin do substituto da troca de equivalência)
  *
  * Galpão filtering:
  *   uses the authenticated session and filters by siso_pedidos.separacao_galpao_id.
@@ -98,13 +99,32 @@ export async function GET(request: NextRequest) {
     // Pre-fetch pedido_ids matching SKU/GTIN when searching
     let buscaItemPedidoIds: string[] | null = null;
     if (busca) {
+      // 1. itens cujo SKU/GTIN VENDIDO casa.
       const { data: matchingItems } = await supabase
         .from("siso_pedido_itens")
         .select("pedido_id")
         .or(`sku.ilike.%${busca}%,gtin.ilike.%${busca}%`);
-      if (matchingItems && matchingItems.length > 0) {
-        buscaItemPedidoIds = [...new Set(matchingItems.map((i) => i.pedido_id))];
+      const ids = new Set(
+        (matchingItems ?? []).map((i) => i.pedido_id as string),
+      );
+
+      // 2. itens com troca de equivalência cujo SUBSTITUTO casa por SKU/GTIN —
+      //    a separação exibe o substituto, então a busca acha pelo SKU novo
+      //    (físico) tanto quanto pelo antigo (vendido).
+      const { data: prodSub } = await supabase
+        .from("siso_produtos")
+        .select("id")
+        .or(`sku.ilike.%${busca}%,gtin.ilike.%${busca}%`);
+      const subIds = (prodSub ?? []).map((p) => p.id as string);
+      if (subIds.length > 0) {
+        const { data: itensSub } = await supabase
+          .from("siso_pedido_itens")
+          .select("pedido_id")
+          .in("produto_wms_substituto_id", subIds);
+        for (const i of itensSub ?? []) ids.add(i.pedido_id as string);
       }
+
+      if (ids.size > 0) buscaItemPedidoIds = [...ids];
     }
 
     // Build the busca OR filter combining pedido fields + item-matched IDs

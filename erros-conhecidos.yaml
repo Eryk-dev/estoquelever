@@ -5946,11 +5946,16 @@ erros:
       bipar-checklist ganha fallback: se o scan não casa por sku/gtin do item,
       resolve o produto por sku→gtin e casa via produto_wms_substituto_id
       (aceita bipar a peça física). A lista (/wms/separacao) e o checklist de
-      wave-picking herdam tudo do checklist-items. Verificado end-to-end no
-      pedido 1046251315 (retorna sku=EW004.309, desc/gtin/img/loc do substituto).
+      wave-picking herdam tudo do checklist-items. A BUSCA da lista
+      (GET /api/wms/separacao) também casa o substituto: além do sku/gtin
+      vendido, resolve siso_produtos por sku/gtin~busca e inclui pedidos cujos
+      itens têm esse produto_wms_substituto_id (acha pelo SKU antigo E pelo novo).
+      Verificado end-to-end no pedido 1046251315 (retorna sku=EW004.309,
+      desc/gtin/img/loc do substituto; busca por GE5307 e EW004.309 acham).
     files:
       - src/app/api/wms/separacao/checklist-items/route.ts
       - src/app/api/wms/separacao/bipar-checklist/route.ts
+      - src/app/api/wms/separacao/route.ts
       - src/app/wms/separacao/checklist/page.tsx
       - src/app/wms/separacao/page.tsx
       - src/app/api/wms/separacao/bipar-checklist/substituto-match.test.ts

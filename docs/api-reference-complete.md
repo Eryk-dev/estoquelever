@@ -1069,7 +1069,7 @@ Caminhos suportados:
 - `status_separacao`: comma-separated list of statuses — "aguardando_compra" | "aguardando_nf" | "validacao_oc" | "aguardando_separacao" | "em_separacao" | "separado" | "embalado" | "pendente_realocacao". Multiple values supported (e.g., "aguardando_compra,validacao_oc")
 - `empresa_origem_id`: filter by origin empresa
 - `marketplace`: filter by e-commerce name (ilike)
-- `busca`: search numero, id_pedido_ecommerce, cliente_nome (ilike)
+- `busca`: search numero, id_pedido_ecommerce, cliente_nome, item sku/gtin vendido **e** sku/gtin do substituto da troca de equivalência (ilike)
 - `tag`: filter by separacao_tags
 
 **Response (200):**

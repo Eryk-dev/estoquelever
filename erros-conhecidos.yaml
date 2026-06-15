@@ -20,6 +20,44 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: nf-rejeitada-empurra-pedido-pra-separacao
+    date: "2026-06-15"
+    source: worker / nf-webhook-handler
+    category: business_logic
+    message: >
+      pedidos com NF NÃO autorizada (rejeitada, situacao=5) apareciam pra
+      separar — "robô" de NFs empurrava pedido OC pra frente sem NF autorizada
+      (ex: Josiani Bortoli / Luiz Crippa, NFs EasyPeasy situacao=5)
+    cause: >
+      enriquecerDadosNf (execution-worker.ts) calculava
+      `autorizada = situacao∈{6,7}` mas NUNCA usava a variável: salvava
+      chave_acesso_nf só checando `if (nfData.chaveAcesso)`. A chave de acesso é
+      calculada na EMISSÃO (existe até numa NF rejeitada/pendente), então o
+      pedido ficava com nota_fiscal_id + chave_acesso_nf preenchidos e PARECIA
+      ter NF autorizada — entrava em validacao_oc/aguardando_separacao e era
+      puxado pra wave de picking. handleNfWebhook também nunca checava a situacao
+      da NF antes de transicionar aguardando_nf → aguardando_separacao.
+    fix: >
+      (1) enriquecerDadosNf: só persiste chave_acesso_nf quando `autorizada`
+      (usa a variável que era dead code). (2) handleNfWebhook: gate Step 4.5 —
+      só salva chave + transiciona se a NF estiver autorizada (situacao 6/7),
+      buscando a situacao também no fast-path; não-autorizada vira log
+      'aguardando_autorizacao' (sem processado_em, retryable). (3)
+      pollNotasAutorizadas re-entrega logs 'aguardando_autorizacao' (além de
+      'aguardando_pedido') pra quando a NF autorizar depois. Cleanup: pedidos
+      separáveis com NF não-autorizada revertidos pra aguardando_nf +
+      chave_acesso_nf limpa.
+    files:
+      - src/lib/execution-worker.ts
+      - src/lib/nf-webhook-handler.ts
+      - src/lib/tiny-polling.ts
+    tags: [nf, nota-fiscal, situacao, autorizada, rejeitada, chave_acesso_nf, separacao, validacao_oc, oc, enriquecerDadosNf, handleNfWebhook, polling, sefaz]
+    notes: >
+      Códigos situacao NF Tiny (GET /notas/{id}, BaseNotaFiscalModel): 1=Pendente
+      2=Emitida 3=Cancelada 4=Enviada Aguardando Recibo 5=Rejeitada 6=Autorizada
+      7=Emitida Danfe 8=Registrada 9=Enviada Aguardando Protocolo 10=Denegada.
+      Tiny retorna situacao como STRING ("5") — usar Number() ao comparar.
+
   - id: trocar-sku-sem-guard-de-estado
     date: "2026-06-12"
     source: wms.compras

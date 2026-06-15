@@ -538,12 +538,16 @@ async function pollNotasAutorizadas(
   if (porId.size === 0) return;
 
   // Pré-dedup por id (o handler ainda faz o dedup composto por chaveAcesso).
-  // Log em 'aguardando_pedido' NÃO conta como conhecida: a NF chegou antes do
-  // pedido existir e o handler tem retry de match exatamente pra re-entrega
-  // (23505 → reusa o log pendente) — mas esse retry só dispara se o polling
-  // re-entregar. Contar como conhecida deixava a NF órfã pra sempre.
+  // Logs PENDENTES não contam como conhecidas — precisam de re-entrega:
+  //   - 'aguardando_pedido': a NF chegou antes do pedido existir (race);
+  //   - 'aguardando_autorizacao': a NF ainda não estava autorizada quando vista.
+  // O handler tem retry de match/gate exatamente pra re-entrega (23505 → reusa
+  // o log pendente), mas só dispara se o polling re-entregar. Como este sweep só
+  // lista situacao 6/7 (autorizada), re-entregar aqui = a NF agora autorizou →
+  // o gate passa e o pedido avança. Contar como conhecida deixava a NF órfã.
   const ids = [...porId.keys()];
   const conhecidas = new Set<string>();
+  const PENDENTES = new Set(["aguardando_pedido", "aguardando_autorizacao"]);
   for (const lote of chunk(ids, 200)) {
     const { data: logs } = await sb
       .from("siso_webhook_logs")
@@ -551,7 +555,7 @@ async function pollNotasAutorizadas(
       .eq("tipo", "nota_fiscal")
       .in("tiny_pedido_id", lote);
     for (const l of (logs ?? []) as Array<{ tiny_pedido_id: string; status: string }>) {
-      if (l.status !== "aguardando_pedido") conhecidas.add(l.tiny_pedido_id);
+      if (!PENDENTES.has(l.status)) conhecidas.add(l.tiny_pedido_id);
     }
   }
 

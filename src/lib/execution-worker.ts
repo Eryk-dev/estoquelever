@@ -67,15 +67,26 @@ async function enriquecerDadosNf(
     const NF_AUTORIZADA = [6, 7]; // 6=Autorizada, 7=Emitida Danfe
     const autorizada = NF_AUTORIZADA.includes(Number(nfData.situacao));
 
-    if (nfData.chaveAcesso) {
-      // Save chave_acesso_nf but do NOT transition status.
-      // Transition aguardando_nf → aguardando_separacao happens ONLY via NF webhook.
+    // Só persistir chave_acesso_nf quando a NF está AUTORIZADA. Uma NF
+    // rejeitada (5)/pendente (1)/aguardando recibo (4/9) já carrega chaveAcesso
+    // (a chave é calculada na emissão, antes do retorno do SEFAZ), mas NÃO é
+    // fiscal válida. Salvá-la fazia o pedido PARECER ter NF autorizada e ser
+    // empurrado pra separação — pedidos OC com NF rejeitada apareciam pra
+    // separar (bug 2026-06-15). A transição de status segue só via NF webhook,
+    // que também só avança quando autorizada.
+    if (autorizada && nfData.chaveAcesso) {
       await supabase
         .from("siso_pedidos")
         .update({ chave_acesso_nf: nfData.chaveAcesso })
         .eq("id", pedidoId);
 
-      logger.info("worker", "chave_acesso_nf salva (transição via webhook)", {
+      logger.info("worker", "chave_acesso_nf salva (NF autorizada; transição via webhook)", {
+        pedidoId,
+        notaId,
+        situacao: nfData.situacao,
+      });
+    } else if (!autorizada) {
+      logger.info("worker", "NF ainda não autorizada — chave_acesso_nf NÃO salva", {
         pedidoId,
         notaId,
         situacao: nfData.situacao,

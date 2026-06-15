@@ -7,7 +7,7 @@
  */
 
 import { createServiceClient } from "./supabase-server";
-import { obterNotaFiscal } from "./tiny-api";
+import { obterNotaFiscal, type TinyNotaFiscal } from "./tiny-api";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { logger } from "./logger";
@@ -191,17 +191,19 @@ export async function handleNfWebhook(
 
   if (insertError) {
     if (insertError.code === "23505") {
-      // Re-entrega de NF já vista. Se o log anterior ficou em
-      // 'aguardando_pedido' (NF chegou ANTES do pedido — race), re-tenta o
-      // match agora: o pedido pode já ter sido salvo. Sem isso, a NF fica
-      // órfã pra sempre (o dedup engolia todas as re-entregas, inclusive as
-      // do polling de 10min que serviriam de segunda chance).
+      // Re-entrega de NF já vista. Se o log anterior ficou pendente —
+      // 'aguardando_pedido' (NF chegou ANTES do pedido — race) ou
+      // 'aguardando_autorizacao' (NF ainda não autorizada no SEFAZ) — re-tenta
+      // o match/gate agora: o pedido pode já existir e/ou a NF pode ter sido
+      // autorizada. Sem isso, a NF fica órfã pra sempre (o dedup engolia todas
+      // as re-entregas, inclusive as do polling de 10min que serviriam de
+      // segunda chance).
       const { data: pendente } = await supabase
         .from("siso_webhook_logs")
         .select("id")
         .eq("tipo", "nota_fiscal")
         .eq("tiny_pedido_id", idAsText)
-        .eq("status", "aguardando_pedido")
+        .in("status", ["aguardando_pedido", "aguardando_autorizacao"])
         .is("processado_em", null)
         .limit(1)
         .maybeSingle();
@@ -230,6 +232,10 @@ export async function handleNfWebhook(
     webhookLogId = logEntry.id;
   }
 
+  // NF detalhada (situacao etc): preenchida no fallback (Step 3) e reusada no
+  // gate de autorização (Step 4.5); no fast-path fica null e o gate busca.
+  let nfFetched: TinyNotaFiscal | null = null;
+
   // Step 2 — Fast-path match: pedido already has nota_fiscal_id saved
   const { data: pedidoFastPath } = await supabase
     .from("siso_pedidos")
@@ -246,6 +252,7 @@ export async function handleNfWebhook(
       const nf = await runWithEmpresa(empresaId, () =>
         obterNotaFiscal(token, idNotaFiscalTiny),
       );
+      nfFetched = nf;
 
       // [Fix-D #6.12] Antes de ignorar como "não-venda", checa se é uma
       // devolução. Tiny v3 às vezes entrega NF de devolução com
@@ -326,6 +333,47 @@ export async function handleNfWebhook(
     await supabase
       .from("siso_webhook_logs")
       .update({ status: "aguardando_pedido" })
+      .eq("id", webhookLogId);
+    return;
+  }
+
+  // Step 4.5 — Gate de AUTORIZAÇÃO: só salva chave + transiciona se a NF estiver
+  // autorizada (situacao 6=Autorizada / 7=Emitida Danfe). Uma NF rejeitada (5)/
+  // pendente (1)/aguardando recibo (4/9) já tem chaveAcesso preenchida, mas não
+  // é fiscal válida — avançar empurraria o pedido pra separação sem NF boa
+  // (regra: "aparecer pra separar só pedido com NF autorizada"). No fast-path a
+  // NF não foi buscada; busca aqui. Falha ao obter situacao = trata como
+  // não-autorizada (conservador: não avança sem confirmação). NÃO marca
+  // processado_em — deixa o log retryable pra quando a NF autorizar (re-entrega
+  // via webhook/polling re-dispara o gate; ver dedup acima e pollNotasAutorizadas).
+  const NF_AUTORIZADA = [6, 7];
+  let nfSituacao: number | null =
+    nfFetched?.situacao != null ? Number(nfFetched.situacao) : null;
+  if (nfSituacao == null) {
+    try {
+      const { token } = await getValidTokenByEmpresa(empresaId);
+      const nfDet = await runWithEmpresa(empresaId, () =>
+        obterNotaFiscal(token, idNotaFiscalTiny),
+      );
+      nfSituacao = nfDet.situacao != null ? Number(nfDet.situacao) : null;
+    } catch (err) {
+      logger.warn("nf-webhook", "não foi possível obter situacao da NF — tratando como não-autorizada", {
+        idNotaFiscalTiny: String(idNotaFiscalTiny),
+        empresaId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (!NF_AUTORIZADA.includes(Number(nfSituacao))) {
+    logger.info("nf-webhook", "NF não autorizada — pedido não avança (aguardando autorização)", {
+      idNotaFiscalTiny: String(idNotaFiscalTiny),
+      pedidoId,
+      empresaId,
+      situacao: nfSituacao,
+    });
+    await supabase
+      .from("siso_webhook_logs")
+      .update({ status: "aguardando_autorizacao" })
       .eq("id", webhookLogId);
     return;
   }

@@ -33,6 +33,18 @@ export function getMarketplaceName(nome: string): string {
   return nome;
 }
 
+/**
+ * Detecta se um `nome_ecommerce` é do Mercado Livre. O Tiny devolve o nome
+ * do CANAL configurado em cada conta, não o nome canônico — então além de
+ * "Mercado Livre" aparecem variantes por loja: "ML_NET AIR", "ML_NETPARTS SP",
+ * "EASY MERCADO LIVRE". Cobre tanto o prefixo `ML_`/`ML ` quanto qualquer
+ * string contendo "mercado livre".
+ */
+export function isMercadoLivre(nome: string | null | undefined): boolean {
+  if (!nome) return false;
+  return /mercado livre/i.test(nome) || /^ml[\s_-]/i.test(nome);
+}
+
 // ─── Decisão ────────────────────────────────────────────────────────────────
 
 export const DECISAO_LABELS: Record<Decisao, string> = {

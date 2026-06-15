@@ -8,13 +8,14 @@
 import "dotenv/config";
 import { createServiceClient } from "../../src/lib/supabase-server";
 
-// ml_user_id → empresa_id (validado contra dados de staging em 2026-06-15:
-// pedidos ML caem em 141AIR e EasyPeasy SP; demais vinculadas p/ robustez).
+// ml_user_id → empresa_id (validado contra ownership real do ML em 2026-06-15
+// via /orders/search + /users/me). EASY UTILIDADES é a conta da EasyPeasy
+// (CWB); EasyPeasy SP ainda NÃO tem conta ML conectada.
 const MAP: Record<string, { empresaId: string; nota: string }> = {
   "1963376627": { empresaId: "64c46454-b9e6-422e-aeca-4f7c18e1cdf9", nota: "141AIR" },
   "421259712": { empresaId: "4473ca97-67e7-44e5-a192-ec756146b691", nota: "NetAir" },
   "1092904133": { empresaId: "c27d85ce-e469-42dc-ae0f-10b722fa5b37", nota: "NetParts" },
-  "735198837": { empresaId: "cf8a5e5c-22b7-4b42-8402-6dd61c5c6259", nota: "EasyPeasy SP" },
+  "735198837": { empresaId: "818f5445-6704-4045-9179-068ba507d480", nota: "EasyPeasy (CWB) = EASY UTILIDADES" },
 };
 
 async function main() {

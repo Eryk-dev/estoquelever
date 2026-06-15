@@ -29,6 +29,7 @@ import {
   getActiveMlConnectionForEmpresa,
   getMlShipmentSla,
 } from "./ml-api";
+import { isMercadoLivre } from "./domain-helpers";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
@@ -781,7 +782,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //     `prazo_envio` com só o DIA (23:59:59); o ML traz a HORA exata do
   //     limite de despacho via /shipments/{id}/sla → sobrescreve quando
   //     disponível. Fire-and-forget: falha mantém o valor do Tiny.
-  if (pedido.nomeEcommerce === "Mercado Livre" && pedido.idPedidoEcommerce) {
+  if (isMercadoLivre(pedido.nomeEcommerce) && pedido.idPedidoEcommerce) {
     const orderIdMl = pedido.idPedidoEcommerce;
     void (async () => {
       try {

@@ -14,22 +14,26 @@ import {
   getActiveMlConnectionForEmpresa,
   getMlShipmentSla,
 } from "../../src/lib/ml-api";
+import { isMercadoLivre } from "../../src/lib/domain-helpers";
 
 const DRY = process.argv.includes("--dry");
-const LIMITE = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? "2000");
+const LIMITE = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? "5000");
 
 async function main() {
   const sb = createServiceClient();
-  const { data: pedidos, error } = await sb
+  // O Tiny grava o nome do CANAL ("ML_NET AIR", "ML_NETPARTS SP",
+  // "EASY MERCADO LIVRE", "Mercado Livre"), não o nome canônico — então
+  // busca tudo com id ecommerce e filtra por isMercadoLivre (exclui Shopee).
+  const { data: todos, error } = await sb
     .from("siso_pedidos")
-    .select("id, empresa_origem_id, id_pedido_ecommerce, prazo_envio")
-    .eq("nome_ecommerce", "Mercado Livre")
+    .select("id, empresa_origem_id, id_pedido_ecommerce, prazo_envio, nome_ecommerce")
     .not("id_pedido_ecommerce", "is", null)
     .order("criado_em", { ascending: false })
     .limit(LIMITE);
   if (error) throw error;
+  const pedidos = (todos ?? []).filter((p) => isMercadoLivre(p.nome_ecommerce as string | null));
 
-  console.log(`${pedidos?.length ?? 0} pedidos ML${DRY ? " (DRY RUN)" : ""}\n`);
+  console.log(`${pedidos.length} pedidos ML${DRY ? " (DRY RUN)" : ""}\n`);
 
   // cache empresa_id → connId (evita lookup repetido)
   const connCache = new Map<string, string | null>();
@@ -38,7 +42,7 @@ async function main() {
     semConn = 0,
     erros = 0;
 
-  for (const p of pedidos ?? []) {
+  for (const p of pedidos) {
     const empresaId = p.empresa_origem_id as string | null;
     const orderId = p.id_pedido_ecommerce as string | null;
     if (!empresaId || !orderId) {

@@ -5938,21 +5938,25 @@ erros:
       roteamento, compras) — não estava na lista de "callers que resolvem produto
       efetivo" do plano cross-troca (faltou o caminho de display/match).
     fix: >
-      checklist-items resolve o substituto (siso_produtos por
-      produto_wms_substituto_id) e passa a chavear loc/saldo pelo SKU EFETIVO
-      (substituto quando há troca) + expõe sku_substituto/descricao_substituto/
-      gtin_substituto. bipar-checklist ganha fallback: se o scan não casa por
-      sku/gtin do item, resolve o produto por sku→gtin e casa via
-      produto_wms_substituto_id (aceita bipar a peça física). UI do checklist
-      mostra badge "⇄ PEGUE {sku_substituto}". Verificado end-to-end no pedido
-      1046251315 (retorna EW004.309 @ H-03-5).
+      checklist-items passa a EXIBIR o substituto COMO o item — sobrescreve
+      sku/gtin/descricao/imagem_url/localizacao/saldo pelos do substituto
+      (siso_produtos por produto_wms_substituto_id; imagem = imagens[0]). O
+      operador só vê a peça física, sem badge nem "história" do pedido (decisão
+      de UX do Eryk — a 1ª versão com badge "⇄ PEGUE" foi rejeitada).
+      bipar-checklist ganha fallback: se o scan não casa por sku/gtin do item,
+      resolve o produto por sku→gtin e casa via produto_wms_substituto_id
+      (aceita bipar a peça física). A lista (/wms/separacao) e o checklist de
+      wave-picking herdam tudo do checklist-items. Verificado end-to-end no
+      pedido 1046251315 (retorna sku=EW004.309, desc/gtin/img/loc do substituto).
     files:
       - src/app/api/wms/separacao/checklist-items/route.ts
       - src/app/api/wms/separacao/bipar-checklist/route.ts
       - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/page.tsx
       - src/app/api/wms/separacao/bipar-checklist/substituto-match.test.ts
     tags: [troca, equivalencia, separacao, checklist, bipe, substituto, produto_wms_substituto_id, picking, EW004.309]
     notes: >
-      descricao/sku/gtin do item seguem sendo os do SKU vendido (contexto NF/D3);
-      só loc/saldo + badge refletem o substituto. Embalagem/lista consomem
-      checklist-items mas ignoram os campos novos (aditivos, sem quebra).
+      produto_id do item + a NF/Tiny seguem com o SKU VENDIDO (D3) — só a
+      separação (display + bipe) mostra/casa o substituto. marcar-item/parcial/
+      validar-oc são id-based (não dependem do sku exibido); o pick resolve o
+      produto efetivo server-side.

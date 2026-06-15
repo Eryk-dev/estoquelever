@@ -63,9 +63,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 1b. Troca de equivalência: resolve o produto FÍSICO (substituto) pra exibir
-    //     SKU/descrição/loc/saldo da peça que o operador realmente pega — o item
-    //     mantém o SKU vendido (D3), mas o estoque vive no substituto.
+    // 1b. Troca de equivalência: a SEPARAÇÃO mostra a peça FÍSICA (substituto)
+    //     como SE FOSSE o item — sku/descrição/gtin/imagem/loc/saldo são do
+    //     substituto. O operador só quer pegar a peça certa; o SKU vendido fica
+    //     só no produto_id/NF (D3), invisível pro chão.
     const substitutoIds = Array.from(
       new Set(
         (items ?? [])
@@ -75,18 +76,25 @@ export async function GET(request: NextRequest) {
     );
     const substitutoMap = new Map<
       string,
-      { sku: string; descricao: string | null; gtin: string | null }
+      {
+        sku: string;
+        descricao: string | null;
+        gtin: string | null;
+        imagem_url: string | null;
+      }
     >();
     if (substitutoIds.length > 0) {
       const { data: subs } = await supabase
         .from("siso_produtos")
-        .select("id, sku, descricao, gtin")
+        .select("id, sku, descricao, gtin, imagens")
         .in("id", substitutoIds);
       for (const s of subs ?? []) {
+        const imgs = (s.imagens as string[] | null) ?? [];
         substitutoMap.set(s.id as string, {
           sku: s.sku as string,
           descricao: (s.descricao as string | null) ?? null,
           gtin: (s.gtin as string | null) ?? null,
+          imagem_url: imgs[0] ?? null,
         });
       }
     }
@@ -333,21 +341,16 @@ export async function GET(request: NextRequest) {
         id: item.id,
         pedido_id: item.pedido_id,
         produto_id: item.produto_id,
-        sku: item.sku,
-        gtin: item.gtin,
-        descricao: item.descricao,
-        // Troca de equivalência: peça FÍSICA a pegar (null se não há troca).
-        // O loc/saldo abaixo já refletem o substituto quando presente.
-        produto_wms_substituto_id: item.produto_wms_substituto_id ?? null,
-        sku_substituto: sub?.sku ?? null,
-        descricao_substituto: sub?.descricao ?? null,
-        gtin_substituto: sub?.gtin ?? null,
+        // Troca de equivalência: exibe a peça física (substituto) como item.
+        sku: sub?.sku ?? item.sku,
+        gtin: sub?.gtin ?? item.gtin,
+        descricao: sub?.descricao ?? item.descricao,
         quantidade: item.quantidade_pedida,
         separacao_marcado: item.separacao_marcado ?? false,
         separacao_marcado_em: item.separacao_marcado_em,
         quantidade_bipada: item.quantidade_bipada ?? 0,
         bipado_completo: item.bipado_completo ?? false,
-        imagem_url: item.imagem_url ?? null,
+        imagem_url: sub?.imagem_url ?? item.imagem_url ?? null,
         compra_status: item.compra_status ?? null,
         localizacao: live?.localizacao ?? null,
         saldo: live?.saldo ?? 0,

@@ -1700,7 +1700,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 
 **File:** `src/app/api/wms/separacao/checklist-items/route.ts`
 
-**Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa. **Troca de equivalência:** quando o item tem `produto_wms_substituto_id`, `localizacao`/`saldo`/`disponivel` refletem a peça FÍSICA (substituto) e a resposta inclui `sku_substituto`/`descricao_substituto`/`gtin_substituto`/`produto_wms_substituto_id` (o `sku`/`gtin`/`descricao` seguem sendo os do SKU vendido — D3).
+**Purpose:** Fetch individual items for the given pedido IDs with localizacao, stock info, and short-pick state. For transfers, resolves to the separating empresa (the one that will ship), not the origin empresa. **Troca de equivalência:** quando o item tem `produto_wms_substituto_id`, a separação EXIBE a peça FÍSICA como o item — `sku`/`gtin`/`descricao`/`imagem_url`/`localizacao`/`saldo`/`disponivel` são sobrescritos pelos do substituto (o operador só vê a peça a pegar). `produto_id` + a NF/Tiny seguem com o SKU vendido (D3).
 
 **Auth:** X-Session-Id (required)
 

@@ -32,6 +32,7 @@ import { Loader2 } from "lucide-react";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
+import { FotoProdutoZoom } from "@/components/wms/produto-lightbox";
 import {
   Icon,
   PageHeader,
@@ -2115,10 +2116,10 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
                   <tr key={it.id} style={{ borderTop: "1px solid var(--wms-c-border)" }}>
                     <td style={{ padding: "4px 6px" }}>
                       {it.imagem_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
+                        <FotoProdutoZoom
                           src={it.imagem_url}
-                          alt=""
+                          sku={it.sku}
+                          descricao={it.descricao}
                           style={{
                             width: 28,
                             height: 28,

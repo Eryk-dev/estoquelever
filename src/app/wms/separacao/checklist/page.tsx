@@ -14,6 +14,7 @@ import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
 import { EquivalentesPanel } from "@/components/wms/trocas/equivalentes-panel";
+import { FotoProdutoZoom } from "@/components/wms/produto-lightbox";
 import { useRealtimeSeparacao } from "@/hooks/use-realtime-separacao";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
 
@@ -1544,12 +1545,11 @@ function ItemRow({
         </div>
       )}
       {produto.imagem_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <FotoProdutoZoom
           src={produto.imagem_url}
-          alt={produto.sku}
+          sku={produto.sku}
+          descricao={produto.descricao}
           className="wms-thumb wms-thumb-sm"
-          loading="lazy"
         />
       ) : (
         <div
@@ -1697,12 +1697,11 @@ function ItemRowOC({
         {done ? <Icon name="check" size={12} /> : null}
       </div>
       {produto.imagem_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <FotoProdutoZoom
           src={produto.imagem_url}
-          alt={produto.sku}
+          sku={produto.sku}
+          descricao={produto.descricao}
           className="wms-thumb wms-thumb-sm"
-          loading="lazy"
         />
       ) : (
         <div
@@ -1903,12 +1902,11 @@ function RealocacaoRow({
         {(isPicadoCompleto || isPicadoParcial) && <Icon name="check" size={12} />}
       </div>
       {item.imagem_url ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <FotoProdutoZoom
           src={item.imagem_url}
-          alt={item.sku}
+          sku={item.sku}
+          descricao={item.descricao}
           className="wms-thumb wms-thumb-sm"
-          loading="lazy"
         />
       ) : (
         <div

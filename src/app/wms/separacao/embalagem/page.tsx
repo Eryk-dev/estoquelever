@@ -21,6 +21,7 @@ import {
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
+import { FotoProdutoZoom } from "@/components/wms/produto-lightbox";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import type { SeparacaoPedido } from "@/components/wms/separacao/types";
 import { useTrackPresencaWms } from "@/hooks/use-presenca-wms";
@@ -890,10 +891,10 @@ function ItemRow({
       </div>
       <div>
         {item.imagem_url ? (
-          <img
+          <FotoProdutoZoom
             src={item.imagem_url}
-            alt=""
-            loading="lazy"
+            sku={item.sku}
+            descricao={item.descricao}
             className="wms-thumb wms-thumb-md"
           />
         ) : (

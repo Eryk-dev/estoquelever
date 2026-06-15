@@ -8,6 +8,7 @@ import { X, Loader2, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { sisoFetch } from "@/lib/auth-context";
 import { PageHeader, fmtRelative } from "@/components/wms/ui/wms-ui";
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
+import { FotoProdutoZoom } from "@/components/wms/produto-lightbox";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -494,8 +495,11 @@ function ItensGrid({ itens }: { itens: ItemConferencia[] }) {
           <div key={item.id} className={`wms-emb-card ${multi ? "is-multi" : ""}`}>
             <div className="wms-emb-photo">
               {item.imagem_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.imagem_url} alt="" />
+                <FotoProdutoZoom
+                  src={item.imagem_url}
+                  sku={item.sku}
+                  descricao={item.descricao}
+                />
               ) : (
                 <div className="wms-emb-noimg">sem foto</div>
               )}

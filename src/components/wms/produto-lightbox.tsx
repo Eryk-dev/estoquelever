@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import { Icon } from "@/components/wms/ui/wms-ui";
 
 /**
@@ -137,6 +137,54 @@ export function ProdutoLightbox({
         </div>
       )}
     </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+
+/**
+ * Thumbnail clicável: renderiza a foto do produto e, ao clicar, abre o
+ * ProdutoLightbox com essa única imagem ampliada (zoom do item). Mantém
+ * o próprio estado, então pode ser dropado em qualquer linha/grade.
+ * `stopPropagation` evita que o clique acione o toggle da linha em volta.
+ */
+export function FotoProdutoZoom({
+  src,
+  sku,
+  descricao,
+  className,
+  style,
+}: {
+  src: string;
+  sku?: string | null;
+  descricao?: string | null;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={sku ?? ""}
+        loading="lazy"
+        className={className}
+        style={{ cursor: "zoom-in", ...style }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      />
+      {open && (
+        <ProdutoLightbox
+          imagens={[src]}
+          sku={sku ?? undefined}
+          descricao={descricao ?? undefined}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

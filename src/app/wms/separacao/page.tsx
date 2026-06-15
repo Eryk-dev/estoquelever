@@ -1963,6 +1963,10 @@ interface ChecklistItem {
   sku: string;
   gtin: string | null;
   descricao: string | null;
+  // Troca de equivalência: peça física a pegar (null se não há troca). Item
+  // mantém o SKU vendido (D3); loc já reflete o substituto.
+  sku_substituto: string | null;
+  descricao_substituto: string | null;
   quantidade: number;
   separacao_marcado: boolean;
   quantidade_bipada: number;
@@ -2079,9 +2083,20 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
                     </td>
                     <td className="wms-mono" style={{ padding: "4px 6px", fontSize: 12 }}>
                       {it.sku}
+                      {it.sku_substituto && (
+                        <span
+                          className="wms-badge wms-badge-warn"
+                          style={{ fontSize: 9.5, fontWeight: 800, marginLeft: 5 }}
+                          title={`Troca de equivalência: pegue a peça FÍSICA ${it.sku_substituto}`}
+                        >
+                          ⇄ {it.sku_substituto}
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: "4px 6px", fontSize: 12 }}>
-                      <span title={it.descricao ?? ""}>{it.descricao ?? "—"}</span>
+                      <span title={(it.sku_substituto ? it.descricao_substituto : it.descricao) ?? ""}>
+                        {(it.sku_substituto ? it.descricao_substituto : it.descricao) ?? "—"}
+                      </span>
                     </td>
                     <td className="wms-mono" style={{ padding: "4px 6px", fontSize: 11.5 }}>
                       {it.localizacao ?? <span className="wms-td-mute">—</span>}

@@ -5812,3 +5812,71 @@ erros:
       o pipeline. Tradeoff aceito: updates Tiny-side (forma_envio etc.) em pedido
       comprometido também são pulados, consistente com a guarda estoque_lancado
       pré-existente.
+
+- id: ITEM-PRODUTO-NAO-MAPEADO-SUMIA-DO-PEDIDO
+  date: 2026-06-14
+  source: processor.wms
+  category: business_logic
+  message: >
+    Item de pedido com tiny_produto_id sem linha em siso_produto_empresas (ou
+    produto_id=0) era pulado silenciosamente no roteamento (apenas logger.warn)
+    — o pedido roteava com os itens restantes, ou caía em OC sem_cobertura, sem
+    nenhum sinal pro operador. Itens sumiam do fulfillment.
+  cause: >
+    resolverItensWms (webhook-processor-wms.ts) só montava o Map a partir do
+    batch-query em siso_produto_empresas; quem não tinha mapeamento ficava com
+    produtoIdWms=null e processWebhookWms filtrava esses itens antes de rotear.
+    Nenhum fallback buscava o produto no Tiny; produto_id=0 (anúncio sem produto
+    Tiny, ex. "VERIFICAR LADO") batia no mesmo caminho silencioso.
+  fix: >
+    (1) Feature 1 — auto-provisionamento: para tiny_produto_id>0 sem mapeamento,
+    resolverItensWms chama ensureProdutoFromTiny(sku, empresa, tinyId) → GET
+    /produtos/{id} no Tiny, cria siso_produtos + bridge + sincroniza dados.
+    Falha no Tiny não derruba o webhook (segue sem mapeamento, como antes).
+    (2) Feature 2 — produto_id=0 não dá pra resolver: o pedido é parqueado como
+    pendente com marcador REQUER_SKU (sem auto-OC, sem reserva, sem job). A aba
+    de pedidos mostra "Definir SKU"; POST pedidos/[id]/itens/[itemId]/definir-sku
+    vincula o produto e reprocessa nativo via processWebhookWms.
+  files:
+    - src/lib/webhook-processor-wms.ts
+    - src/lib/webhook-processor-wms.test.ts
+    - src/app/api/wms/pedidos/[id]/itens/[itemId]/definir-sku/route.ts
+    - src/app/api/wms/pedidos/[id]/detalhe/route.ts
+    - src/app/wms/pedidos/[id]/page.tsx
+  tags: [webhook, processor, produto, siso_produto_empresas, tiny, mapeamento, produto_id_zero, REQUER_SKU, auto-provision, ensureProdutoFromTiny, definir-sku, portabilidade]
+  notes: >
+    Motivado pela portabilidade dos pedidos pré-embalado do SISO antigo: 2 dos
+    86 candidatos tinham produto não-resolvível (1 sku fora do bridge, 1 com
+    produto_id=0). Auto-provision cobre o 1º; definir-sku cobre o 2º.
+
+  - id: POLLING-NFS-PRESAS-NUNCA-RODA-TIMEOUT
+    date: "2026-06-14"
+    source: tiny-polling
+    category: infrastructure
+    message: >
+      pedido com NF completa preso em aguardando_nf nunca destravava
+      automaticamente — recuperarNfsPresas (rede de segurança) jamais executava
+    cause: >
+      No loop por-empresa de pollTiny, a varredura "nfs-presas"
+      (recuperarNfsPresas) era a ÚLTIMA de 5. As anteriores — "aprovados"
+      (janela 30d) e "notas" (janela 7d, loop por-NF chamando o Tiny) — são
+      pesadas e estouravam o maxDuration=300s do lambda. O polling morria no
+      passo "notas" e nunca chegava no "nfs-presas". Evidência: ausência do log
+      "Polling Tiny concluído" e do log de destrava; último log de cada run era
+      "NFs autorizadas sem webhook detectadas" (passo notas). Resultado: pedidos
+      com status regredido pra aguardando_nf (ver
+      ATUALIZACAO-PEDIDO-REGRIDE-AGUARDANDO-NF) ficavam presos pra sempre apesar
+      da NF completa.
+    fix: >
+      Reordenado o array `varreduras` em pollTiny: nfs-presas roda PRIMEIRO. É
+      barato (1 query indexada + ≤20 updates) e crítico; rodando antes dos
+      sweeps pesados, sempre executa mesmo que o lambda estoure depois. Não há
+      dependência de dados das outras varreduras (é backstop de transição
+      perdida/regredida). 29 testes de tiny-polling seguem passando.
+    files:
+      - src/lib/tiny-polling.ts
+    tags: [polling, tiny, nfs-presas, recuperarNfsPresas, aguardando_nf, timeout, maxDuration, cron, safety-net, presos]
+    notes: >
+      Mitiga, não elimina, o timeout do polling: aprovados/notas ainda podem não
+      completar numa run. Fix maior (paginar/limitar janelas ou separar crons)
+      fica pra depois. nfs-presas garantido é o que destrava os presos.

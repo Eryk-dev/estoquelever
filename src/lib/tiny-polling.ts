@@ -761,12 +761,19 @@ export async function pollTiny(): Promise<PollingResult> {
       // Cada varredura é isolada: erro numa (ex.: Tiny 400 na listagem de
       // cancelados) não derruba as demais da mesma empresa.
       await runWithEmpresa(empresa.empresaId, async () => {
+        // nfs-presas roda PRIMEIRO: é barato (1 query indexada + ≤20 updates)
+        // e crítico (destrava pedidos com status regredido pra aguardando_nf).
+        // Os sweeps abaixo (aprovados 30d, notas 7d) são pesados e podem
+        // estourar o maxDuration do lambda; se nfs-presas ficasse por último,
+        // nunca rodaria (bug observado em 2026-06-14: o polling morria no passo
+        // "notas" e jamais chegava no nfs-presas, deixando pedidos presos pra
+        // sempre apesar da NF completa).
         const varreduras: Array<[string, () => Promise<void>]> = [
+          ["nfs-presas", () => recuperarNfsPresas(empresa, resumo)],
           ["retry-falhos", () => retryWebhooksFalhos(empresa, resumo)],
           ["aprovados", () => pollPedidosAprovados(token, empresa, conn.cnpj, dataInicialAprovados, resumo)],
           ["cancelados", () => pollPedidosCancelados(token, empresa, conn.cnpj, dataInicial, resumo)],
           ["notas", () => pollNotasAutorizadas(token, empresa, conn.cnpj, dataInicial, resumo)],
-          ["nfs-presas", () => recuperarNfsPresas(empresa, resumo)],
         ];
         for (const [nome, varrer] of varreduras) {
           try {

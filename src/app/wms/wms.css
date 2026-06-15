@@ -807,7 +807,60 @@
   .wms-lb-split { grid-template-columns: 1fr; overflow-y: auto; }
 }
 
-/* Conferência · tela cheia "o que embalar" (grade, foto grande + ×qtd) */
+/* Conferência · launcher (escolher modo → abre o kiosk em tela cheia) */
+.wms-conf-launch {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 640px) { .wms-conf-launch { grid-template-columns: 1fr; } }
+.wms-conf-launch-btn {
+  text-align: left;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 22px;
+  border-radius: 16px;
+  border: 1px solid var(--wms-c-border, #e5e7eb);
+  background: var(--wms-c-surface, #fff);
+  color: inherit;
+  cursor: pointer;
+  transition: transform .1s ease, box-shadow .1s ease, border-color .1s ease;
+}
+.wms-conf-launch-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .10);
+}
+.wms-conf-launch-btn.is-conferir { border-left: 5px solid #0d9488; }
+.wms-conf-launch-btn.is-embalar  { border-left: 5px solid #6366f1; }
+.wms-conf-launch-t { font-size: 26px; font-weight: 800; }
+.wms-conf-launch-d { font-size: 13px; color: var(--wms-c-mute, #6b7280); }
+
+/* Conferência · kiosk em tela cheia (bipar + ver fotos/qtd em destaque) */
+.wms-conf-kiosk {
+  position: fixed; inset: 0;
+  z-index: 9990;
+  background: var(--wms-c-bg, #f4f4f5);
+  display: flex; flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+  animation: wms-lb-fade .15s ease-out;
+}
+.wms-conf-kiosk-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.wms-conf-kiosk-modos { display: flex; gap: 6px; }
+.wms-conf-kiosk-hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wms-conf-kiosk-wait {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; text-align: center;
+  color: var(--wms-c-mute, #6b7280);
+}
+.wms-conf-kiosk-wait-t { font-size: 30px; font-weight: 800; color: var(--wms-c-fg, #111); }
+.wms-conf-kiosk-wait-d { font-size: 14px; max-width: 540px; }
+
+/* Conferência · grade de fotos grandes + ×qtd em destaque */
 .wms-emb-grid {
   flex: 1;
   min-height: 0;
@@ -820,11 +873,18 @@
   padding: 4px;
 }
 .wms-emb-card {
+  position: relative;
   background: #fff;
   border-radius: 14px;
   overflow: hidden;
   display: flex; flex-direction: column;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
+  border: 1px solid var(--wms-c-border, #e5e7eb);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .10);
+}
+/* >1 unidade do mesmo produto: card acende verde-limão pra não embalar só 1 */
+.wms-emb-card.is-multi {
+  border-color: #84cc16;
+  box-shadow: 0 0 0 3px rgba(132, 204, 22, .55), 0 8px 22px rgba(0, 0, 0, .12);
 }
 .wms-emb-photo {
   position: relative;
@@ -840,19 +900,32 @@
 }
 .wms-emb-qtd {
   position: absolute; top: 10px; right: 10px;
-  min-width: 50px;
+  display: inline-flex; flex-direction: column; align-items: center;
+  min-width: 52px;
   padding: 4px 16px;
-  border-radius: 999px;
+  border-radius: 14px;
   background: rgba(17, 24, 39, .88);
   color: #fff;
   font-family: var(--wms-font-mono);
   font-weight: 800;
-  font-size: 36px;
-  line-height: 1.15;
+  font-size: 34px;
+  line-height: 1.1;
   text-align: center;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .30);
 }
-.wms-emb-qtd.is-multi { background: #0d9488; }
+/* >1 unidade: pílula verde-limão, maior, com brilho — destaque forte */
+.wms-emb-qtd.is-multi {
+  background: #84cc16;
+  color: #1a2e05;
+  font-size: 46px;
+  padding: 6px 18px;
+  box-shadow: 0 0 0 4px rgba(132, 204, 22, .35), 0 6px 18px rgba(0, 0, 0, .25);
+}
+.wms-emb-qtd-un {
+  font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+  opacity: .85;
+}
 .wms-emb-foot {
   padding: 10px 12px 12px;
   display: flex; flex-direction: column; gap: 2px;

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, Loader2, AlertTriangle, CheckCircle2, XCircle, Maximize2 } from "lucide-react";
+import { X, Loader2, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 
 import { sisoFetch } from "@/lib/auth-context";
 import { PageHeader, fmtRelative } from "@/components/wms/ui/wms-ui";
@@ -79,7 +79,7 @@ export default function WmsConferenciaPage() {
   const [ultimo, setUltimo] = useState<BipResposta | null>(null);
   const [historico, setHistorico] = useState<HistoricoBipe[]>([]);
   const [divergenciaAberta, setDivergenciaAberta] = useState(false);
-  const [embalarAberto, setEmbalarAberto] = useState(false);
+  const [kioskOpen, setKioskOpen] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<{
     text: string;
     tone: "ok" | "warn" | "error" | "neutral";
@@ -188,155 +188,40 @@ export default function WmsConferenciaPage() {
     <>
       <PageHeader
         title="Conferência de embalagem"
-        subtitle="Bipe a etiqueta de envio (ML/Shopee) — bipar a próxima confirma a anterior"
+        subtitle="Escolha o modo — abre em tela cheia pronto pra bipar a etiqueta de envio"
         backHref="/wms/separacao"
         backLabel="Separação"
-      >
-        <div style={{ display: "flex", gap: 4 }}>
-          {(["conferir", "embalar"] as Modo[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={`wms-btn wms-btn-sm ${modo === m ? "wms-btn-primary" : "wms-btn-ghost"}`}
-              onClick={() => trocarModo(m)}
-            >
-              {m === "conferir" ? "Conferir" : "Embalar"}
-            </button>
-          ))}
-        </div>
-      </PageHeader>
-
-      <HandheldScan
-        label={
-          modo === "conferir"
-            ? "Bipe a etiqueta de envio pra CONFERIR"
-            : "Bipe a etiqueta de envio pra registrar que VOCÊ embalou"
-        }
-        placeholder="Bipe ou digite e Enter…"
-        onSubmit={(code) => {
-          filaRef.current.push({ codigo: code, modo });
-          setFilaLen(filaRef.current.length);
-          void drainFila();
-        }}
-        pending={false}
       />
 
-      {filaLen > 0 && (
-        <div className="wms-td-mute" style={{ marginTop: 6, fontSize: 12 }}>
-          +{filaLen} na fila
-        </div>
-      )}
-
-      {/* Banner grande do último bip — legível da bancada, longe da tela */}
-      {scanFeedback && scanFeedback.tone !== "neutral" && (
-        <div className={`wms-conf-banner is-${scanFeedback.tone}`}>
-          {scanFeedback.tone === "ok" && <CheckCircle2 size={26} />}
-          {scanFeedback.tone === "warn" && <AlertTriangle size={26} />}
-          {scanFeedback.tone === "error" && <XCircle size={26} />}
-          <span>{scanFeedback.text}</span>
-        </div>
-      )}
-
-      {/* Card do último pedido bipado — clicar abre a tela cheia "o que embalar" */}
-      {pedido && (
-        <div
-          className="wms-card"
-          style={{ marginTop: 12, padding: 16, cursor: "pointer" }}
-          role="button"
-          tabIndex={0}
-          onClick={() => setEmbalarAberto(true)}
+      {/* Launcher: clicar num modo abre o kiosk em tela cheia, pronto pra bipar */}
+      <div className="wms-conf-launch">
+        <button
+          type="button"
+          className="wms-conf-launch-btn is-conferir"
+          onClick={() => {
+            trocarModo("conferir");
+            setKioskOpen(true);
+          }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span className="wms-mono" style={{ fontSize: 22, fontWeight: 800 }}>
-              #{pedido.numero ?? pedido.id}
-            </span>
-            {pedido.nome_ecommerce && (
-              <span className="wms-badge wms-badge-info">{pedido.nome_ecommerce}</span>
-            )}
-            {pedido.embalado_real_por_nome && (
-              <span className="wms-badge wms-badge-mute">
-                embalado por {pedido.embalado_real_por_nome}
-              </span>
-            )}
-            {pedido.conferido_por_nome && (
-              <span className="wms-badge wms-badge-ok">
-                conferido por {pedido.conferido_por_nome}
-              </span>
-            )}
-            {pedido.divergencia_tipo && (
-              <span className="wms-badge wms-badge-danger">
-                divergência: {TIPOS_DIVERGENCIA.find((t) => t.id === pedido.divergencia_tipo)?.label ?? pedido.divergencia_tipo}
-              </span>
-            )}
-            {modo === "conferir" && pedido.status_separacao === "conferido" && !pedido.divergencia_tipo && (
-              <button
-                type="button"
-                className="wms-btn wms-btn-sm wms-btn-ghost"
-                style={{ marginLeft: "auto", color: "#b91c1c", borderColor: "#fca5a5" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDivergenciaAberta(true);
-                }}
-              >
-                <AlertTriangle size={13} style={{ marginRight: 4 }} />
-                Divergência
-              </button>
-            )}
-          </div>
-
-          <div
-            className="wms-td-mute"
-            style={{ fontSize: 12, marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
-          >
-            <span>{ultimo!.itens.length} item(s) · {totalUnidades} unidade(s) esperadas no pacote</span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#0d9488", fontWeight: 600 }}>
-              <Maximize2 size={12} /> toque pra ampliar
-            </span>
-          </div>
-
-          <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-            {ultimo!.itens.map((item) => (
-              <div
-                key={item.id}
-                style={{ display: "flex", alignItems: "center", gap: 12 }}
-              >
-                {item.imagem_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.imagem_url} alt="" loading="lazy" className="wms-thumb wms-thumb-lg" />
-                ) : (
-                  <div
-                    className="wms-thumb wms-thumb-lg"
-                    style={{ background: "var(--wms-c-faint)", border: "1px solid var(--wms-c-border)" }}
-                  />
-                )}
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="wms-mono" style={{ fontWeight: 700, fontSize: 16 }}>
-                    {item.sku}
-                  </div>
-                  <div
-                    className="wms-td-mute"
-                    style={{ fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    title={item.descricao ?? undefined}
-                  >
-                    {item.descricao}
-                  </div>
-                </div>
-                <div
-                  className="wms-mono"
-                  style={{
-                    fontSize: 30,
-                    fontWeight: 800,
-                    lineHeight: 1,
-                    color: item.quantidade_pedida > 1 ? "#0d9488" : undefined,
-                  }}
-                >
-                  ×{item.quantidade_pedida}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+          <span className="wms-conf-launch-t">Conferir</span>
+          <span className="wms-conf-launch-d">
+            Bipe a etiqueta e veja em tela cheia, com foto e quantidade grandes, o que deveria estar no pacote.
+          </span>
+        </button>
+        <button
+          type="button"
+          className="wms-conf-launch-btn is-embalar"
+          onClick={() => {
+            trocarModo("embalar");
+            setKioskOpen(true);
+          }}
+        >
+          <span className="wms-conf-launch-t">Embalar</span>
+          <span className="wms-conf-launch-d">
+            Registra que foi você que embalou — com as fotos e quantidades do envio em destaque.
+          </span>
+        </button>
+      </div>
 
       {/* Histórico da sessão */}
       {historico.length > 0 && (
@@ -372,14 +257,112 @@ export default function WmsConferenciaPage() {
         </div>
       )}
 
-      {!pedido && historico.length === 0 && (
-        <div className="wms-empty-block" style={{ marginTop: 16 }}>
-          <h3>{modo === "conferir" ? "Pronto pra conferir" : "Pronto pra embalar"}</h3>
-          <p>
-            {modo === "conferir"
-              ? "Bipe a etiqueta de envio do pacote: o sistema mostra o que deveria estar dentro. Tudo certo? Bipe a próxima. Errado? Clique em Divergência."
-              : "Antes de embalar, bipe a etiqueta de envio — fica registrado que foi você que embalou esse pacote."}
-          </p>
+      {/* ── Kiosk em tela cheia: bipar + ver fotos/quantidades em destaque ── */}
+      {kioskOpen && (
+        <div className="wms-conf-kiosk">
+          <div className="wms-conf-kiosk-top">
+            <div className="wms-conf-kiosk-modos">
+              {(["conferir", "embalar"] as Modo[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`wms-btn ${modo === m ? "wms-btn-primary" : "wms-btn-ghost"}`}
+                  onClick={() => trocarModo(m)}
+                >
+                  {m === "conferir" ? "Conferir" : "Embalar"}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost"
+              onClick={() => setKioskOpen(false)}
+            >
+              <X size={16} style={{ marginRight: 4 }} /> Sair
+            </button>
+          </div>
+
+          <HandheldScan
+            label={
+              modo === "conferir"
+                ? "Bipe a etiqueta de envio pra CONFERIR"
+                : "Bipe a etiqueta de envio pra registrar que VOCÊ embalou"
+            }
+            placeholder="Bipe ou digite e Enter…"
+            onSubmit={(code) => {
+              filaRef.current.push({ codigo: code, modo });
+              setFilaLen(filaRef.current.length);
+              void drainFila();
+            }}
+            pending={false}
+          />
+
+          {filaLen > 0 && (
+            <div className="wms-td-mute" style={{ fontSize: 12 }}>
+              +{filaLen} na fila
+            </div>
+          )}
+
+          {scanFeedback && scanFeedback.tone !== "neutral" && (
+            <div className={`wms-conf-banner is-${scanFeedback.tone}`}>
+              {scanFeedback.tone === "ok" && <CheckCircle2 size={26} />}
+              {scanFeedback.tone === "warn" && <AlertTriangle size={26} />}
+              {scanFeedback.tone === "error" && <XCircle size={26} />}
+              <span>{scanFeedback.text}</span>
+            </div>
+          )}
+
+          {pedido ? (
+            <>
+              <div className="wms-conf-kiosk-hd">
+                <span className="wms-mono" style={{ fontSize: 24, fontWeight: 800 }}>
+                  #{pedido.numero ?? pedido.id}
+                </span>
+                {pedido.nome_ecommerce && (
+                  <span className="wms-badge wms-badge-info">{pedido.nome_ecommerce}</span>
+                )}
+                {pedido.embalado_real_por_nome && (
+                  <span className="wms-badge wms-badge-mute">
+                    embalado por {pedido.embalado_real_por_nome}
+                  </span>
+                )}
+                {pedido.conferido_por_nome && (
+                  <span className="wms-badge wms-badge-ok">
+                    conferido por {pedido.conferido_por_nome}
+                  </span>
+                )}
+                {pedido.divergencia_tipo && (
+                  <span className="wms-badge wms-badge-danger">
+                    divergência: {TIPOS_DIVERGENCIA.find((t) => t.id === pedido.divergencia_tipo)?.label ?? pedido.divergencia_tipo}
+                  </span>
+                )}
+                <span className="wms-td-mute" style={{ fontSize: 13 }}>
+                  {ultimo!.itens.length} item(s) · {totalUnidades} un
+                </span>
+                {modo === "conferir" && pedido.status_separacao === "conferido" && !pedido.divergencia_tipo && (
+                  <button
+                    type="button"
+                    className="wms-btn wms-btn-sm wms-btn-ghost"
+                    style={{ marginLeft: "auto", color: "#b91c1c", borderColor: "#fca5a5" }}
+                    onClick={() => setDivergenciaAberta(true)}
+                  >
+                    <AlertTriangle size={13} style={{ marginRight: 4 }} />
+                    Divergência
+                  </button>
+                )}
+              </div>
+              <ItensGrid itens={ultimo!.itens} />
+            </>
+          ) : (
+            <div className="wms-conf-kiosk-wait">
+              <span className="wms-conf-kiosk-wait-t">Aguardando bipe…</span>
+              <span className="wms-conf-kiosk-wait-d">
+                {modo === "conferir"
+                  ? "Bipe a etiqueta de envio: as fotos e quantidades do pacote aparecem aqui, grandes, pra você conferir num olhar."
+                  : "Bipe a etiqueta de envio pra registrar que foi você que embalou — as fotos e quantidades do envio aparecem aqui em destaque."}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -393,14 +376,6 @@ export default function WmsConferenciaPage() {
         onCancel={() => setDivergenciaAberta(false)}
         pedidoNumero={pedido?.numero ?? pedido?.id ?? ""}
       />
-
-      {embalarAberto && pedido && (
-        <EmbalarFullscreen
-          pedido={pedido}
-          itens={ultimo!.itens}
-          onClose={() => setEmbalarAberto(false)}
-        />
-      )}
     </>
   );
 }
@@ -428,7 +403,7 @@ function DivergenciaModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4"
       onClick={onCancel}
     >
       <div
@@ -505,57 +480,18 @@ function DivergenciaModal({
   );
 }
 
-// ─── EmbalarFullscreen ────────────────────────────────────────────────────────
-// Tela cheia "o que embalar": grade com foto grande + ×qtd em destaque por item.
-// O operador bate o olho e entende o pacote inteiro de uma vez.
+// ─── ItensGrid ────────────────────────────────────────────────────────────────
+// Grade de fotos grandes + ×qtd em destaque. Quando há mais de uma unidade do
+// MESMO produto, a quantidade e o card acendem em verde-limão pra evitar que o
+// operador embale só 1. O operador bate o olho e entende o pacote.
 
-function EmbalarFullscreen({
-  pedido,
-  itens,
-  onClose,
-}: {
-  pedido: PedidoBipado;
-  itens: ItemConferencia[];
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const totalUnidades = itens.reduce((s, i) => s + i.quantidade_pedida, 0);
-
+function ItensGrid({ itens }: { itens: ItemConferencia[] }) {
   return (
-    <div className="wms-lb-overlay" onClick={onClose} role="dialog" aria-modal="true">
-      <button
-        type="button"
-        className="wms-lb-close"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClose();
-        }}
-        aria-label="Fechar"
-      >
-        <X size={18} />
-      </button>
-
-      <div className="wms-lb-meta">
-        <span className="wms-mono wms-lb-sku" style={{ fontSize: 19 }}>
-          #{pedido.numero ?? pedido.id}
-        </span>
-        {pedido.nome_ecommerce && <span className="wms-lb-desc">{pedido.nome_ecommerce}</span>}
-        <span className="wms-lb-counter">
-          {itens.length} item(s) · {totalUnidades} un
-        </span>
-      </div>
-
-      {/* Clicar no espaço escuro em volta fecha; nos cards, não. */}
-      <div className="wms-emb-grid" onClick={(e) => e.stopPropagation()}>
-        {itens.map((item) => (
-          <div key={item.id} className="wms-emb-card">
+    <div className="wms-emb-grid">
+      {itens.map((item) => {
+        const multi = item.quantidade_pedida > 1;
+        return (
+          <div key={item.id} className={`wms-emb-card ${multi ? "is-multi" : ""}`}>
             <div className="wms-emb-photo">
               {item.imagem_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -563,8 +499,9 @@ function EmbalarFullscreen({
               ) : (
                 <div className="wms-emb-noimg">sem foto</div>
               )}
-              <span className={`wms-emb-qtd ${item.quantidade_pedida > 1 ? "is-multi" : ""}`}>
+              <span className={`wms-emb-qtd ${multi ? "is-multi" : ""}`}>
                 ×{item.quantidade_pedida}
+                {multi && <small className="wms-emb-qtd-un">unid.</small>}
               </span>
             </div>
             <div className="wms-emb-foot">
@@ -572,8 +509,8 @@ function EmbalarFullscreen({
               {item.descricao && <span className="wms-emb-desc">{item.descricao}</span>}
             </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }

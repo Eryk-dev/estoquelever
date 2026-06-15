@@ -5774,3 +5774,41 @@ erros:
     - scripts/wms/backfill-barcodes-raster.ts
     - next.config.ts
   tags: [conferencia, embalagem, shopee, etiqueta, etiqueta_barcodes, raster, zpl, barcode, rastreio, zxing, mercado_livre]
+
+  - id: ATUALIZACAO-PEDIDO-REGRIDE-AGUARDANDO-NF
+    date: "2026-06-14"
+    source: processor.wms
+    category: business_logic
+    message: >
+      pedido propria preso em aguardando_nf mesmo com NF autorizada + agrupamento
+      criado + expedição concluída no Tiny (ex.: #51426 / id 938268400)
+    cause: >
+      processWebhookWms só pulava reprocesso quando estoque_lancado=true. Para
+      pedido propria esse flag só vira true no cutover (pick → separado), então a
+      janela aguardando_separacao..pré-pick ficava desprotegida. O Tiny dispara um
+      webhook atualizacao_pedido (situacao=aprovado) após emitir a NF / concluir a
+      expedição; ele re-roda o pipeline inteiro e o re-upsert grava
+      status_separacao='aguardando_nf' (linha 641), regredindo a transição que o
+      webhook da NF já tinha feito (aguardando_separacao). Também enfileira um
+      lancar_estoque duplicado. A NF (nota_fiscal_id/chave/danfe) é preservada
+      (não está no payload do upsert) — só o status regride. A rede de segurança
+      recuperarNfsPresas (tiny-polling) destrava, mas só após 30min de grace.
+    fix: >
+      Ampliada a guarda de idempotência (4b) em processWebhookWms: além de
+      estoque_lancado=true, pula o reprocesso quando já existe job lancar_estoque
+      pro pedido — sinal de pedido COMPROMETIDO (último passo do intake
+      auto-aprovado propria/oc e da aprovação humana de transferência via
+      wms_aprovar_e_enfileirar). Pedidos pendente (sem job, aguardando decisão) e
+      os que erraram ANTES do enqueue (retry de webhook falho) não têm job → seguem
+      reprocessando. Harness trunca siso_fila_execucao + siso_pedidos → seed:cenarios
+      reprocessa limpo. Teste de regressão em webhook-processor-wms.test.ts.
+    files:
+      - src/lib/webhook-processor-wms.ts
+      - src/lib/webhook-processor-wms.test.ts
+    tags: [webhook, atualizacao_pedido, aguardando_nf, regressao, idempotencia, propria, lancar_estoque, status_separacao, tiny, polling, recuperarNfsPresas]
+    notes: >
+      A NF já vem por seu próprio webhook (nf-webhook-handler) e a separação por
+      suas rotas — o reprocesso via webhook de pedido comprometido não deve tocar
+      o pipeline. Tradeoff aceito: updates Tiny-side (forma_envio etc.) em pedido
+      comprometido também são pulados, consistente com a guarda estoque_lancado
+      pré-existente.

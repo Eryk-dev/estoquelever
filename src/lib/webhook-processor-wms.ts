@@ -545,17 +545,43 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   const status = autoAprova ? "executando" : "pendente";
   const tipoResolucao = autoAprova ? "auto" : null;
 
-  // 4b. Idempotência: se pedido já existe e foi processado, log e sai.
-  //     (Cobre re-entregas de webhook em prod sem causar double-saída.)
+  // 4b. Idempotência: se pedido já existe e já foi COMPROMETIDO no pipeline,
+  //     log e sai. (Cobre re-entregas de webhook — tipicamente
+  //     `atualizacao_pedido`, que o Tiny dispara após emitir a NF / concluir a
+  //     expedição — sem reprocessar.)
+  //
+  //     "Comprometido" = já existe job `lancar_estoque` pro pedido. Esse é o
+  //     último passo do intake auto-aprovado (propria/oc) e da aprovação humana
+  //     de transferência (wms_aprovar_e_enfileirar). Reprocessar um pedido
+  //     comprometido re-rodaria o roteamento, REGREDIRIA o status_separacao
+  //     (ex.: aguardando_separacao → aguardando_nf, desfazendo a transição que
+  //     o webhook da NF já fez) e enfileiraria um lancar_estoque DUPLICADO. O
+  //     fluxo de NF/separação segue por seus próprios webhooks/rotas.
+  //
+  //     Pedidos `pendente` (sem job, aguardando decisão humana) e os que
+  //     erraram ANTES do enqueue do job (retry de webhook falho) NÃO têm job →
+  //     seguem reprocessando normalmente. O harness de teste trunca
+  //     siso_fila_execucao + siso_pedidos, então seed:cenarios reprocessa limpo.
+  //
+  //     A guarda de estoque_lancado é mantida como rede redundante (post-pick).
   const { data: existente } = await sb
     .from("siso_pedidos")
     .select("estoque_lancado")
     .eq("id", pedido.id)
     .maybeSingle();
 
-  if (existente?.estoque_lancado === true) {
-    logger.info("processor.wms", "pedido já processado e estoque lançado — skip idempotente", {
+  const { data: jobComprometido } = await sb
+    .from("siso_fila_execucao")
+    .select("id")
+    .eq("pedido_id", pedido.id)
+    .eq("tipo", "lancar_estoque")
+    .limit(1)
+    .maybeSingle();
+
+  if (existente?.estoque_lancado === true || jobComprometido) {
+    logger.info("processor.wms", "pedido já comprometido — skip idempotente (re-entrega de webhook)", {
       pedidoId: pedido.id,
+      motivo: existente?.estoque_lancado === true ? "estoque_lancado" : "job_lancar_estoque_existe",
     });
     await sb
       .from("siso_webhook_logs")

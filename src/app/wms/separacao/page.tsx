@@ -1978,10 +1978,24 @@ interface ChecklistItem {
   parcial_motivo: string | null;
 }
 
+interface PedidoEmbalagemMeta {
+  id: string;
+  embalado_por_nome: string | null;
+  embalado_em: string | null;
+  embalado_real_por_nome: string | null;
+  embalado_real_em: string | null;
+  impressora_nome: string | null;
+  impressora_id: number | null;
+  etiqueta_impressa_em: string | null;
+}
+
 function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
   // Em pedidos da tab Aguardando OC os itens "comprar" só aparecem em pick-oc mode.
   const isPickOC = pedido.status_separacao === "aguardando_compra";
-  const { data, isLoading, isError, error } = useQuery<{ items: ChecklistItem[] }>({
+  const { data, isLoading, isError, error } = useQuery<{
+    items: ChecklistItem[];
+    pedidos?: PedidoEmbalagemMeta[];
+  }>({
     queryKey: ["wms-separacao-expansao", pedido.id, isPickOC],
     queryFn: async () => {
       const qs = new URLSearchParams({ pedidos: pedido.id });
@@ -1997,6 +2011,7 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
   });
 
   const items = data?.items ?? [];
+  const meta = data?.pedidos?.find((x) => x.id === pedido.id);
 
   return (
     <div
@@ -2135,6 +2150,18 @@ function PedidoExpansaoPanel({ pedido }: { pedido: SeparacaoPedido }) {
           />
           {pedido.encaminhado_de && (
             <DetailRow label="Encaminhado de" value={pedido.encaminhado_de} />
+          )}
+          {(meta?.embalado_por_nome || meta?.embalado_real_por_nome) && (
+            <DetailRow
+              label="Embalado por"
+              value={meta.embalado_por_nome ?? meta.embalado_real_por_nome}
+            />
+          )}
+          {(meta?.impressora_nome || meta?.impressora_id) && (
+            <DetailRow
+              label="Impressora"
+              value={meta.impressora_nome ?? `#${meta.impressora_id}`}
+            />
           )}
         </dl>
 

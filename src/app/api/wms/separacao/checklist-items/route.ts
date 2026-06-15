@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
     const { data: pedidos } = await supabase
       .from("siso_pedidos")
       .select(
-        "id, empresa_origem_id, separacao_galpao_id, status_separacao, flag_saldo_apareceu",
+        "id, empresa_origem_id, separacao_galpao_id, status_separacao, flag_saldo_apareceu, embalagem_operador_id, embalagem_concluida_em, embalado_real_por, embalado_real_em",
       )
       .in("id", pedido_ids);
 
@@ -119,11 +119,79 @@ export async function GET(request: NextRequest) {
     for (const pedido of pedidos ?? []) {
       pedidoStatusMap.set(pedido.id, pedido.status_separacao ?? null);
     }
-    const pedidosResumo = (pedidos ?? []).map((p) => ({
-      id: p.id,
-      status_separacao: p.status_separacao ?? null,
-      flag_saldo_apareceu: Boolean(p.flag_saldo_apareceu),
-    }));
+
+    // Embalagem & etiqueta (painel DETALHES da aba embalados): quem embalou/
+    // emitiu a etiqueta + impressora usada. Nomes via siso_usuarios; impressora
+    // do último evento etiqueta_impressa (printerNome novo; printerId p/
+    // impressões anteriores ao enriquecimento do evento).
+    const embaladorIds = Array.from(
+      new Set(
+        (pedidos ?? []).flatMap((p) =>
+          [p.embalagem_operador_id, p.embalado_real_por].filter(
+            (v): v is string => !!v,
+          ),
+        ),
+      ),
+    );
+    const nomesEmbalador = new Map<string, string>();
+    if (embaladorIds.length > 0) {
+      const { data: us } = await supabase
+        .from("siso_usuarios")
+        .select("id, nome")
+        .in("id", embaladorIds);
+      for (const u of (us ?? []) as { id: string; nome: string }[]) {
+        nomesEmbalador.set(u.id, u.nome);
+      }
+    }
+
+    const impressoraPorPedido = new Map<
+      string,
+      { nome: string | null; id: number | null; em: string }
+    >();
+    {
+      const { data: eventos } = await supabase
+        .from("siso_pedido_historico")
+        .select("pedido_id, detalhes, criado_em")
+        .in("pedido_id", pedido_ids)
+        .eq("evento", "etiqueta_impressa")
+        .order("criado_em", { ascending: false });
+      for (const e of (eventos ?? []) as {
+        pedido_id: string;
+        detalhes: Record<string, unknown> | null;
+        criado_em: string;
+      }[]) {
+        if (impressoraPorPedido.has(e.pedido_id)) continue; // 1º = mais recente
+        const d = e.detalhes ?? {};
+        impressoraPorPedido.set(e.pedido_id, {
+          nome:
+            typeof d.printerNome === "string" && d.printerNome
+              ? d.printerNome
+              : null,
+          id: typeof d.printerId === "number" ? d.printerId : null,
+          em: e.criado_em,
+        });
+      }
+    }
+
+    const pedidosResumo = (pedidos ?? []).map((p) => {
+      const imp = impressoraPorPedido.get(p.id);
+      return {
+        id: p.id,
+        status_separacao: p.status_separacao ?? null,
+        flag_saldo_apareceu: Boolean(p.flag_saldo_apareceu),
+        embalado_por_nome: p.embalagem_operador_id
+          ? (nomesEmbalador.get(p.embalagem_operador_id) ?? null)
+          : null,
+        embalado_em: p.embalagem_concluida_em ?? null,
+        embalado_real_por_nome: p.embalado_real_por
+          ? (nomesEmbalador.get(p.embalado_real_por) ?? null)
+          : null,
+        embalado_real_em: p.embalado_real_em ?? null,
+        impressora_nome: imp?.nome ?? null,
+        impressora_id: imp?.id ?? null,
+        etiqueta_impressa_em: imp?.em ?? null,
+      };
+    });
 
     // 2b. Resolve the "separating empresa" — the empresa in the galpão
     //     that will physically separate/ship the order.

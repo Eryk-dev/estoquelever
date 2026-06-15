@@ -6055,22 +6055,29 @@ erros:
       joga "não mapeado" e o catch genérico do route vira 500. Não havia caminho de
       recuperação — o operador só via "Erro interno" com correlation id.
     fix: >
-      Helper resolverProdutoEfetivoComAutoSync (sync-tiny.ts): resolve normal e, no erro
-      "não mapeado" (produto original, tiny id>0 + SKU presente), chama ensureProdutoFromTiny
-      (cria siso_produtos + bridge + sincroniza do Tiny) e re-tenta — self-heal zero-clique.
+      Helper resolverProdutoEfetivoComAutoSync (sync-tiny.ts) — resolução SKU-first do
+      produto físico: (1) substituto de troca; (2) siso_produtos.sku == item.sku
+      (UNIQUE → 1:1, PRIMÁRIO — cobre produto_id=0 com SKU e ponte ausente numa consulta;
+      premissa de domínio: SKU anúncio == SKU catálogo); (3) ponte tiny_id (fallback p/
+      item sem SKU); (4) auto-provisão do Tiny (ensureProdutoFromTiny por tiny_id, ou
+      buscarProdutoPorSku na empresa quando produto_id=0). Sem SKU e sem ponte → lança
+      (resolução humana via definir-sku). NÃO re-roteia o pedido (diferente de definir-sku).
       Aplicado em validar-oc-item (Encontrei) e marcar-item (checkbox). Backstop manual:
-      nova rota POST /produtos/sync-by-pedido-item + botão "Sincronizar do Tiny" no modal
-      Encontrei (checklist). ensureProdutoFromTiny já existia (usado pelo webhook) — só foi
-      ligado a uma ação de recuperação no pick.
+      POST /produtos/sync-by-pedido-item + botão "Sincronizar do Tiny" no modal Encontrei.
+      Cobre Caso A (#4019, tiny_id válido, ponte ausente) E Caso B (#952573331, produto_id=0,
+      SKU 192160 já no catálogo). Evolução do fix inicial (era só auto-heal por tiny_id).
     files:
       - src/lib/wms/sync-tiny.ts
       - src/app/api/wms/separacao/validar-oc-item/route.ts
       - src/app/api/wms/separacao/marcar-item/route.ts
       - src/app/api/wms/produtos/sync-by-pedido-item/route.ts
       - src/app/wms/separacao/checklist/page.tsx
-    tags: [wms, separacao, pick, encontrei, marcar-item, produto, tiny, siso_produto_empresas, nao-mapeado, auto-sync, ensureProdutoFromTiny, vinculo, oc, 500]
+    tags: [wms, separacao, pick, encontrei, marcar-item, produto, tiny, siso_produto_empresas, nao-mapeado, auto-sync, sku-first, produto-id-zero, definir-sku, ensureProdutoFromTiny, buscarProdutoPorSku, vinculo, oc, 500]
     notes: >
-      NÃO é "SKU sem dados no Tiny" — o Tiny TEM o produto (o pedido carrega tiny id +
-      nome); falta só a ponte Tiny↔WMS no banco. Por isso o sync do Tiny resolve.
-      Item com produto_id=0 (sem vínculo Tiny) NÃO é curável por aqui — exige SKU manual
-      na aba de pedidos. Correlation id real do caso #4019: 53f20bf6-ecf4-4797-a40e-0ca0fe25b55d.
+      NÃO é "SKU sem dados no Tiny" — o Tiny TEM o produto; falta o vínculo no WMS. O
+      estoque/ledger é por uuid de siso_produtos e sku é UNIQUE (1:1 com uuid), então o
+      SKU resolve sozinho — tiny_id é só ponte de entrada (varia por empresa). Por isso a
+      resolução virou SKU-first: produto_id=0 COM SKU agora resolve (ex. 192160, que já
+      estava no catálogo mapeado só pra outra empresa). SÓ produto_id=0 SEM SKU (ou SKU
+      inexistente no Tiny da empresa) exige humano (definir-sku, que além de vincular
+      RE-ROTEIA o pedido). Correlation id #4019: 53f20bf6-ecf4-4797-a40e-0ca0fe25b55d.

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { requireWarehouseAccess } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
-import { ensureProdutoFromTiny } from "@/lib/wms/sync-tiny";
+import { resolverProdutoEfetivoComAutoSync } from "@/lib/wms/sync-tiny";
 
 /**
  * POST /api/wms/produtos/sync-by-pedido-item
@@ -32,20 +32,22 @@ export async function POST(req: NextRequest) {
   try {
     const { data: item, error: itemErr } = await supabase
       .from("siso_pedido_itens")
-      .select("id, pedido_id, produto_id, sku")
+      .select("id, pedido_id, produto_id, sku, produto_wms_substituto_id")
       .eq("id", pedidoItemId)
       .single();
     if (itemErr || !item) {
       return NextResponse.json({ error: "item não encontrado" }, { status: 404 });
     }
 
-    // produto_id do item é o tiny_produto_id (não o uuid WMS). id=0 = item sem
-    // vínculo Tiny → não há como sincronizar (exige SKU manual na aba pedidos).
+    // SKU-first: resolve pelo SKU do catálogo (1:1) e, faltando, auto-provisiona
+    // do Tiny (por tiny_id se houver, senão busca por SKU). Item sem SKU E sem
+    // produto Tiny (produto_id=0) é o caso de resolução humana (definir-sku).
     const tinyId = Number(item.produto_id);
     const sku = item.sku ? String(item.sku).trim() : "";
-    if (!sku || !Number.isInteger(tinyId) || tinyId <= 0) {
+    const temTiny = Number.isInteger(tinyId) && tinyId > 0;
+    if (!sku && !temTiny) {
       return NextResponse.json(
-        { error: "item sem SKU/produto Tiny — não há como sincronizar" },
+        { error: "item sem SKU e sem produto Tiny — exige resolução manual na aba Pedidos" },
         { status: 422 },
       );
     }
@@ -63,8 +65,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const produtoId = await ensureProdutoFromTiny(sku, empresaId, tinyId);
-    return NextResponse.json({ ok: true, produto_id: produtoId, sku });
+    try {
+      const produtoId = await resolverProdutoEfetivoComAutoSync(empresaId, item);
+      return NextResponse.json({ ok: true, produto_id: produtoId, sku: sku || null });
+    } catch (resolveErr) {
+      // Resolver não achou (ex.: produto_id=0 fora do catálogo e SKU ausente no
+      // Tiny da empresa) → 422 acionável em vez de 500 mascarado.
+      const msg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr);
+      if (/não mapeado|resolvível|manual/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error:
+              "produto não encontrado no catálogo nem no Tiny da empresa — confira o SKU ou resolva na aba Pedidos",
+            detalhe: msg,
+          },
+          { status: 422 },
+        );
+      }
+      throw resolveErr; // erro real → wmsErrorResponse abaixo
+    }
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.produtos.sync-by-pedido-item",

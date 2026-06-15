@@ -5329,13 +5329,13 @@ Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, 
 
 ### POST /api/wms/produtos/sync-by-pedido-item
 
-Cria/recupera o vínculo Tiny↔WMS (`siso_produto_empresas`) de um item de pedido cujo produto NÃO foi auto-provisionado no webhook (ex.: Tiny intermitente no momento do pedido) — o pick travava com `produto Tiny … não mapeado`. Resolve `sku` + `empresa_origem_id` + `tiny_produto_id` a partir do item/pedido e chama `ensureProdutoFromTiny` (cria `siso_produtos` + bridge + sincroniza do Tiny). Backstop manual do auto-sync embutido no pick (`resolverProdutoEfetivoComAutoSync` em `marcar-item`/`validar-oc-item`). Botão "Sincronizar do Tiny" no modal Encontrei da separação.
+Resolve o produto físico de um item de pedido cujo produto não foi vinculado no webhook — o pick travava com `não mapeado`. Delega a `resolverProdutoEfetivoComAutoSync` (**SKU-first**): casa `item.sku` no catálogo (`siso_produtos.sku` UNIQUE → 1:1) e, faltando, auto-provisiona do Tiny (por `tiny_produto_id` quando há, senão `buscarProdutoPorSku` na empresa do pedido). Cobre tanto **ponte ausente** (tiny_id válido, ex. #4019) quanto **`produto_id=0` com SKU** (ex. #952573331). NÃO re-roteia o pedido (diferente de `definir-sku`). Backstop manual do auto-sync embutido no pick (`marcar-item`/`validar-oc-item`); botão "Sincronizar do Tiny" no modal Encontrei da separação.
 
 **Auth:** `requireWarehouseAccess`. **Body:** `{ pedido_item_id }`.
 
-**Side Effects:** INSERT/UPSERT em `siso_produtos` + `siso_produto_empresas`. Chama Tiny API (rate-limited via `runWithEmpresa`).
+**Side Effects:** pode INSERT/UPSERT em `siso_produtos` + `siso_produto_empresas` (só quando auto-provisiona). Chama Tiny API (rate-limited via `runWithEmpresa`).
 
-**Response 200:** `{ ok: true, produto_id, sku }`. 422 se item sem SKU/produto Tiny (id=0) ou pedido sem empresa de origem.
+**Response 200:** `{ ok: true, produto_id, sku }`. 422 se item sem SKU e sem produto Tiny (`produto_id=0` sem SKU → resolução manual na aba Pedidos via `definir-sku`), produto não achado no catálogo nem no Tiny da empresa, ou pedido sem empresa.
 
 ### GET /api/wms/produtos/[id]/ultimas-contagens
 

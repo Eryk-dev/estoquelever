@@ -1,5 +1,5 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { getProdutoFull } from "@/lib/tiny-api";
+import { getProdutoFull, buscarProdutoPorSku } from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
@@ -7,7 +7,6 @@ import {
   ensureFornecedorTiny,
   upsertProdutoFornecedor,
 } from "@/lib/wms/fornecedores";
-import { resolverProdutoEfetivoDoItem } from "@/lib/separacao/wms-mapping";
 
 interface SincronizarOptions {
   /**
@@ -266,15 +265,25 @@ export async function ensureProdutoFromTiny(
 }
 
 /**
- * Resolve o produto WMS efetivo de um item de pedido e, se o vínculo Tiny↔WMS
- * não existir (`não mapeado em siso_produto_empresas`), cria-o na hora puxando
- * do Tiny (`ensureProdutoFromTiny`) e re-tenta — self-heal pro pick não travar
- * em SKU que o auto-provisionamento do webhook não conseguiu criar (ex.: Tiny
- * intermitente no momento do pedido).
+ * Resolve o produto FÍSICO (uuid `siso_produtos`) de um item de pedido — base do
+ * pick/reserva/baixa. Estratégia SKU-first (o estoque/ledger é por uuid, e
+ * `siso_produtos.sku` é UNIQUE → SKU ↔ uuid é 1:1; o tiny_produto_id é só ponte
+ * de entrada e varia por empresa):
  *
- * Só cura o caso de mapeamento ausente do produto ORIGINAL (tiny id > 0 + SKU
- * presente). Qualquer outro erro propaga. Substituto de troca (uuid direto)
- * nunca cai aqui — `resolverProdutoEfetivoDoItem` retorna antes.
+ *   1. Substituto de troca (uuid direto) — quando a troca foi aprovada.
+ *   2. SKU no catálogo (`siso_produtos.sku == item.sku`) — PRIMÁRIO. Cobre
+ *      `produto_id=0` (item sem vínculo Tiny) e ponte ausente numa só consulta.
+ *      Premissa do domínio: SKU do anúncio == SKU do catálogo (confirmado), logo
+ *      o SKU é confiável.
+ *   3. Ponte tiny_id (`siso_produto_empresas`) — FALLBACK pra item sem SKU mas
+ *      com produto Tiny mapeado (comportamento legado).
+ *   4. Auto-provisão do Tiny — produto ainda não está no catálogo: com tiny_id
+ *      puxa por id, sem tiny_id (`produto_id=0`) busca no Tiny da empresa pelo
+ *      SKU (`buscarProdutoPorSku`); cria e re-consulta o catálogo por SKU.
+ *
+ * Sem SKU e sem ponte resolvível → lança (item exige resolução humana via
+ * `definir-sku` na aba Pedidos — ex.: linha sem SKU / "VERIFICAR LADO").
+ * NÃO re-roteia o pedido (diferente de `definir-sku`): só resolve o produto.
  */
 export async function resolverProdutoEfetivoComAutoSync(
   empresaId: string,
@@ -284,31 +293,73 @@ export async function resolverProdutoEfetivoComAutoSync(
     produto_wms_substituto_id?: string | null;
   },
 ): Promise<string> {
-  try {
-    return await resolverProdutoEfetivoDoItem(empresaId, item);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!/não mapeado/i.test(msg)) throw e;
-    const tinyId = Number(item.produto_id);
-    const sku = item.sku ? String(item.sku).trim() : "";
-    if (!sku || !Number.isInteger(tinyId) || tinyId <= 0) throw e; // sem dados pra curar
+  // 1. Troca de equivalência: substituto resolvido direto por uuid.
+  if (item.produto_wms_substituto_id) return item.produto_wms_substituto_id;
+
+  const sb = createServiceClient();
+  const sku = (item.sku ?? "").trim();
+  const tinyId = Number(item.produto_id);
+  const temTiny = Number.isInteger(tinyId) && tinyId > 0;
+
+  // 2. SKU-first (catálogo).
+  if (sku) {
+    const { data } = await sb
+      .from("siso_produtos")
+      .select("id")
+      .eq("sku", sku)
+      .maybeSingle();
+    if (data?.id) return data.id as string;
+  }
+
+  // 3. Fallback: ponte tiny_id (item sem SKU mas com produto Tiny mapeado).
+  if (temTiny) {
+    const { data } = await sb
+      .from("siso_produto_empresas")
+      .select("produto_id")
+      .eq("empresa_id", empresaId)
+      .eq("tiny_produto_id", tinyId)
+      .maybeSingle();
+    if (data?.produto_id) return data.produto_id as string;
+  }
+
+  // 4. Auto-provisão do Tiny — produto ainda não está no catálogo WMS.
+  if (sku) {
     try {
-      await ensureProdutoFromTiny(sku, empresaId, tinyId);
+      if (temTiny) {
+        await ensureProdutoFromTiny(sku, empresaId, tinyId);
+      } else {
+        const { token } = await getValidTokenByEmpresa(empresaId);
+        const achado = await runWithEmpresa(empresaId, () =>
+          buscarProdutoPorSku(token, sku),
+        );
+        if (achado) await ensureProdutoFromTiny(sku, empresaId, achado.id);
+      }
     } catch (syncErr) {
-      // ensureProdutoFromTiny pode criar produto+bridge e falhar DEPOIS no sync
-      // (Tiny intermitente) — o vínculo já basta pro pick. Re-tenta resolver; se
-      // ainda faltar, o resolve abaixo joga o erro de mapeamento de novo.
+      // ensureProdutoFromTiny pode criar produto+ponte e falhar DEPOIS no sync
+      // (Tiny intermitente) — o produto já basta pro pick. Re-consulta abaixo.
       logger.warn(
         "wms.sync.autoheal",
-        "ensureProdutoFromTiny falhou — re-tentando resolver vínculo",
+        "auto-provisão do Tiny falhou — re-tentando resolver por SKU",
         {
           empresaId,
-          tinyProdutoId: tinyId,
           sku,
+          tinyProdutoId: temTiny ? tinyId : null,
           erro: syncErr instanceof Error ? syncErr.message : String(syncErr),
         },
       );
     }
-    return await resolverProdutoEfetivoDoItem(empresaId, item);
+    const { data } = await sb
+      .from("siso_produtos")
+      .select("id")
+      .eq("sku", sku)
+      .maybeSingle();
+    if (data?.id) return data.id as string;
   }
+
+  // 5. Sem SKU e sem vínculo Tiny resolvível → resolução humana. Mantém
+  //    "não mapeado" na mensagem pra compatibilidade com callers que testam a
+  //    string (ex.: caminho legado de validar-oc-item).
+  throw new Error(
+    `produto não resolvível (sku="${sku || "—"}", tiny=${item.produto_id}, empresa ${empresaId}) — não mapeado em siso_produto_empresas; exige SKU/resolução manual`,
+  );
 }

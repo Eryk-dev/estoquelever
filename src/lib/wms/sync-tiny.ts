@@ -7,6 +7,7 @@ import {
   ensureFornecedorTiny,
   upsertProdutoFornecedor,
 } from "@/lib/wms/fornecedores";
+import { resolverProdutoEfetivoDoItem } from "@/lib/separacao/wms-mapping";
 
 interface SincronizarOptions {
   /**
@@ -262,4 +263,52 @@ export async function ensureProdutoFromTiny(
 
   await sincronizarProduto(novo.id);
   return novo.id;
+}
+
+/**
+ * Resolve o produto WMS efetivo de um item de pedido e, se o vínculo Tiny↔WMS
+ * não existir (`não mapeado em siso_produto_empresas`), cria-o na hora puxando
+ * do Tiny (`ensureProdutoFromTiny`) e re-tenta — self-heal pro pick não travar
+ * em SKU que o auto-provisionamento do webhook não conseguiu criar (ex.: Tiny
+ * intermitente no momento do pedido).
+ *
+ * Só cura o caso de mapeamento ausente do produto ORIGINAL (tiny id > 0 + SKU
+ * presente). Qualquer outro erro propaga. Substituto de troca (uuid direto)
+ * nunca cai aqui — `resolverProdutoEfetivoDoItem` retorna antes.
+ */
+export async function resolverProdutoEfetivoComAutoSync(
+  empresaId: string,
+  item: {
+    produto_id: number | string;
+    sku?: string | null;
+    produto_wms_substituto_id?: string | null;
+  },
+): Promise<string> {
+  try {
+    return await resolverProdutoEfetivoDoItem(empresaId, item);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/não mapeado/i.test(msg)) throw e;
+    const tinyId = Number(item.produto_id);
+    const sku = item.sku ? String(item.sku).trim() : "";
+    if (!sku || !Number.isInteger(tinyId) || tinyId <= 0) throw e; // sem dados pra curar
+    try {
+      await ensureProdutoFromTiny(sku, empresaId, tinyId);
+    } catch (syncErr) {
+      // ensureProdutoFromTiny pode criar produto+bridge e falhar DEPOIS no sync
+      // (Tiny intermitente) — o vínculo já basta pro pick. Re-tenta resolver; se
+      // ainda faltar, o resolve abaixo joga o erro de mapeamento de novo.
+      logger.warn(
+        "wms.sync.autoheal",
+        "ensureProdutoFromTiny falhou — re-tentando resolver vínculo",
+        {
+          empresaId,
+          tinyProdutoId: tinyId,
+          sku,
+          erro: syncErr instanceof Error ? syncErr.message : String(syncErr),
+        },
+      );
+    }
+    return await resolverProdutoEfetivoDoItem(empresaId, item);
+  }
 }

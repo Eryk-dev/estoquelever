@@ -6,10 +6,8 @@ import {
   buscarReservaPendentePorProduto,
   pickItemAtomico,
 } from "@/lib/wms/reservas-picking";
-import {
-  resolverProdutoEfetivoDoItem,
-  buscarLocComMaiorSaldoNoGalpao,
-} from "@/lib/separacao/wms-mapping";
+import { buscarLocComMaiorSaldoNoGalpao } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoEfetivoComAutoSync } from "@/lib/wms/sync-tiny";
 
 /**
  * POST /api/separacao/marcar-item
@@ -101,7 +99,7 @@ export async function POST(request: NextRequest) {
 
         // Troca de equivalência: resolve o produto FÍSICO (substituto quando
         // a troca foi aprovada) — a baixa sai da peça que realmente vai na caixa.
-        const produtoWmsId = await resolverProdutoEfetivoDoItem(
+        const produtoWmsId = await resolverProdutoEfetivoComAutoSync(
           empresaOrigemId,
           item,
         );

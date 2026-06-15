@@ -806,6 +806,39 @@ export default function WmsChecklistPage() {
     }
   }
 
+  // Backstop manual do auto-sync: produto sem vínculo Tiny↔WMS trava o pick
+  // ("não mapeado"). O pick já tenta curar sozinho; este botão força a busca no
+  // Tiny pelo SKU + cria o cadastro. Depois o operador confirma de novo.
+  async function handleSincronizarProdutoEncontrei() {
+    if (!ocLocModal) return;
+    if (submittingActionRef.current) return;
+    const itemId = ocLocModal.produto.item_ids[0];
+    if (!itemId) {
+      toastErroApi("Item sem id — não há como sincronizar");
+      return;
+    }
+    submittingActionRef.current = true;
+    setOcLocModal((p) => (p ? { ...p, bipando: true } : null));
+    try {
+      const r = await sisoFetch("/api/wms/produtos/sync-by-pedido-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_item_id: itemId }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        toastErroApi(erroApiTexto(body, "Falha ao sincronizar produto do Tiny"));
+        return;
+      }
+      toast.success(`Produto ${ocLocModal.produto.sku} sincronizado — confirme de novo`);
+    } catch {
+      toastErroApi("Erro de conexão");
+    } finally {
+      setOcLocModal((p) => (p ? { ...p, bipando: false } : null));
+      submittingActionRef.current = false;
+    }
+  }
+
   async function handleOcEsgotado(produto: ConsolidatedProduct) {
     try {
       const r = await sisoFetch("/api/wms/separacao/validar-oc-item", {
@@ -1469,6 +1502,7 @@ export default function WmsChecklistPage() {
           onClose={() => !ocLocModal.bipando && setOcLocModal(null)}
           onConfirmar={handleOcEncontreiFinalizar}
           onSolicitarContagem={handleOcSolicitarContagem}
+          onSincronizar={handleSincronizarProdutoEncontrei}
         />
       )}
     </>
@@ -2119,12 +2153,14 @@ function OcEncontreiModal({
   onClose,
   onConfirmar,
   onSolicitarContagem,
+  onSincronizar,
 }: {
   produto: ConsolidatedProduct;
   bipando: boolean;
   onClose: () => void;
   onConfirmar: (codigoLoc: string, qtyContada: number) => void;
   onSolicitarContagem: (codigoLoc: string) => void;
+  onSincronizar: () => void;
 }) {
   // Fluxo em 2 etapas: 1) contar unidades (teclado numérico na tela),
   // 2) bipar a localização. A contagem vem PRIMEIRO — bipar a loc sem
@@ -2227,6 +2263,16 @@ function OcEncontreiModal({
               {produto.quantidade_total}
             </div>
           </div>
+          <button
+            type="button"
+            className="wms-btn wms-btn-sm wms-btn-ghost"
+            style={{ width: "100%", marginBottom: 12, fontSize: 12 }}
+            onClick={onSincronizar}
+            disabled={bipando}
+            title="Produto sem cadastro no WMS? Busca os dados no Tiny pelo SKU e cria o vínculo. Depois confirme de novo."
+          >
+            Produto sem cadastro? Sincronizar do Tiny
+          </button>
           {etapa === "qty" ? (
             <div style={{ marginBottom: 4 }}>
               <label

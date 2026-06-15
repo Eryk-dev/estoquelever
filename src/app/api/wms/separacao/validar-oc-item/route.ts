@@ -6,7 +6,8 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
-import { resolverProdutoEfetivoDoItem, resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
+import { resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoEfetivoComAutoSync } from "@/lib/wms/sync-tiny";
 import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
 import { alocarContagem, type PlanoAlocacao } from "@/lib/wms/separacao/alocacao-contagem";
 
@@ -263,7 +264,7 @@ export async function POST(request: NextRequest) {
               );
             }
           }
-          const produtoWmsPrimeiro = await resolverProdutoEfetivoDoItem(
+          const produtoWmsPrimeiro = await resolverProdutoEfetivoComAutoSync(
             ctx.empresa!,
             primeiro,
           );
@@ -320,7 +321,7 @@ export async function POST(request: NextRequest) {
         let movSaidaId: string | null = null;
         if (!jaPicado && ctx && ctx.galpao && ctx.empresa) {
           const qty = Number(item.quantidade_pedida ?? 0);
-          const produtoWmsId = await resolverProdutoEfetivoDoItem(ctx.empresa, item);
+          const produtoWmsId = await resolverProdutoEfetivoComAutoSync(ctx.empresa, item);
 
           if (qtyContadaBody !== null) {
             const plano = planoContagem?.get(String(item.id));

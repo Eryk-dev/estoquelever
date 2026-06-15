@@ -6041,3 +6041,36 @@ erros:
       sugestão viva — só batem 100% se o snapshot estiver fresco OU o pendente for
       re-roteado quando a rota viva muda. Relacionado:
       wms-lista-sugestao-oc-stale-snapshot (introduziu o recompute vivo).
+
+  - id: separacao-pick-produto-nao-mapeado-sem-autoheal
+    date: "2026-06-15"
+    source: src/app/api/wms/separacao/validar-oc-item/route.ts
+    category: business_logic
+    message: "produto Tiny <id> (empresa <uuid>) não mapeado em siso_produto_empresas — pick (Encontrei/checkbox) dava 'Erro interno' 500 e o item ficava preso (ex.: pedido #4019, SKU 192275, 141AIR)"
+    cause: >
+      O auto-provisionamento do webhook (resolverItensWms → ensureProdutoFromTiny em
+      webhook-processor-wms.ts) é best-effort: se a chamada ao Tiny falha no momento do
+      pedido, ele só loga warn e deixa o item SEM vínculo Tiny↔WMS (siso_produto_empresas
+      ausente + siso_produtos inexistente). Depois, no pick, resolverProdutoEfetivoDoItem
+      joga "não mapeado" e o catch genérico do route vira 500. Não havia caminho de
+      recuperação — o operador só via "Erro interno" com correlation id.
+    fix: >
+      Helper resolverProdutoEfetivoComAutoSync (sync-tiny.ts): resolve normal e, no erro
+      "não mapeado" (produto original, tiny id>0 + SKU presente), chama ensureProdutoFromTiny
+      (cria siso_produtos + bridge + sincroniza do Tiny) e re-tenta — self-heal zero-clique.
+      Aplicado em validar-oc-item (Encontrei) e marcar-item (checkbox). Backstop manual:
+      nova rota POST /produtos/sync-by-pedido-item + botão "Sincronizar do Tiny" no modal
+      Encontrei (checklist). ensureProdutoFromTiny já existia (usado pelo webhook) — só foi
+      ligado a uma ação de recuperação no pick.
+    files:
+      - src/lib/wms/sync-tiny.ts
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+      - src/app/api/wms/separacao/marcar-item/route.ts
+      - src/app/api/wms/produtos/sync-by-pedido-item/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [wms, separacao, pick, encontrei, marcar-item, produto, tiny, siso_produto_empresas, nao-mapeado, auto-sync, ensureProdutoFromTiny, vinculo, oc, 500]
+    notes: >
+      NÃO é "SKU sem dados no Tiny" — o Tiny TEM o produto (o pedido carrega tiny id +
+      nome); falta só a ponte Tiny↔WMS no banco. Por isso o sync do Tiny resolve.
+      Item com produto_id=0 (sem vínculo Tiny) NÃO é curável por aqui — exige SKU manual
+      na aba de pedidos. Correlation id real do caso #4019: 53f20bf6-ecf4-4797-a40e-0ca0fe25b55d.

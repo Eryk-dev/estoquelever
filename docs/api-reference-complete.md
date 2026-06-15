@@ -5327,6 +5327,16 @@ Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, 
 
 **Response 200:** `{ ok: true }` ou 500 com erro.
 
+### POST /api/wms/produtos/sync-by-pedido-item
+
+Cria/recupera o vínculo Tiny↔WMS (`siso_produto_empresas`) de um item de pedido cujo produto NÃO foi auto-provisionado no webhook (ex.: Tiny intermitente no momento do pedido) — o pick travava com `produto Tiny … não mapeado`. Resolve `sku` + `empresa_origem_id` + `tiny_produto_id` a partir do item/pedido e chama `ensureProdutoFromTiny` (cria `siso_produtos` + bridge + sincroniza do Tiny). Backstop manual do auto-sync embutido no pick (`resolverProdutoEfetivoComAutoSync` em `marcar-item`/`validar-oc-item`). Botão "Sincronizar do Tiny" no modal Encontrei da separação.
+
+**Auth:** `requireWarehouseAccess`. **Body:** `{ pedido_item_id }`.
+
+**Side Effects:** INSERT/UPSERT em `siso_produtos` + `siso_produto_empresas`. Chama Tiny API (rate-limited via `runWithEmpresa`).
+
+**Response 200:** `{ ok: true, produto_id, sku }`. 422 se item sem SKU/produto Tiny (id=0) ou pedido sem empresa de origem.
+
 ### GET /api/wms/produtos/[id]/ultimas-contagens
 
 Retorna a última contagem de inventário desse produto agrupada por localização (3D — refactor 2026-05-20: sem mais agrupar por empresa dona). Inclui contagens de sessões em qualquer status menos `cancelada` — útil pra mostrar "conferido em X" mesmo quando a contagem não gerou divergência (e portanto não há mov no ledger). Usado pela aba "Movimentações" do produto.

@@ -1569,9 +1569,9 @@ function ItemRow({
             {produto.localizacao || "Sem loc"}
           </span>
           <span
-            className={`wms-hand-item-saldo${produto.disponivel < qtyExibida ? " is-low" : ""}`}
+            className={`wms-hand-item-saldo${produto.saldo < qtyExibida ? " is-low" : ""}`}
           >
-            saldo {fmtNum(produto.disponivel)}
+            saldo {fmtNum(produto.saldo)}
           </span>
         </div>
         <div
@@ -1722,9 +1722,9 @@ function ItemRowOC({
             {produto.localizacao || "Sem loc"}
           </span>
           <span
-            className={`wms-hand-item-saldo${produto.disponivel < produto.quantidade_total ? " is-low" : ""}`}
+            className={`wms-hand-item-saldo${produto.saldo < produto.quantidade_total ? " is-low" : ""}`}
           >
-            saldo {fmtNum(produto.disponivel)}
+            saldo {fmtNum(produto.saldo)}
           </span>
         </div>
         <div

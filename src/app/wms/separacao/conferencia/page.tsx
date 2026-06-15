@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X, Loader2, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { X, Loader2, AlertTriangle, CheckCircle2, XCircle, Maximize2 } from "lucide-react";
 
 import { sisoFetch } from "@/lib/auth-context";
 import { PageHeader, fmtRelative } from "@/components/wms/ui/wms-ui";
@@ -79,6 +79,7 @@ export default function WmsConferenciaPage() {
   const [ultimo, setUltimo] = useState<BipResposta | null>(null);
   const [historico, setHistorico] = useState<HistoricoBipe[]>([]);
   const [divergenciaAberta, setDivergenciaAberta] = useState(false);
+  const [embalarAberto, setEmbalarAberto] = useState(false);
   const [scanFeedback, setScanFeedback] = useState<{
     text: string;
     tone: "ok" | "warn" | "error" | "neutral";
@@ -236,9 +237,15 @@ export default function WmsConferenciaPage() {
         </div>
       )}
 
-      {/* Card do último pedido bipado */}
+      {/* Card do último pedido bipado — clicar abre a tela cheia "o que embalar" */}
       {pedido && (
-        <div className="wms-card" style={{ marginTop: 12, padding: 16 }}>
+        <div
+          className="wms-card"
+          style={{ marginTop: 12, padding: 16, cursor: "pointer" }}
+          role="button"
+          tabIndex={0}
+          onClick={() => setEmbalarAberto(true)}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span className="wms-mono" style={{ fontSize: 22, fontWeight: 800 }}>
               #{pedido.numero ?? pedido.id}
@@ -266,7 +273,10 @@ export default function WmsConferenciaPage() {
                 type="button"
                 className="wms-btn wms-btn-sm wms-btn-ghost"
                 style={{ marginLeft: "auto", color: "#b91c1c", borderColor: "#fca5a5" }}
-                onClick={() => setDivergenciaAberta(true)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDivergenciaAberta(true);
+                }}
               >
                 <AlertTriangle size={13} style={{ marginRight: 4 }} />
                 Divergência
@@ -274,8 +284,14 @@ export default function WmsConferenciaPage() {
             )}
           </div>
 
-          <div className="wms-td-mute" style={{ fontSize: 12, marginTop: 6 }}>
-            {ultimo!.itens.length} item(s) · {totalUnidades} unidade(s) esperadas no pacote
+          <div
+            className="wms-td-mute"
+            style={{ fontSize: 12, marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}
+          >
+            <span>{ultimo!.itens.length} item(s) · {totalUnidades} unidade(s) esperadas no pacote</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: "#0d9488", fontWeight: 600 }}>
+              <Maximize2 size={12} /> toque pra ampliar
+            </span>
           </div>
 
           <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
@@ -377,6 +393,14 @@ export default function WmsConferenciaPage() {
         onCancel={() => setDivergenciaAberta(false)}
         pedidoNumero={pedido?.numero ?? pedido?.id ?? ""}
       />
+
+      {embalarAberto && pedido && (
+        <EmbalarFullscreen
+          pedido={pedido}
+          itens={ultimo!.itens}
+          onClose={() => setEmbalarAberto(false)}
+        />
+      )}
     </>
   );
 }
@@ -476,6 +500,79 @@ function DivergenciaModal({
             Registrar divergência
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── EmbalarFullscreen ────────────────────────────────────────────────────────
+// Tela cheia "o que embalar": grade com foto grande + ×qtd em destaque por item.
+// O operador bate o olho e entende o pacote inteiro de uma vez.
+
+function EmbalarFullscreen({
+  pedido,
+  itens,
+  onClose,
+}: {
+  pedido: PedidoBipado;
+  itens: ItemConferencia[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const totalUnidades = itens.reduce((s, i) => s + i.quantidade_pedida, 0);
+
+  return (
+    <div className="wms-lb-overlay" onClick={onClose} role="dialog" aria-modal="true">
+      <button
+        type="button"
+        className="wms-lb-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        aria-label="Fechar"
+      >
+        <X size={18} />
+      </button>
+
+      <div className="wms-lb-meta">
+        <span className="wms-mono wms-lb-sku" style={{ fontSize: 19 }}>
+          #{pedido.numero ?? pedido.id}
+        </span>
+        {pedido.nome_ecommerce && <span className="wms-lb-desc">{pedido.nome_ecommerce}</span>}
+        <span className="wms-lb-counter">
+          {itens.length} item(s) · {totalUnidades} un
+        </span>
+      </div>
+
+      {/* Clicar no espaço escuro em volta fecha; nos cards, não. */}
+      <div className="wms-emb-grid" onClick={(e) => e.stopPropagation()}>
+        {itens.map((item) => (
+          <div key={item.id} className="wms-emb-card">
+            <div className="wms-emb-photo">
+              {item.imagem_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={item.imagem_url} alt="" />
+              ) : (
+                <div className="wms-emb-noimg">sem foto</div>
+              )}
+              <span className={`wms-emb-qtd ${item.quantidade_pedida > 1 ? "is-multi" : ""}`}>
+                ×{item.quantidade_pedida}
+              </span>
+            </div>
+            <div className="wms-emb-foot">
+              <span className="wms-mono wms-emb-sku">{item.sku}</span>
+              {item.descricao && <span className="wms-emb-desc">{item.descricao}</span>}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

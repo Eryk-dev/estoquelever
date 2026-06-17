@@ -4,7 +4,9 @@
 // D4: operador nunca vê empresa — só galpão.
 // D6: sem dropdown de decisão, só label final por galpão.
 // D8: pílulas 4 cores reaproveitando tokens (info/warn/danger/mute) sobre `disponível`.
-// D12: reservas indicadas com badge separado, disponível = saldo - reservado.
+// D12: número headline = saldo FÍSICO; badge ao lado mostra reservado + disponível
+//      (disponível = saldo - reservado). Cor da reserva herda o tom da pílula
+//      (currentColor) pra contrastar em qualquer fundo, inclusive o vermelho ativo.
 
 const nf = new Intl.NumberFormat("pt-BR");
 
@@ -124,14 +126,15 @@ function EstoquePorGalpaoBar(props: EstoquePorGalpaoBarProps) {
             title={formatarTitle(saldo, reservado, disponivel)}
           >
             <span className="wms-stk-pill-galpao">{galpao}</span>
-            <span className="wms-stk-pill-qty">{nf.format(disponivel)}</span>
+            <span className="wms-stk-pill-qty">{nf.format(saldo)}</span>
             {reservado > 0 ? (
-              <span
-                className="wms-stk-pill-reserv"
-                title={`${nf.format(reservado)} reservados em pedidos abertos`}
-              >
-                <span />
-                {nf.format(reservado)}
+              <span className="wms-stk-pill-reserv">
+                <span className="wms-stk-reserv-dot" aria-hidden />
+                {nf.format(reservado)} res
+                <span className="wms-stk-reserv-divider" aria-hidden>
+                  ·
+                </span>
+                {nf.format(disponivel)} disp
               </span>
             ) : null}
           </span>

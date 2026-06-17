@@ -6110,3 +6110,35 @@ erros:
       diferente: lá era background transparente (token inexistente); aqui é clip
       por overflow:hidden do card. NÃO mexer no overflow:hidden do .wms-frc — é
       compartilhado (aba Receber usa wms-frc-row-doc) e clipa os cantos.
+
+  - id: reserva-dot-laranja-sem-contraste-pilula-estoque
+    date: "2026-06-17"
+    source: wms.vendas (estoque-por-galpao-bar)
+    category: config
+    message: >
+      indicador de reserva na pílula de estoque (aba Pedidos) era laranja fixo e
+      sumia sobre o vermelho — "não dá pra ver". Além disso a pílula mostrava o
+      número DISPONÍVEL como headline, não o saldo FÍSICO.
+    cause: >
+      .wms-stk-pill-reserv usava color:var(--wms-c-warn) (laranja #d97706) fixo —
+      contra o fundo vermelho das pílulas .is-danger / .is-active.is-danger (texto
+      branco sobre vermelho sólido) o laranja não contrastava. O dot da reserva era
+      um <span/> vazio sem CSS (invisível). E o número headline (wms-stk-pill-qty)
+      renderizava `disponivel` em vez do saldo físico.
+    fix: >
+      (1) headline da pílula passou a mostrar `saldo` (físico). (2) badge ao lado
+      mostra os 3: físico (headline) + reservado + disponível ("●N res · N disp").
+      (3) .wms-stk-pill-reserv agora usa color:currentColor (herda o tom da pílula:
+      branco no vermelho/verde sólido ativo, tom da borda no fundo claro) → contrasta
+      em qualquer fundo. Dot virou .wms-stk-reserv-dot (círculo 6px, background
+      currentColor). Tone da pílula (cor) continua baseado em `disponivel`
+      (capacidade de atender) — isso não mudou.
+    files:
+      - src/components/wms/vendas/estoque-por-galpao-bar.tsx
+      - src/app/wms/wms.css
+    tags: [wms, vendas, pedidos, estoque, pilula, reserva, dot, bolinha, contraste, laranja, vermelho, currentColor, saldo, fisico, disponivel, ui, wms-stk-pill]
+    notes: >
+      Reserva só aparece quando reservado>0 (quando saldo==disponivel não há "três"
+      distintos — evita ruído). currentColor resolve o caso .is-active.is-danger
+      (fundo vermelho sólido) que era o pior. Layout escolhido pelo Eryk: "físico
+      grande + R·D ao lado".

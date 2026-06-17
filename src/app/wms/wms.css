@@ -1884,10 +1884,23 @@
   align-items: center;
   gap: 3px;
   font-size: 10px;
-  color: var(--wms-c-warn);
+  /* herda o tom da pílula (currentColor): contrasta no fundo claro E no
+     vermelho/verde sólido das pílulas .is-active. Antes era laranja fixo
+     (--wms-c-warn), que sumia sobre o vermelho. */
+  color: currentColor;
+  opacity: .82;
   margin-left: 2px;
-  font-weight: 500;
+  font-weight: 600;
+  font-family: var(--wms-font-mono);
 }
+.wms-stk-reserv-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.wms-stk-reserv-divider { opacity: .55; }
 
 /* ============================================================
    Vendas — rótulo de decisão (substituto do dropdown legado, Decisão D6)

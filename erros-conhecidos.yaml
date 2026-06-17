@@ -6081,3 +6081,32 @@ erros:
       estava no catálogo mapeado só pra outra empresa). SÓ produto_id=0 SEM SKU (ou SKU
       inexistente no Tiny da empresa) exige humano (definir-sku, que além de vincular
       RE-ROTEIA o pedido). Correlation id #4019: 53f20bf6-ecf4-4797-a40e-0ca0fe25b55d.
+
+  - id: kebab-compras-recortado-por-overflow-hidden
+    date: "2026-06-17"
+    source: wms.compras
+    category: config
+    message: >
+      menu do kebab (⋮) de cada item na aba Compras aparecia "bugado" / numa
+      camada debaixo — recortado e coberto pelo card seguinte, principalmente nos
+      itens do fim da lista (perto do rodapé da viewport)
+    cause: >
+      o card do fornecedor (.wms-frc) tem `overflow: hidden` (clipa os cantos
+      arredondados + a borda esquerda colorida). O dropdown era `position:absolute`
+      DENTRO do card, então era recortado pelo overflow do ancestral — e z-index
+      não escapa do clip de um ancestral com overflow:hidden, por mais alto que
+      seja. Não era problema de valor de z-index.
+    fix: >
+      ItemKebab passou a renderizar o menu via createPortal(document.body) com
+      `position: fixed`, ancorado no getBoundingClientRect() do botão (escapa do
+      clip + do stacking context do card). Abre pra cima quando não há ~130px
+      abaixo do botão (caso do rodapé da viewport). Fecha em scroll/resize (menu
+      fixed ficaria deslocado do botão). z-index 950/951 (abaixo do Modal=999).
+    files:
+      - src/app/wms/compras/page.tsx
+    tags: [wms, compras, kebab, dropdown, overflow-hidden, clip, z-index, portal, createPortal, position-fixed, wms-frc, camada-debaixo, ui]
+    notes: >
+      Mesmo sintoma do bug css-paper (dropdown "numa camada debaixo") mas causa
+      diferente: lá era background transparente (token inexistente); aqui é clip
+      por overflow:hidden do card. NÃO mexer no overflow:hidden do .wms-frc — é
+      compartilhado (aba Receber usa wms-frc-row-doc) e clipa os cantos.

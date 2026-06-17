@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   useInfiniteQuery,
   useMutation,
@@ -1454,7 +1455,9 @@ function TabComprar({
   );
 }
 
-// Mini popover do kebab (sem dialog elaborado — usa <details>)
+// Mini popover do kebab. Renderiza o menu via portal no document.body —
+// o card (.wms-frc) tem overflow:hidden, que recortaria um dropdown
+// position:absolute interno (e o z-index não escapa do clip do ancestral).
 function ItemKebab({
   onIndisponivel,
   onPropostaCancelamento,
@@ -1465,40 +1468,77 @@ function ItemKebab({
   onTrocarFornecedor: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [coords, setCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    right: number;
+  } | null>(null);
+
+  const abrir = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const right = window.innerWidth - r.right;
+    // ~120px de menu; se não cabe abaixo, abre pra cima ancorando no topo do botão
+    if (window.innerHeight - r.bottom < 130) {
+      setCoords({ bottom: window.innerHeight - r.top + 4, right });
+    } else {
+      setCoords({ top: r.bottom + 4, right });
+    }
+    setOpen(true);
+  };
+
+  // Fecha em scroll/resize — o menu fixed ficaria deslocado do botão
+  useEffect(() => {
+    if (!open) return;
+    const fechar = () => setOpen(false);
+    window.addEventListener("scroll", fechar, true);
+    window.addEventListener("resize", fechar);
+    return () => {
+      window.removeEventListener("scroll", fechar, true);
+      window.removeEventListener("resize", fechar);
+    };
+  }, [open]);
+
   return (
     <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
       <button
+        ref={btnRef}
         className="wms-btn-icon"
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((v) => !v);
+          if (open) setOpen(false);
+          else abrir();
         }}
         title="Mais ações"
         type="button"
       >
         <Icon name="dots" size={11} />
       </button>
-      {open && (
+      {open && coords &&
+        createPortal(
         <>
           <div
             onClick={() => setOpen(false)}
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 30,
+              zIndex: 950,
             }}
           />
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
-              position: "absolute",
-              right: 0,
-              top: "calc(100% + 4px)",
+              position: "fixed",
+              top: coords.top,
+              bottom: coords.bottom,
+              right: coords.right,
               background: "var(--wms-c-panel)",
               border: "1px solid var(--wms-c-border)",
               borderRadius: "var(--wms-r-2)",
               boxShadow: "var(--wms-shadow-sm)",
               minWidth: 200,
-              zIndex: 31,
+              zIndex: 951,
               padding: 4,
               display: "flex",
               flexDirection: "column",
@@ -1542,7 +1582,8 @@ function ItemKebab({
               Trocar fornecedor
             </button>
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   );

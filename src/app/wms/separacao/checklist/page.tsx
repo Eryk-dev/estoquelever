@@ -1054,6 +1054,56 @@ export default function WmsChecklistPage() {
     }
   }
 
+  // Operador escolheu picar de outra loc (painel "Ver outras localizações") —
+  // move a reserva R de cada pedido do bucket pra loc destino (atômico no back).
+  // NÃO pica; só troca a posição reservada. Refetch no fim reposiciona a loc
+  // exibida (derivada server-side) — sem optimistic.
+  async function handleTrocarLoc(produto: ConsolidatedProduct, destinoLocId: string) {
+    if (submittingActionRef.current) return;
+    submittingActionRef.current = true;
+    try {
+      const results = await Promise.all(
+        produto.item_ids.map(async (id) => {
+          const res = await sisoFetch("/api/wms/separacao/trocar-localizacao", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pedido_item_id: id,
+              localizacao_destino_id: destinoLocId,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          return { res, data };
+        }),
+      );
+      const erradas = results.filter((r) => !r.res.ok);
+      if (erradas.length > 0) {
+        const semSaldo = erradas.find(
+          (r) => r.res.status === 409 && r.data?.error === "destino_sem_saldo",
+        );
+        const consumida = erradas.find(
+          (r) => r.res.status === 409 && r.data?.error === "reserva_ja_consumida",
+        );
+        if (semSaldo) {
+          toast.warning("Localização sem saldo livre suficiente — escolha outra.", {
+            duration: 5000,
+          });
+        } else if (consumida) {
+          toast.warning("Item já foi picado/movido — atualizando…", { duration: 4000 });
+        } else {
+          toastErroApi(erroApiTexto(erradas[0]?.data, "Erro ao trocar localização"));
+        }
+      } else {
+        toast.success("Localização trocada");
+      }
+      queryClient.invalidateQueries({ queryKey });
+    } catch {
+      toastErroApi("Erro de conexão");
+    } finally {
+      submittingActionRef.current = false;
+    }
+  }
+
   async function handleConcluir() {
     try {
       const result = await concluirMutation.mutateAsync();
@@ -1293,6 +1343,7 @@ export default function WmsChecklistPage() {
                         loading: false,
                       })
                     }
+                    onTrocarLoc={(destinoLocId) => handleTrocarLoc(p, destinoLocId)}
                   />
                 );
               })}
@@ -1523,6 +1574,7 @@ function ItemRow({
   submitting,
   onToggle,
   onParcial,
+  onTrocarLoc,
 }: {
   produto: ConsolidatedProduct;
   modo?: "normal" | "pego" | "pegar";
@@ -1531,6 +1583,8 @@ function ItemRow({
   submitting?: boolean;
   onToggle: () => void;
   onParcial: () => void;
+  /** Operador escolheu picar de outra loc — move a reserva pra `destinoLocId`. */
+  onTrocarLoc?: (destinoLocId: string) => void;
 }) {
   // Linha "pego" = registro visual do que já foi separado (✓ verde, sem ação).
   // Linha "pegar" = o que falta (reservado), checkbox aberto + ações ativas.
@@ -1553,7 +1607,11 @@ function ItemRow({
     if (submitting || isPego) return;
     onToggle();
   };
+  const [verLocs, setVerLocs] = useState(false);
+  // Sugestão de outras locs só faz sentido na linha acionável e ainda aberta.
+  const podeVerLocs = !isPego && !done && !!produto.separacao_galpao_id;
   return (
+    <>
     <div
       className={`wms-hand-item${done ? " is-done" : ""}`}
       style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px" }}
@@ -1699,6 +1757,28 @@ function ItemRow({
         )}
       </div>
     </div>
+    {podeVerLocs && (
+      <div style={{ padding: "0 12px 10px 84px" }}>
+        <button
+          type="button"
+          className="wms-btn wms-btn-sm wms-btn-ghost"
+          onClick={() => setVerLocs((v) => !v)}
+          style={{ marginBottom: verLocs ? 8 : 0 }}
+        >
+          <Icon name={verLocs ? "chevron-u" : "chevron-d"} size={11} />
+          {verLocs ? "Ocultar localizações" : "Ver outras localizações"}
+        </button>
+        {verLocs && (
+          <LocHistoricoPanel
+            sku={produto.sku}
+            galpaoId={produto.separacao_galpao_id!}
+            variant="sugestao"
+            onPickFromLoc={(loc) => onTrocarLoc?.(loc.localizacao_id)}
+          />
+        )}
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1721,9 +1801,15 @@ interface LocHistorico {
 function LocHistoricoPanel({
   sku,
   galpaoId,
+  variant = "historico",
+  onPickFromLoc,
 }: {
   sku: string;
   galpaoId: string;
+  /** "historico" = todas as locs (OC, read-only). "sugestao" = só com saldo livre. */
+  variant?: "historico" | "sugestao";
+  /** Quando setado (variant sugestao), cada loc vira tocável pra picar de lá. */
+  onPickFromLoc?: (loc: LocHistorico) => void;
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["wms-loc-historico", sku, galpaoId],
@@ -1748,17 +1834,70 @@ function LocHistoricoPanel({
       </div>
     );
   }
-  const rows = data?.rows ?? [];
+  const rowsAll = data?.rows ?? [];
+  // Sugestão = só locs com saldo livre (onde dá pra pegar agora), maior disp
+  // primeiro. Histórico = todas (inclui zeradas), comportamento original.
+  const rows =
+    variant === "sugestao"
+      ? rowsAll
+          .filter((r) => r.disponivel > 0)
+          .sort((a, b) => b.disponivel - a.disponivel)
+      : rowsAll;
   if (rows.length === 0) {
     return (
       <div className="wms-td-mute" style={{ fontSize: 12, padding: "4px 0" }}>
-        Sem histórico de localização.
+        {variant === "sugestao"
+          ? "Sem outra localização com saldo disponível."
+          : "Sem histórico de localização."}
       </div>
     );
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {rows.map((r) => {
+        if (variant === "sugestao") {
+          const acionavel = !!onPickFromLoc;
+          return (
+            <div
+              key={r.localizacao_id}
+              role={acionavel ? "button" : undefined}
+              tabIndex={acionavel ? 0 : undefined}
+              onClick={acionavel ? () => onPickFromLoc!(r) : undefined}
+              onKeyDown={
+                acionavel
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onPickFromLoc!(r);
+                      }
+                    }
+                  : undefined
+              }
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "7px 8px",
+                borderBottom: "1px solid var(--wms-c-border)",
+                borderRadius: 6,
+                cursor: acionavel ? "pointer" : "default",
+              }}
+            >
+              <span className="wms-mono" style={{ fontWeight: 600, fontSize: 12.5 }}>
+                {r.codigo}
+              </span>
+              <LocTipoBadge tipo={r.tipo} />
+              <span className="wms-mono" style={{ fontSize: 12, marginLeft: "auto" }}>
+                {fmtNum(r.disponivel)} disp
+              </span>
+              {acionavel ? (
+                <span className="wms-badge" style={{ fontSize: 10 }}>
+                  Pegar aqui
+                </span>
+              ) : null}
+            </div>
+          );
+        }
         const vazio = r.saldo <= 0;
         return (
           <div

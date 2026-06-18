@@ -207,6 +207,46 @@ export async function pickItemAtomico(opts: {
   return data as PickAtomicoResult;
 }
 
+export interface TrocarReservaLocResult {
+  ok: boolean;
+  sem_mudanca?: boolean;
+  reserva_antiga_id: string;
+  reserva_nova_id: string;
+  mov_l_id?: string;
+  destino_localizacao_id: string;
+  qty: number;
+}
+
+/**
+ * Move a reserva R de pedido de uma localização pra outra (atômico) via RPC
+ * wms_trocar_reserva_localizacao_atomico — L na loc antiga + R na loc destino
+ * numa única transação. NÃO pica: o pick seguinte acha a R nova via
+ * buscarReservaPendentePorProduto. Move a reserva INTEIRA (ver migration).
+ *
+ * Throw em qualquer falha (destino sem saldo, R já consumida, etc) — preserva
+ * a mensagem do Postgres pro caller mapear o código HTTP por substring.
+ */
+export async function trocarReservaLocalizacaoAtomico(opts: {
+  reserva_id: string;
+  destino_localizacao_id: string;
+  pedido_id: string;
+  usuario_id?: string;
+  motivo?: string;
+}): Promise<TrocarReservaLocResult> {
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc("wms_trocar_reserva_localizacao_atomico", {
+    p_reserva_id: opts.reserva_id,
+    p_destino_localizacao_id: opts.destino_localizacao_id,
+    p_pedido_id: opts.pedido_id,
+    p_usuario_id: opts.usuario_id ?? null,
+    p_motivo: opts.motivo ?? null,
+  });
+  if (error) {
+    throw new Error(`troca de localização falhou: ${error.message}`);
+  }
+  return data as TrocarReservaLocResult;
+}
+
 /**
  * Emite L apontando pra R (estorno_de=R.id) que libera `qty` do reservado.
  * `qty` pode ser menor, igual ou maior que R.quantidade — `wms_inserir_movimentacao`

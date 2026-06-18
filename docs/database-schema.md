@@ -937,6 +937,30 @@ nada". `marcar-item` retorna 409 e NÃO marca o item se isto lançar. Dois modos
 
 ---
 
+### RPC `wms_trocar_reserva_localizacao_atomico` (2026-06-18)
+
+```sql
+wms_trocar_reserva_localizacao_atomico(p_reserva_id uuid, p_destino_localizacao_id uuid,
+  p_pedido_id text, p_usuario_id uuid, p_motivo text DEFAULT NULL)
+RETURNS jsonb
+```
+
+Move a R `reserva_pedido` de uma localização pra outra no MESMO galpão, numa única
+transação: **L** (`liberacao_reserva`, `estorno_de=R.id`) na loc antiga + **R** nova
+(`reserva_pedido`, TTL 30d) na loc destino — ambos via `wms_inserir_movimentacao`.
+**NÃO pica** (sem S); só move a posição reservada — o pick seguinte acha a R nova via
+`buscarReservaPendentePorProduto`. Move a reserva **INTEIRA** (`v_r.quantidade`): move
+parcial seria inseguro porque a idempotência da R antiga é `EXISTS L WHERE estorno_de=R.id`
+(ignora qty). Guardas: `RESERVA_NAO_ENCONTRADA`/`RESERVA_INVALIDA`/`RESERVA_PEDIDO_MISMATCH`/
+`RESERVA_JA_CONSUMIDA` (L já existe) + no-op se já está na loc destino. **Destino-saldo** é
+validado pela R-check interna do `wms_inserir_movimentacao` (`reservado > saldo` → "reserva
+excede saldo") que faz **rollback de TUDO** (inclusive o L) — a R original fica intacta.
+As duas movs tocam rows DIFERENTES de `siso_estoque` (locs distintas), então a ordem L→R é
+só clareza. Endpoint: `POST /api/wms/separacao/trocar-localizacao`. **NÃO** escreve
+`siso_pedido_item_mov_links` (move ≠ pick). Migration: `20260618_wms_trocar_reserva_localizacao_atomico`.
+
+---
+
 ### RPC `wms_acumular_qty_pega`
 
 ```sql
@@ -2023,6 +2047,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-12 | `20260612c_mv_refresh_concurrently.sql` | **Perf Tier 1** — crons `wms_refresh_cobertura_1min` e `wms_curva_abc_refresh_diario` re-agendados pra rodar `REFRESH MATERIALIZED VIEW CONCURRENTLY` direto (CONCURRENTLY não roda dentro de função). Antes, o refresh por minuto da cobertura tomava AccessExclusiveLock e travava leitores. Funções `wms_refresh_cobertura()`/`wms_refresh_curva_abc()` intactas (caller manual `cobertura.ts` + smoke tests). |
 | 2026-06-12 | `20260612d_rpc_separacao_counts.sql` | **Perf Tier 3** — RPC `wms_separacao_counts(p_galpao_id, p_empresa_id, p_marketplace, p_tag, p_busca, p_busca_pedido_ids)` retorna jsonb `{status: count}` num único GROUP BY, substituindo os 9 HEAD-counts paralelos de `GET /api/wms/separacao`. Filtros réplica da rota (galpão NÃO filtra `aguardando_compra`). Rota mantém caminho legado como fallback se a RPC falhar. |
 | 2026-06-12 | `20260612e_rpc_session_load.sql` | **Perf Tier 3** — RPC `wms_session_load(p_session_id text, p_galpao_id text)` consolida em 1 round-trip as 2-4 queries de `getSessionUser` (sessão+usuário, roles ativas+permissões com fallback por `cargos[]`, `galpao_valido` via `siso_usuario_galpoes`, `galpao_cargo_id` legado operador_cwb/sp). Cast inválido de uuid → NULL. `session.ts` mantém caminho legado como fallback. Verificada equivalência contra sessões vivas do staging (roles/perms/galpão idênticos). |
+| 2026-06-18 | `20260618_wms_trocar_reserva_localizacao_atomico.sql` | **Troca de localização no pick.** RPC `wms_trocar_reserva_localizacao_atomico(p_reserva_id, p_destino_localizacao_id, p_pedido_id text, p_usuario_id, p_motivo)` move a R `reserva_pedido` de uma loc pra outra no mesmo galpão (L na antiga + R na destino, atômico; reserva INTEIRA; idempotência por `estorno_de`; destino-saldo via R-check do `wms_inserir_movimentacao` → rollback total se não cobre). Endpoint `POST /api/wms/separacao/trocar-localizacao`; UI no painel "Ver outras localizações" do checklist. NÃO pica. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

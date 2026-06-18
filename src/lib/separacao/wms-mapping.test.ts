@@ -6,6 +6,7 @@ import {
   resolverProdutoEfetivoDoItem,
   resolverLocalizacaoWms,
   resolveSeparacaoGalpao,
+  escolherLocCobrindo,
   type MappingDeps,
 } from "./wms-mapping";
 
@@ -165,5 +166,51 @@ describe("resolveSeparacaoGalpao", () => {
   it("lança erro quando ambos NULL", () => {
     const pedido = { empresa_origem_id: null, separacao_galpao_id: null };
     expect(() => resolveSeparacaoGalpao(pedido as any)).toThrow(/sem galpão resolvível/i);
+  });
+});
+
+describe("escolherLocCobrindo (picking só se cobre tudo)", () => {
+  // Candidatos SEMPRE ordenados por disponivel desc (contrato da função).
+  it("sem qty: retorna o de maior disponível (1º)", () => {
+    const cands = [
+      { localizacao_id: "over", tipo: "overstock", disponivel: 50 },
+      { localizacao_id: "pick", tipo: "picking", disponivel: 3 },
+    ];
+    expect(escolherLocCobrindo(cands)?.localizacao_id).toBe("over");
+  });
+
+  it("qty coberta por picking: picking vence overstock maior", () => {
+    // pede 2; PICK(3) cobre → vai pro picking mesmo o overstock tendo mais.
+    const cands = [
+      { localizacao_id: "over", tipo: "overstock", disponivel: 50 },
+      { localizacao_id: "pick", tipo: "picking", disponivel: 3 },
+    ];
+    expect(escolherLocCobrindo(cands, 2)?.localizacao_id).toBe("pick");
+  });
+
+  it("qty NÃO coberta por nenhum picking: cai pro maior disponível (overstock)", () => {
+    // pede 5; PICK(3) não cobre sozinha → vai pro overstock (cenário do usuário).
+    const cands = [
+      { localizacao_id: "over", tipo: "overstock", disponivel: 50 },
+      { localizacao_id: "pick", tipo: "picking", disponivel: 3 },
+    ];
+    expect(escolherLocCobrindo(cands, 5)?.localizacao_id).toBe("over");
+  });
+
+  it("dois pickings: escolhe o 1º que cobre (maior disponível, pré-ordenado)", () => {
+    const cands = [
+      { localizacao_id: "pick-hi", tipo: "picking", disponivel: 10 },
+      { localizacao_id: "pick-lo", tipo: "picking", disponivel: 4 },
+    ];
+    expect(escolherLocCobrindo(cands, 5)?.localizacao_id).toBe("pick-hi");
+  });
+
+  it("qty = disponível exato do picking conta como cobre", () => {
+    const cands = [{ localizacao_id: "pick", tipo: "picking", disponivel: 5 }];
+    expect(escolherLocCobrindo(cands, 5)?.localizacao_id).toBe("pick");
+  });
+
+  it("lista vazia: null", () => {
+    expect(escolherLocCobrindo([], 5)).toBeNull();
   });
 });

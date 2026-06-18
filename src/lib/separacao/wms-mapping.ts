@@ -146,6 +146,28 @@ export async function resolverLocalizacaoWms(
 }
 
 /**
+ * Regra "picking só se cobre tudo" (pura — testável sem DB). Dado candidatos
+ * `{tipo, disponivel}` JÁ ORDENADOS por disponivel desc:
+ *   - com `qty`: retorna o 1º `picking` que SOZINHO cobre a qty (= o picking de
+ *     maior disponível que cobre); se nenhum picking cobre, o 1º candidato (maior
+ *     disponível, picking ou overstock);
+ *   - sem `qty`: o 1º candidato (maior disponível).
+ * Centraliza a regra usada por buscarLocComMaiorSaldoNoGalpao (reserva/pick) e
+ * pelo display do checklist — pra não divergirem.
+ */
+export function escolherLocCobrindo<
+  T extends { tipo: string | null | undefined; disponivel: number },
+>(candsOrdenados: T[], qty?: number): T | null {
+  if (qty != null && qty > 0) {
+    const pickCobre = candsOrdenados.find(
+      (c) => c.tipo === "picking" && c.disponivel >= qty,
+    );
+    if (pickCobre) return pickCobre;
+  }
+  return candsOrdenados[0] ?? null;
+}
+
+/**
  * Busca a localizacao com MAIOR saldo *disponível* do produto no galpão.
  * Usado como fallback live quando o snapshot de siso_pedido_item_estoques
  * está vazio (ex.: pedido chegou antes do recebimento, saldo era 0 no webhook).
@@ -159,14 +181,23 @@ export async function resolverLocalizacaoWms(
  * tem disponível positivo.
  *
  * CST-01: `opts.apenasVendaveis` restringe a locs de tipo vendável
- * (picking/overstock) — usado pela criação de reserva R em aprovar, pra não
- * reservar saldo de quarentena/recebimento/packing/expedicao. O fallback de
- * pick (pick-mov/marcar-item/parcial) segue sem filtro (comportamento antigo).
+ * (picking/overstock) — usado pela criação de reserva R em aprovar e pelos
+ * fallbacks de pick de item normal (marcar-item/parcial), pra não reservar/picar
+ * saldo de quarentena/recebimento/packing/expedicao.
+ *
+ * `opts.qty` (regra "picking só se cobre tudo"): com a qty do item, prefere a loc
+ * `picking` de maior disponível que SOZINHA cobre a qty inteira; senão cai pra loc
+ * de maior disponível entre as vendáveis (picking ou overstock). Sem qty, mantém
+ * só maior-disponível.
+ *
+ * O fallback SEM `apenasVendaveis` (pick-mov, caminho OC) segue sem filtro de
+ * propósito: o OC bipa a loc onde achou (inclusive recebimento) e o pick precisa
+ * sair de lá.
  */
 export async function buscarLocComMaiorSaldoNoGalpao(
   galpaoId: string,
   produtoUuid: string,
-  opts?: { apenasVendaveis?: boolean },
+  opts?: { apenasVendaveis?: boolean; qty?: number },
 ): Promise<string | null> {
   const supabase = createServiceClient();
   // [INV-07] Exclui locs com lock de inventário ativo — mesma regra de
@@ -177,17 +208,32 @@ export async function buscarLocComMaiorSaldoNoGalpao(
   if (opts?.apenasVendaveis) {
     const { data } = await supabase
       .from("siso_estoque")
-      .select("localizacao_id, siso_localizacoes!inner(tipo)")
+      .select("localizacao_id, disponivel, siso_localizacoes!inner(tipo)")
       .eq("galpao_id", galpaoId)
       .eq("produto_id", produtoUuid)
       .in("siso_localizacoes.tipo", [...TIPOS_LOC_VENDAVEIS])
       .gt("disponivel", 0)
       .order("disponivel", { ascending: false })
       .limit(20);
-    const livre = (data ?? []).find(
-      (r) => !bloqueadas.has(r.localizacao_id as string),
-    );
-    return (livre?.localizacao_id as string | undefined) ?? null;
+    type LocRow = {
+      localizacao_id: string;
+      disponivel: number | string | null;
+      siso_localizacoes: { tipo: string } | { tipo: string }[] | null;
+    };
+    const rows = (data ?? []) as unknown as LocRow[];
+    const tipoDe = (r: LocRow): string | undefined => {
+      const l = r.siso_localizacoes;
+      return Array.isArray(l) ? l[0]?.tipo : l?.tipo;
+    };
+    // `data` já vem ordenado por disponivel desc; o map preserva a ordem.
+    const livres = rows
+      .filter((r) => !bloqueadas.has(r.localizacao_id))
+      .map((r) => ({
+        localizacao_id: r.localizacao_id,
+        tipo: tipoDe(r),
+        disponivel: Number(r.disponivel ?? 0),
+      }));
+    return escolherLocCobrindo(livres, opts.qty)?.localizacao_id ?? null;
   }
   const { data } = await supabase
     .from("siso_estoque")

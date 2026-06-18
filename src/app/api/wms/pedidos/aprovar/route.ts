@@ -584,11 +584,12 @@ async function criarReservasPedido(args: {
       };
       if ("err" in resolvido) throw resolvido.err;
       const produtoWmsId = resolvido.id;
-      // CST-01: R só pode ser criada em loc vendável (picking/overstock).
+      // CST-01 + picking-first: R em loc vendável (picking/overstock), preferindo
+      // a loc picking que sozinha cobre a qty inteira do item.
       const locId = await buscarLocComMaiorSaldoNoGalpao(
         separacaoGalpaoId,
         produtoWmsId,
-        { apenasVendaveis: true },
+        { apenasVendaveis: true, qty },
       );
       if (!locId) {
         const rb = await rollbackReservas(criadas, pedidoId);

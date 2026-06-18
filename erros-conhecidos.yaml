@@ -6287,3 +6287,38 @@ erros:
       produto/pedido). Se a qty somada exceder o disponível, degrada pra separação
       como antes. Erros de typecheck restantes são em .test.ts pré-existentes,
       não relacionados.
+
+  - id: separacao-loc-picking-ignorada-maior-saldo
+    date: "2026-06-18"
+    source: wms.separacao (escolha de localização — aprovar/checklist/buscarLocComMaiorSaldoNoGalpao)
+    category: business_logic
+    message: "App mandava o separador pra loc overstock (maior saldo) mesmo havendo loc picking marcada que cobria o item"
+    cause: >
+      buscarLocComMaiorSaldoNoGalpao (separacao/wms-mapping.ts) ordenava SÓ por
+      `disponivel` desc, sem prioridade de tipo. Com apenasVendaveis=true (criação
+      da reserva R em aprovar) picking e overstock competiam por saldo cru → uma
+      loc overstock com mais saldo vencia a loc picking que o usuário marcou. A loc
+      exibida no checklist (checklist-items/route.ts) era calculada à parte (maior
+      `saldo` individual, sem tipo nem exclusão de locks), divergindo do destino real.
+    fix: >
+      Regra "picking só se cobre tudo" extraída em escolherLocCobrindo (pura,
+      exportada de wms-mapping.ts): com a qty do item, prefere a loc `picking` que
+      SOZINHA cobre a qty inteira; senão a de maior `disponivel` entre as vendáveis.
+      buscarLocComMaiorSaldoNoGalpao ganhou opts.qty e usa a regra no ramo
+      apenasVendaveis; aprovar passa a qty do item. O display do checklist usa a
+      MESMA regra (sobre `disponivel`, excluindo locs travadas via locsBloqueadasSet),
+      batendo com o destino. Fallback de pick sem reserva (pick-mov, caminho OC)
+      mantido SEM filtro de propósito (o OC bipa a loc onde achou, inclusive recebimento).
+    files:
+      - src/lib/separacao/wms-mapping.ts
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/app/api/wms/separacao/checklist-items/route.ts
+      - src/lib/separacao/wms-mapping.test.ts
+    tags: [wms, separacao, localizacao, picking, overstock, roteamento, reserva, escolherLocCobrindo, buscarLocComMaiorSaldoNoGalpao, checklist]
+    notes: >
+      Decisão do user: "picking só se cobre tudo" (não picking-sempre). Só corrige
+      o caminho de item NORMAL (onde a R nasce em aprovar + display); os fallbacks
+      sem-R (marcar-item/parcial/pick-mov) ficaram intocados pra não quebrar OC
+      (mercadoria recebida em loc não-vendável). Pedidos já aprovados com R em
+      overstock seguem lá — corrige via troca de localização no pick
+      (POST /api/wms/separacao/trocar-localizacao, RPC wms_trocar_reserva_localizacao_atomico).

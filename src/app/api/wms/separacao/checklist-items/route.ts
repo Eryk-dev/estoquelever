@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
+import { locsBloqueadasSet } from "@/lib/wms/loc-locks";
+import { escolherLocCobrindo } from "@/lib/separacao/wms-mapping";
 
 /**
  * GET /api/separacao/checklist-items?pedidos=id1,id2,id3
@@ -9,11 +11,25 @@ import { getSessionUser } from "@/lib/session";
  * Fetch individual items for the given pedido IDs with LIVE localizacao
  * and saldo from siso_estoque (3D), filtered by the separação galpão.
  *
- * Loc exibida = a com maior saldo individual no galpão; saldo/disponivel
- * = soma de todas as locs do galpão pra aquele SKU. NÃO usa o snapshot
- * congelado de siso_pedido_item_estoques — estoque inserido após o
+ * Loc exibida = mesma regra do roteamento/aprovar (picking que cobre a qty
+ * inteira, senão maior disponível entre as vendáveis), excluindo locs travadas;
+ * saldo/disponivel = soma de todas as locs do galpão pra aquele SKU. NÃO usa o
+ * snapshot congelado de siso_pedido_item_estoques — estoque inserido após o
  * webhook reflete imediatamente.
  */
+
+/**
+ * Escolhe a loc exibida pro item com a regra "picking só se cobre tudo":
+ * `cands` já vem ordenado por disponivel desc e sem locs travadas, então o
+ * primeiro picking que sozinho cobre a qty é o de maior disponível; senão a
+ * de maior disponível (picking ou overstock). Espelha buscarLocComMaiorSaldoNoGalpao.
+ */
+function escolherLocExibida(
+  cands: Array<{ codigo: string | null; tipo: string | null; disponivel: number }>,
+  qty: number,
+): string | null {
+  return escolherLocCobrindo(cands, qty)?.codigo ?? null;
+}
 export async function GET(request: NextRequest) {
   const session = await getSessionUser(request);
   if (!session) {
@@ -273,35 +289,36 @@ export async function GET(request: NextRequest) {
       ),
     );
 
-    // Map: `${galpao_id}:${sku}` -> { localizacao_codigo, saldo, disponivel }
-    const liveStockMap = new Map<
+    // Map agregado: `${galpao_id}:${sku}` -> { saldo, disponivel } (totais do galpão).
+    const liveStockMap = new Map<string, { saldo: number; disponivel: number }>();
+    // Candidatos de loc por chave, pra escolher a loc exibida com a mesma regra
+    // picking-first do roteamento/aprovar. Filtrados de locs travadas e ordenados
+    // por disponivel desc (a regra picking-first assume essa ordem).
+    const locCandidatesMap = new Map<
       string,
-      { localizacao: string | null; saldo: number; disponivel: number }
+      Array<{ codigo: string | null; tipo: string | null; disponivel: number }>
     >();
 
     if (sepGalpaoIds.length > 0 && skus.length > 0) {
+      const bloqueadas = await locsBloqueadasSet(supabase);
       type EstoqueRow = {
         saldo: number | string | null;
         disponivel: number | string | null;
         galpao_id: string;
+        localizacao_id: string;
         siso_produtos: { sku: string } | null;
-        siso_localizacoes: { codigo: string } | null;
+        siso_localizacoes: { codigo: string; tipo: string } | null;
       };
       const { data: estoqueRows } = await supabase
         .from("siso_estoque")
         .select(
-          "saldo, disponivel, galpao_id, siso_produtos!inner(sku), siso_localizacoes!inner(codigo)",
+          "saldo, disponivel, galpao_id, localizacao_id, siso_produtos!inner(sku), siso_localizacoes!inner(codigo, tipo)",
         )
         .in("galpao_id", sepGalpaoIds)
         .in("siso_produtos.sku", skus);
 
-      // Pra escolher loc top precisamos saber qual loc tem mais saldo
-      // individual em cada (galpao, sku). Trackeamos o saldo da loc top.
-      const topLocSaldo = new Map<string, number>();
-
       for (const row of (estoqueRows ?? []) as unknown as EstoqueRow[]) {
         const sku = row.siso_produtos?.sku;
-        const locCodigo = row.siso_localizacoes?.codigo ?? null;
         if (!sku) continue;
         const key = `${row.galpao_id}:${sku}`;
         const saldo = Number(row.saldo ?? 0);
@@ -312,17 +329,24 @@ export async function GET(request: NextRequest) {
           existing.saldo += saldo;
           existing.disponivel += disponivel;
         } else {
-          liveStockMap.set(key, {
-            localizacao: locCodigo,
-            saldo,
+          liveStockMap.set(key, { saldo, disponivel });
+        }
+
+        // Candidatos só de locs não-travadas, pra a loc exibida bater com o
+        // destino real do pick (que também exclui locs em contagem).
+        if (!bloqueadas.has(row.localizacao_id)) {
+          const cands = locCandidatesMap.get(key) ?? [];
+          cands.push({
+            codigo: row.siso_localizacoes?.codigo ?? null,
+            tipo: row.siso_localizacoes?.tipo ?? null,
             disponivel,
           });
+          locCandidatesMap.set(key, cands);
         }
-        const currentTop = topLocSaldo.get(key) ?? -Infinity;
-        if (saldo > currentTop) {
-          topLocSaldo.set(key, saldo);
-          liveStockMap.get(key)!.localizacao = locCodigo;
-        }
+      }
+
+      for (const cands of locCandidatesMap.values()) {
+        cands.sort((a, b) => b.disponivel - a.disponivel);
       }
     }
 
@@ -457,7 +481,12 @@ export async function GET(request: NextRequest) {
               ? [capaImagem]
               : [],
         compra_status: item.compra_status ?? null,
-        localizacao: live?.localizacao ?? null,
+        localizacao: liveKey
+          ? escolherLocExibida(
+              locCandidatesMap.get(liveKey) ?? [],
+              Number(item.quantidade_pedida ?? 0),
+            )
+          : null,
         saldo: live?.saldo ?? 0,
         disponivel: live?.disponivel ?? 0,
         empresa_origem_id: sepEmpresaId,

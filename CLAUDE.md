@@ -148,7 +148,7 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 204 rotas — TODO o backend
+    api/wms/**/route.ts                 # 205 rotas — TODO o backend
     wms/**                              # 47 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
@@ -188,7 +188,7 @@ src/
       inventario.ts · inventario-reconciliacao.ts (pura) · inventario-recovery.ts
       vendas-{disponibilidade,cancelamento}.ts · mandar-compras.ts · varredura-validacao-oc.ts
       trocas-equivalencia.ts · trocas-equivalencia-regra.ts (pura) · trocas-roteamento.ts · trocas-api.ts
-      fornecedores.ts · compras-manuais.ts · sync-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
+      fornecedores.ts · compras-manuais.ts · sync-tiny.ts · sync-produtos-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
       separacao/{pick-mov,distribuir-qty-pega,reset-state,alocacao-contagem}.ts
@@ -199,9 +199,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (204 rotas em `/api/wms`)
+### API — grupos por domínio (205 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (7) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (6) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
 
 ### Database — tabelas principais
 

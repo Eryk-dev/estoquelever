@@ -1822,6 +1822,47 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 
 ---
 
+### GET /api/wms/separacao/produto-localizacoes?sku=SKU&galpao_id=UUID
+
+**File:** `src/app/api/wms/separacao/produto-localizacoes/route.ts`
+
+**Purpose:** Histórico de localizações de um produto NO galpão de separação — todos os locais pelos quais ele já passou (`siso_movimentacoes`), incluindo os hoje zerados, anotados com o saldo atual (`siso_estoque`). Alimenta o painel "Ver histórico de localização" dos itens OC no checklist de separação: quando o saldo do sistema diverge do físico (erro de estoque), o operador vê onde a peça já esteve e vai procurar lá. Resolve o produto por SKU (UNIQUE em `siso_produtos`) — o checklist já carrega o sku efetivo (peça física), evitando o gotcha de `produto_id` ser o `tiny_produto_id`.
+
+**Auth:** X-Session-Id (required). 401 `sessao_invalida` se ausente.
+
+**Query Params:**
+- `sku`: SKU do produto (required)
+- `galpao_id`: galpão de separação (required)
+
+**Response (200):**
+```json
+{
+  "rows": [
+    {
+      "localizacao_id": "uuid",
+      "codigo": "string",
+      "tipo": "picking | overstock | recebimento | expedicao | quarentena | packing",
+      "saldo": "number (atual)",
+      "disponivel": "number (atual)",
+      "ultima_movimentacao": "ISO datetime | null",
+      "movs": "number (qtd de movimentações nesse local)"
+    }
+  ]
+}
+```
+
+**Business Logic:**
+- Resolve produto por `sku` (`siso_produtos`). Sem match → `{ rows: [] }`.
+- Lê até 300 movs recentes em `(produto, galpão)` de `siso_movimentacoes`, dedupando por `localizacao_id` (1ª ocorrência = última mov, pois vem `criado_em` desc).
+- Anota saldo atual de cada local via `siso_estoque` (locais com saldo 0 permanecem na lista).
+- Ordena: locais com `saldo > 0` primeiro (desc), depois por `ultima_movimentacao` desc.
+
+**Side Effects:** None (read-only)
+
+**Rate Limiting:** None
+
+---
+
 ### POST /api/wms/separacao/cancelar
 
 **File:** `src/app/api/wms/separacao/cancelar/route.ts`
@@ -4756,6 +4797,22 @@ See `src/app/api/wms/tiny/stock/ajustar/route.ts`
 **Auth:** `X-Worker-Secret` header ou `?secret=` (WORKER_SECRET) — cron pg_cron a cada 10min (`wms_tiny_polling_fallback`, migration `20260610_cron_tiny_polling.sql`) — OU sessão com `sistema.usuarios`.
 
 **Response 200:** `{ janela_dias, data_inicial, executado_em, empresas: [{ empresa_id, empresa_nome, cnpj, pedidos_aprovados_vistos, pedidos_processados, pedidos_cancelados_vistos, cancelamentos_aplicados, notas_vistas, notas_processadas, erros[] }] }`
+
+### GET /api/wms/tiny/sync-produtos
+
+**File:** `src/app/api/wms/tiny/sync-produtos/route.ts` (lib: `src/lib/wms/sync-produtos-tiny.ts`)
+
+**Purpose:** Sync incremental do catálogo de produtos. Varre TODAS as contas Tiny conectadas (mesmo conjunto do polling) e sincroniza pro `siso_produtos` os produtos **criados OU alterados** nos últimos ~2 min (filtro `dataCriacao` + `dataAlteracao` no `/produtos`, situacao=A, em America/Sao_Paulo). Mantém a base espelhada com o Tiny:
+
+- **Produto existente** (match por `sku`) → upsert da ponte `siso_produto_empresas` (tiny→wms desta empresa) + `sincronizarProduto` (refresh de descrição, NCM, GTIN, unidade, origem fiscal, imagens, fornecedores, kit).
+- **Produto novo** → `ensureProdutoFromTiny` (cria no catálogo + ponte + sincroniza).
+- **Estoque NÃO é tocado** (WMS é a fonte única; Tiny é só camada fiscal). Idempotente por SKU.
+
+**Param opcional:** `?lookbackMin=N` (1..60) pra um catch-up manual mais largo (default 2).
+
+**Auth:** `X-Worker-Secret` header ou `?secret=` (WORKER_SECRET) — cron pg_cron a cada **1min** (`wms_tiny_sync_produtos`, migration `20260618_cron_tiny_sync_produtos_1min.sql`) — OU sessão com `sistema.usuarios`.
+
+**Response 200:** `{ lookback_min, cutoff, executado_em, empresas: [{ empresa_id, cnpj, vistos, criados, atualizados, erros[] }] }`
 
 Erros são isolados por empresa e por item (uma falha não derruba a varredura). `maxDuration = 300`.
 

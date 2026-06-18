@@ -466,6 +466,53 @@ export async function getProdutoKit(
   return tinyFetch<TinyKitComponente[]>(`/produtos/${produtoId}/kit`, { token });
 }
 
+/** Item returned by GET /produtos (list) — campos de BaseProdutoModel. */
+export interface TinyProdutoListItem {
+  id: number;
+  sku?: string | null;
+  descricao?: string | null;
+  tipo?: string | null;
+  situacao?: string | null;
+  dataCriacao?: string | null;
+  dataAlteracao?: string | null;
+  gtin?: string | null;
+  unidade?: string | null;
+}
+
+/**
+ * Lista produtos com filtros opcionais (paginado).
+ * Per spec (api tiny.json): dataCriacao/dataAlteracao filtram a partir da data
+ * informada (formato 'YYYY-MM-DD HH:MM:SS'); situacao é o código A/I/E.
+ * Usado pelo sync incremental do catálogo (sync-produtos-tiny.ts).
+ */
+export async function listarProdutos(
+  token: string,
+  params: {
+    situacao?: string;
+    dataCriacao?: string;
+    dataAlteracao?: string;
+    nome?: string;
+    codigo?: string;
+    gtin?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<{ itens: TinyProdutoListItem[]; paginacao?: { total?: number } }> {
+  const query = new URLSearchParams();
+  if (params.situacao) query.set("situacao", params.situacao);
+  if (params.dataCriacao) query.set("dataCriacao", params.dataCriacao);
+  if (params.dataAlteracao) query.set("dataAlteracao", params.dataAlteracao);
+  if (params.nome) query.set("nome", params.nome);
+  if (params.codigo) query.set("codigo", params.codigo);
+  if (params.gtin) query.set("gtin", params.gtin);
+  query.set("limit", String(params.limit ?? 100));
+  if (params.offset) query.set("offset", String(params.offset));
+  return tinyFetch<{ itens: TinyProdutoListItem[]; paginacao?: { total?: number } }>(
+    `/produtos?${query.toString()}`,
+    { token },
+  );
+}
+
 /** Search product by SKU in a specific Tiny account */
 export async function buscarProdutoPorSku(
   token: string,

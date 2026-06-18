@@ -1,5 +1,9 @@
 import { createServiceClient } from "@/lib/supabase-server";
-import { getProdutoFull, buscarProdutoPorSku } from "@/lib/tiny-api";
+import {
+  getProdutoFull,
+  getProdutoCompleto,
+  buscarProdutoPorSku,
+} from "@/lib/tiny-api";
 import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { logger } from "@/lib/logger";
@@ -15,7 +19,15 @@ interface SincronizarOptions {
    * entre empresas (cada thread atua só na sua).
    */
   preferEmpresaId?: string;
+  /**
+   * Profundidade de recursão de kit (kit-de-kit). Interno: limita o
+   * auto-cadastro de componentes a MAX_KIT_DEPTH níveis pra evitar runaway.
+   */
+  kitDepth?: number;
 }
+
+/** Limite de recursão pro auto-cadastro de componentes de kit aninhado. */
+const MAX_KIT_DEPTH = 5;
 
 /**
  * P120: decide eh_kit pro sync. Tiny tipo=K só vira eh_kit=true se já houver
@@ -104,7 +116,12 @@ export async function sincronizarProduto(
   // logo a composição precisa ser inserida primeiro — senão um kit novo (órfão)
   // viria como eh_kit=false e exigiria uma 2ª sync pra convergir.
   if (full.tipo === "K" && full.kit.length > 0) {
-    await sincronizarComposicaoKit(produtoId, full.kit, mapeamento.empresa_id);
+    await sincronizarComposicaoKit(
+      produtoId,
+      full.kit,
+      mapeamento.empresa_id,
+      opts.kitDepth ?? 0,
+    );
   }
   // tipo=K vira eh_kit=true só com composição existente (P120) — o trigger
   // wms_kit_exige_componente rejeita kit sem componente.
@@ -158,6 +175,7 @@ async function sincronizarComposicaoKit(
     quantidade: number;
   }>,
   empresaId: string,
+  kitDepth: number,
 ): Promise<void> {
   const sb = createServiceClient();
   // Tenta resolver cada componente pelo tiny_produto_id (mais robusto que SKU).
@@ -195,9 +213,16 @@ async function sincronizarComposicaoKit(
     quantidade: number;
   }> = [];
   for (const item of kitItems) {
-    const componenteId = idPorTiny.get(item.produto.id);
+    let componenteId = idPorTiny.get(item.produto.id);
     if (!componenteId) {
-      logger.warn("wms.sync.kit", "componente não encontrado no catálogo", {
+      // Componente ainda não está no catálogo → busca no Tiny e cadastra,
+      // depois linka. Sem isso o kit ficaria com composição incompleta.
+      componenteId =
+        (await ensureComponenteCatalogo(empresaId, item.produto, kitDepth)) ??
+        undefined;
+    }
+    if (!componenteId) {
+      logger.warn("wms.sync.kit", "componente não resolvível (sem SKU) — pulado", {
         kitProdutoId,
         tiny_componente_id: item.produto.id,
         sku: item.produto.sku,
@@ -234,6 +259,7 @@ export async function ensureProdutoFromTiny(
   sku: string,
   empresaId: string,
   tinyProdutoId: number,
+  opts: { kitDepth?: number } = {},
 ): Promise<string> {
   const sb = createServiceClient();
 
@@ -263,8 +289,61 @@ export async function ensureProdutoFromTiny(
     .from("siso_produto_empresas")
     .insert({ produto_id: novo.id, empresa_id: empresaId, tiny_produto_id: tinyProdutoId });
 
-  await sincronizarProduto(novo.id);
+  await sincronizarProduto(novo.id, { kitDepth: opts.kitDepth });
   return novo.id;
+}
+
+/**
+ * Garante que o componente de um kit existe no catálogo (cria via Tiny se
+ * faltar) e devolve o uuid. Resolve o SKU pelo payload do kit ou, se vier
+ * nulo, buscando o detalhe do componente no Tiny pelo id. Respeita
+ * MAX_KIT_DEPTH (kit-de-kit). Retorna null se não der pra resolver o SKU.
+ */
+async function ensureComponenteCatalogo(
+  empresaId: string,
+  comp: { id: number; sku: string | null; descricao: string | null },
+  kitDepth: number,
+): Promise<string | null> {
+  const sb = createServiceClient();
+
+  // Já mapeado pra esta empresa? (componente pode ter entrado por outra via)
+  const { data: jaMapeado } = await sb
+    .from("siso_produto_empresas")
+    .select("produto_id")
+    .eq("empresa_id", empresaId)
+    .eq("tiny_produto_id", comp.id)
+    .maybeSingle();
+  if (jaMapeado?.produto_id) return jaMapeado.produto_id as string;
+
+  if (kitDepth >= MAX_KIT_DEPTH) {
+    logger.warn(
+      "wms.sync.kit",
+      "profundidade máxima de kit atingida — componente não auto-cadastrado",
+      { tiny_componente_id: comp.id, kitDepth },
+    );
+    return null;
+  }
+
+  // Resolve o SKU: do payload do kit, ou buscando o detalhe no Tiny pelo id.
+  let sku = comp.sku?.trim() || null;
+  if (!sku) {
+    try {
+      const { token } = await getValidTokenByEmpresa(empresaId);
+      const det = await getProdutoCompleto(token, comp.id);
+      sku = det.sku?.trim() || null;
+    } catch (e) {
+      logger.warn("wms.sync.kit", "falha buscando SKU do componente no Tiny", {
+        tiny_componente_id: comp.id,
+        erro: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  if (!sku) return null;
+
+  // Cria + sincroniza o componente (recursão de composição limitada por kitDepth).
+  return ensureProdutoFromTiny(sku, empresaId, comp.id, {
+    kitDepth: kitDepth + 1,
+  });
 }
 
 /**

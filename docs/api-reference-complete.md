@@ -4806,6 +4806,7 @@ See `src/app/api/wms/tiny/stock/ajustar/route.ts`
 
 - **Produto existente** (match por `sku`) → upsert da ponte `siso_produto_empresas` (tiny→wms desta empresa) + `sincronizarProduto` (refresh de descrição, NCM, GTIN, unidade, origem fiscal, imagens, fornecedores, kit).
 - **Produto novo** → `ensureProdutoFromTiny` (cria no catálogo + ponte + sincroniza).
+- **Kit (tipo=K)** → a composição é sincronizada e os **componentes faltantes são auto-cadastrados** (busca o SKU no Tiny e cria), depois linkados em `siso_produto_kits`. Recursão de kit-de-kit limitada a `MAX_KIT_DEPTH`. Comportamento na raiz (`sincronizarComposicaoKit`) → vale também pro cron de sync e sync por-linha.
 - **Estoque NÃO é tocado** (WMS é a fonte única; Tiny é só camada fiscal). Idempotente por SKU.
 
 **Param opcional:** `?lookbackMin=N` (1..60) pra um catch-up manual mais largo (default 2).

@@ -12,7 +12,11 @@ const sbMock = {
 } as never;
 
 // Mocka as deps pesadas de sync-tiny (Tiny API/oauth/queue) pra o import não puxar env.
-vi.mock("@/lib/tiny-api", () => ({ getProdutoFull: vi.fn() }));
+vi.mock("@/lib/tiny-api", () => ({
+  getProdutoFull: vi.fn(),
+  getProdutoCompleto: vi.fn(),
+  buscarProdutoPorSku: vi.fn(),
+}));
 vi.mock("@/lib/tiny-oauth", () => ({ getValidTokenByEmpresa: vi.fn() }));
 vi.mock("@/lib/tiny-queue", () => ({ runWithEmpresa: vi.fn() }));
 

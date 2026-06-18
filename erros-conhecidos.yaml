@@ -3591,8 +3591,16 @@ erros:
     notes: >
       Caso real staging: pedido 1046361694, item 4280 (KLL013), NetAir.
       Sintoma do usuário: foto do modal "Encontrei: KLL013" + toast
-      falhou_contagem_inline. Pendente: limpeza dos 122 kits órfãos (eh_kit=true
-      AND NOT EXISTS em siso_produto_kits).
+      falhou_contagem_inline. Remediação de dado: script
+      scripts/wms/backfill-kits-orfaos.ts puxa a composição do Tiny pros órfãos
+      (122 reais — eh_kit=true AND NOT EXISTS em siso_produto_kits; NÃO 509: o
+      PostgREST capa select em 1000 linhas, pague .range()). Run 2026-06-18:
+      74 preenchidos; restam 48 = 35 Bellator (token Tiny morto, token_status
+      'erro' invalid_grant — re-auth + re-run) + 13 vazios no Tiny (sem
+      composição em lugar nenhum — KLL013, pares, KITs NX; exigem definir BOM ou
+      desmarcar eh_kit por SKU). Bug de ordenação em sincronizarProduto
+      (resolvia eh_kit ANTES da composição → kit órfão precisava 2 syncs)
+      corrigido no mesmo commit.
 
   - id: wms-recebimento-nf-dobra-saldo
     date: "2026-06-05"
@@ -6219,3 +6227,33 @@ erros:
       (segue parqueado, correto: exige cadastro). resolverProdutoEfetivoComAutoSync
       (sync-tiny, path do marcar-item) já era SKU-first; mantido. produto_id do item
       fica intocado (fiscal), físico via SKU — mesmo princípio da troca (D3).
+
+  - id: wms-kit-componente-faltante-pulado
+    date: "2026-06-18"
+    source: wms.sync.kit
+    category: business_logic
+    message: "Sync de kit do Tiny pulava componente que não estava no catálogo → kit com composição incompleta (ou eh_kit=false)"
+    cause: >
+      sincronizarComposicaoKit resolvia cada componente por tiny_produto_id em
+      siso_produto_empresas; se o componente ainda não estava no catálogo, logava
+      "componente não encontrado no catálogo" e fazia continue (pulava). Kit puxado
+      fresco (ex.: via botão "Puxar do Tiny" ou cron de sync) ficava sem os
+      componentes faltantes — e como eh_kit só vira true com composição existente,
+      às vezes o kit nem era marcado como kit. Exigia cadastrar cada componente à
+      mão e re-sincronizar.
+    fix: >
+      sincronizarComposicaoKit agora auto-cadastra o componente faltante via
+      ensureComponenteCatalogo: resolve o SKU pelo payload do kit (ou busca o
+      detalhe no Tiny pelo id quando vem nulo) e chama ensureProdutoFromTiny
+      (cria + sincroniza + ponte), depois linka. ensureProdutoFromTiny/
+      sincronizarProduto ganharam kitDepth (limite MAX_KIT_DEPTH=5) pra barrar
+      runaway em kit-de-kit. Idempotente: componente já mapeado retorna o uuid sem
+      refazer. Fix na raiz (caminho compartilhado) → beneficia "Puxar do Tiny",
+      cron de sync de produtos e sync por-linha.
+    files:
+      - src/lib/wms/sync-tiny.ts
+    tags: [kit, componente, sync-tiny, tiny, puxar-tiny, eh_kit, recursao, siso_produto_kits, siso_produto_empresas]
+    notes: >
+      Componente sem SKU resolvível (nem no payload nem no detalhe Tiny) segue
+      pulado com warn — sem regressão. Estoque não é tocado (3D continua por
+      componente). Verificar ao vivo puxando um SKU de kit real.

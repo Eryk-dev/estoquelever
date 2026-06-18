@@ -8,9 +8,12 @@ import {
   PageHeader,
   Icon,
   fmtNum,
+  fmtRelative,
+  LocTipoBadge,
 } from "@/components/wms/ui/wms-ui";
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
+import { wmsApi } from "@/lib/wms/api-client";
 import { naturalLocCompare } from "@/lib/domain-helpers";
 import { ParcialModal } from "@/components/wms/separacao/parcial-modal";
 import { EquivalentesPanel } from "@/components/wms/trocas/equivalentes-panel";
@@ -1700,6 +1703,111 @@ function ItemRow({
 }
 
 // ──────────────────────────────────────────────────────────────────
+// LocHistoricoPanel — histórico de localizações do produto no galpão de
+// separação. Lista todos os locais onde a peça já esteve (inclui os hoje
+// zerados, esmaecidos), com saldo atual e última movimentação — ajuda a
+// caçar o item quando o saldo do sistema diverge do físico (erro de estoque).
+
+interface LocHistorico {
+  localizacao_id: string;
+  codigo: string;
+  tipo: string;
+  saldo: number;
+  disponivel: number;
+  ultima_movimentacao: string | null;
+  movs: number;
+}
+
+function LocHistoricoPanel({
+  sku,
+  galpaoId,
+}: {
+  sku: string;
+  galpaoId: string;
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["wms-loc-historico", sku, galpaoId],
+    queryFn: () =>
+      wmsApi<{ rows: LocHistorico[] }>(
+        `/api/wms/separacao/produto-localizacoes?sku=${encodeURIComponent(sku)}&galpao_id=${galpaoId}`,
+      ),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="wms-td-mute" style={{ fontSize: 12, padding: "4px 0" }}>
+        Carregando…
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="wms-td-mute" style={{ fontSize: 12, padding: "4px 0" }}>
+        Erro ao carregar histórico.
+      </div>
+    );
+  }
+  const rows = data?.rows ?? [];
+  if (rows.length === 0) {
+    return (
+      <div className="wms-td-mute" style={{ fontSize: 12, padding: "4px 0" }}>
+        Sem histórico de localização.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {rows.map((r) => {
+        const vazio = r.saldo <= 0;
+        return (
+          <div
+            key={r.localizacao_id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 0",
+              borderBottom: "1px solid var(--wms-c-border)",
+              opacity: vazio ? 0.6 : 1,
+            }}
+          >
+            <span
+              className="wms-mono"
+              style={{ fontWeight: 600, fontSize: 12.5 }}
+            >
+              {r.codigo}
+            </span>
+            <LocTipoBadge tipo={r.tipo} />
+            <span
+              className={`wms-mono${vazio ? " wms-td-mute" : ""}`}
+              style={{ fontSize: 12, marginLeft: "auto" }}
+              title="saldo · disponível"
+            >
+              {fmtNum(r.saldo)}
+              {r.disponivel !== r.saldo ? ` (${fmtNum(r.disponivel)} disp)` : ""}
+            </span>
+            {r.ultima_movimentacao ? (
+              <span
+                className="wms-td-mute"
+                style={{
+                  fontSize: 11,
+                  whiteSpace: "nowrap",
+                  minWidth: 64,
+                  textAlign: "right",
+                }}
+              >
+                {fmtRelative(r.ultima_movimentacao)}
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
 // ItemRowOC — linha de produto OC (validar encontrei / esgotado)
 
 function ItemRowOC({
@@ -1718,9 +1826,11 @@ function ItemRowOC({
   const done = produto.all_marcado;
   const multi = produto.quantidade_total > 1;
   const [verEquivalentes, setVerEquivalentes] = useState(false);
+  const [verHistorico, setVerHistorico] = useState(false);
   const pedidoItemId = produto.item_ids[0] ?? null;
   const podeVerEquivalentes =
     !done && !!produto.separacao_galpao_id && !!pedidoItemId;
+  const podeVerHistorico = !!produto.separacao_galpao_id;
   return (
     <>
     <div
@@ -1836,27 +1946,65 @@ function ItemRowOC({
         )}
       </div>
     </div>
-    {podeVerEquivalentes && (
-      <div style={{ padding: "0 12px 10px 84px" }}>
-        <button
-          type="button"
-          className="wms-btn wms-btn-sm wms-btn-ghost"
-          onClick={() => setVerEquivalentes((v) => !v)}
-          style={{ marginBottom: verEquivalentes ? 8 : 0 }}
-        >
-          <Icon name={verEquivalentes ? "chevron-u" : "chevron-d"} size={11} />
-          {verEquivalentes ? "Ocultar equivalentes" : "Ver equivalentes"}
-        </button>
-        {verEquivalentes && (
-          <EquivalentesPanel
-            sku={produto.sku}
-            galpaoId={produto.separacao_galpao_id!}
-            pedidoItemId={pedidoItemId!}
-            origem="separacao"
-            onTrocaCriada={(r) => {
-              if (r.auto) onTrocaAuto();
-            }}
-          />
+    {(podeVerEquivalentes || podeVerHistorico) && (
+      <div
+        style={{
+          padding: "0 12px 10px 84px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {podeVerEquivalentes && (
+          <div>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-ghost"
+              onClick={() => setVerEquivalentes((v) => !v)}
+              style={{ marginBottom: verEquivalentes ? 8 : 0 }}
+            >
+              <Icon
+                name={verEquivalentes ? "chevron-u" : "chevron-d"}
+                size={11}
+              />
+              {verEquivalentes ? "Ocultar equivalentes" : "Ver equivalentes"}
+            </button>
+            {verEquivalentes && (
+              <EquivalentesPanel
+                sku={produto.sku}
+                galpaoId={produto.separacao_galpao_id!}
+                pedidoItemId={pedidoItemId!}
+                origem="separacao"
+                onTrocaCriada={(r) => {
+                  if (r.auto) onTrocaAuto();
+                }}
+              />
+            )}
+          </div>
+        )}
+        {podeVerHistorico && (
+          <div>
+            <button
+              type="button"
+              className="wms-btn wms-btn-sm wms-btn-ghost"
+              onClick={() => setVerHistorico((v) => !v)}
+              style={{ marginBottom: verHistorico ? 8 : 0 }}
+            >
+              <Icon
+                name={verHistorico ? "chevron-u" : "chevron-d"}
+                size={11}
+              />
+              {verHistorico
+                ? "Ocultar histórico de localização"
+                : "Ver histórico de localização"}
+            </button>
+            {verHistorico && (
+              <LocHistoricoPanel
+                sku={produto.sku}
+                galpaoId={produto.separacao_galpao_id!}
+              />
+            )}
+          </div>
         )}
       </div>
     )}

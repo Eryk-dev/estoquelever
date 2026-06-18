@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 // ──────────────────────────────────────────────────────────────────
@@ -512,6 +513,13 @@ export function Modal({
   footer?: ReactNode;
   width?: number;
 }) {
+  // Portaliza pro <body>: o modal precisa escapar de qualquer ancestral com
+  // overflow/transform (drawer, .wms-app, containers de tabela) que senão o
+  // prendia abaixo da camada certa ou o clipava. mounted evita mismatch de
+  // hidratação (createPortal só roda no cliente).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -520,8 +528,10 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
-    <div className="wms-md-overlay" onClick={onClose}>
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="wms-md-overlay wms-root" onClick={onClose}>
       <div
         className="wms-md"
         style={{ width }}
@@ -543,7 +553,8 @@ export function Modal({
         <div className="wms-md-body">{children}</div>
         {footer ? <div className="wms-md-ft">{footer}</div> : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

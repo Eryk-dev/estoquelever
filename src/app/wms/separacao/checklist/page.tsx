@@ -11,6 +11,7 @@ import {
   fmtRelative,
   LocTipoBadge,
 } from "@/components/wms/ui/wms-ui";
+import { AnchoredPopover } from "@/components/wms/ui/anchored-popover";
 import { HandheldScan } from "@/components/wms/vendas/handheld-scan";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -1608,6 +1609,7 @@ function ItemRow({
     onToggle();
   };
   const [verLocs, setVerLocs] = useState(false);
+  const verLocsBtnRef = useRef<HTMLButtonElement>(null);
   // Sugestão de outras locs só faz sentido na linha acionável e ainda aberta.
   const podeVerLocs = !isPego && !done && !!produto.separacao_galpao_id;
   return (
@@ -1676,6 +1678,7 @@ function ItemRow({
             // O próprio endereço é o gatilho: clica → dropdown ancorado com as
             // outras locs (endereço + disponível), pra trocar de onde pegar.
             <button
+              ref={verLocsBtnRef}
               type="button"
               className="wms-hand-item-loc"
               onClick={() => setVerLocs((v) => !v)}
@@ -1695,40 +1698,38 @@ function ItemRow({
           >
             saldo {fmtNum(produto.saldo)}
           </span>
-          {podeVerLocs && verLocs && (
+          <AnchoredPopover
+            anchorRef={verLocsBtnRef}
+            open={!!podeVerLocs && verLocs}
+            onClose={() => setVerLocs(false)}
+            placement="bottom-start"
+            gap={6}
+            style={{
+              background: "var(--wms-c-panel, #fff)",
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: 10,
+              boxShadow: "0 10px 30px rgba(0,0,0,.14)",
+              padding: 8,
+              minWidth: 250,
+              maxWidth: 340,
+            }}
+          >
             <div
-              style={{
-                position: "absolute",
-                top: "100%",
-                left: 0,
-                marginTop: 6,
-                zIndex: 30,
-                background: "var(--wms-c-panel, #fff)",
-                border: "1px solid var(--wms-c-border)",
-                borderRadius: 10,
-                boxShadow: "0 10px 30px rgba(0,0,0,.14)",
-                padding: 8,
-                minWidth: 250,
-                maxWidth: 340,
-              }}
+              className="wms-td-mute"
+              style={{ fontSize: 11, fontWeight: 600, padding: "2px 4px 6px" }}
             >
-              <div
-                className="wms-td-mute"
-                style={{ fontSize: 11, fontWeight: 600, padding: "2px 4px 6px" }}
-              >
-                Outras localizações
-              </div>
-              <LocHistoricoPanel
-                sku={produto.sku}
-                galpaoId={produto.separacao_galpao_id!}
-                variant="sugestao"
-                onPickFromLoc={(loc) => {
-                  setVerLocs(false);
-                  onTrocarLoc?.(loc.localizacao_id);
-                }}
-              />
+              Outras localizações
             </div>
-          )}
+            <LocHistoricoPanel
+              sku={produto.sku}
+              galpaoId={produto.separacao_galpao_id!}
+              variant="sugestao"
+              onPickFromLoc={(loc) => {
+                setVerLocs(false);
+                onTrocarLoc?.(loc.localizacao_id);
+              }}
+            />
+          </AnchoredPopover>
         </div>
         <div
           className="wms-mono"

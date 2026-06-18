@@ -10,6 +10,7 @@ import {
   LocTipoBadge,
   Field,
 } from "@/components/wms/ui/wms-ui";
+import { Portal } from "@/components/wms/ui/portal";
 import type { Localizacao, TipoLocalizacao } from "@/lib/wms/types";
 import { useAuth, usePermissoes } from "@/lib/auth-context";
 
@@ -954,32 +955,21 @@ function ExcluirLocModal({
   const temSaldo = !!saldos && saldos.total_linhas > 0;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,.45)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 50,
-        padding: 16,
-      }}
-      onClick={onCancelar}
-    >
-      <div
-        style={{
-          background: "var(--wms-c-panel)",
-          border: "1px solid var(--wms-c-border)",
-          borderRadius: "var(--wms-r-3)",
-          width: "100%",
-          maxWidth: 540,
-          maxHeight: "90vh",
-          overflow: "auto",
-          padding: 20,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Portal>
+      <div className="wms-md-overlay" onClick={onCancelar}>
+        <div
+          style={{
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: "var(--wms-r-3)",
+            width: "100%",
+            maxWidth: 540,
+            maxHeight: "90vh",
+            overflow: "auto",
+            padding: 20,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
         <h3 className="wms-sec-h" style={{ marginTop: 0 }}>
           Excluir <span className="wms-mono">{loc.codigo}</span>
         </h3>
@@ -1148,7 +1138,8 @@ function ExcluirLocModal({
             </div>
           </>
         )}
+        </div>
       </div>
-    </div>
+    </Portal>
   );
 }

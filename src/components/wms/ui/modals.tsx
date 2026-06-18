@@ -11,6 +11,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
+import { AnchoredPopover } from "./anchored-popover";
 import { wmsApi } from "@/lib/wms/api-client";
 import { calcularAjustes } from "@/lib/wms/ajuste-calc";
 import { sisoFetch, useAuth } from "@/lib/auth-context";
@@ -111,6 +112,7 @@ export function ProdutoCombo({
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useAutoFocus<HTMLInputElement>(autoFocus && !value);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const { data, isFetching } = useProdutoSearch(q);
   const opts = data?.rows ?? [];
 
@@ -157,7 +159,7 @@ export function ProdutoCombo({
 
   return (
     <div className="wms-picker">
-      <div className="wms-search-wrap">
+      <div className="wms-search-wrap" ref={wrapRef}>
         <Icon name="search" size={13} />
         <input
           ref={ref}
@@ -170,8 +172,13 @@ export function ProdutoCombo({
           placeholder="Buscar SKU, descrição ou GTIN…"
         />
       </div>
-      {open && q.length >= 2 && (
-        <div className="wms-picker-list">
+      <AnchoredPopover
+        anchorRef={wrapRef}
+        open={open && q.length >= 2}
+        onClose={() => setOpen(false)}
+        matchAnchorWidth
+      >
+        <div className="wms-picker-list" style={{ position: "static", inset: "auto" }}>
           {isFetching && (
             <div className="wms-picker-empty">Buscando…</div>
           )}
@@ -201,7 +208,7 @@ export function ProdutoCombo({
             </button>
           ))}
         </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }
@@ -247,6 +254,7 @@ export function LocalizacaoCombo({
   const [adding, setAdding] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   // Sincroniza o texto exibido quando o valor selecionado muda externamente
   useEffect(() => {
@@ -356,6 +364,7 @@ export function LocalizacaoCombo({
     <div className="wms-picker">
       <div
         className="wms-search-wrap"
+        ref={wrapRef}
         style={disabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
       >
         <Icon name="search" size={13} />
@@ -386,8 +395,13 @@ export function LocalizacaoCombo({
           }
         />
       </div>
-      {open && !disabled && (filtered.length > 0 || showAdd || showNoMatch) && (
-        <div className="wms-picker-list">
+      <AnchoredPopover
+        anchorRef={wrapRef}
+        open={open && !disabled && (filtered.length > 0 || showAdd || showNoMatch)}
+        onClose={() => setOpen(false)}
+        matchAnchorWidth
+      >
+        <div className="wms-picker-list" style={{ position: "static", inset: "auto" }}>
           {filtered.map((l, i) => (
             <button
               key={l.id}
@@ -434,7 +448,7 @@ export function LocalizacaoCombo({
             </div>
           )}
         </div>
-      )}
+      </AnchoredPopover>
     </div>
   );
 }

@@ -48,6 +48,20 @@
   --wms-shadow-md: 0 4px 12px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
   --wms-shadow-lg: 0 16px 40px rgba(0,0,0,.10), 0 4px 12px rgba(0,0,0,.06);
 
+  /* Stacking scale — fonte única de verdade pra camadas flutuantes.
+     Substitui o histórico de z-index ad-hoc (5, 20, 30, 50, 950, 998, 999,
+     1000, 9999…) que deixava popover/modal preso abaixo da camada certa ou
+     clipado por um ancestral com overflow/transform. Tudo que flutua deve
+     usar um destes tokens E ser renderizado via portal pro <body>. */
+  --wms-z-sticky:   50;    /* cabeçalhos sticky de tabela/página */
+  --wms-z-dropdown: 100;   /* menus/popover ancorados, portalizados */
+  --wms-z-drawer:   800;   /* drawers slide-over */
+  --wms-z-modal:    900;   /* modais centrais */
+  --wms-z-popover:  1000;  /* popover/combo que precisa ficar ACIMA de um modal */
+  --wms-z-command:  1050;  /* command palette */
+  --wms-z-toast:    1200;  /* toasts / barra de ações de seleção */
+  --wms-z-lightbox: 1300;  /* zoom de imagem fullscreen */
+
   --wms-font-sans: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
   --wms-font-mono: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
@@ -252,7 +266,7 @@
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 4px;
-  z-index: 50;
+  z-index: var(--wms-z-dropdown);
 }
 .wms-sb-user-menu-item {
   display: flex; align-items: center; gap: 10px;
@@ -1030,7 +1044,7 @@
   position: fixed; inset: 0;
   background: rgba(12,10,9,.32);
   backdrop-filter: blur(2px);
-  z-index: 1000;
+  z-index: var(--wms-z-command);
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 12vh;
 }
@@ -1105,6 +1119,11 @@
   margin-right: 3px;
 }
 
+/* Popover ancorado portalizado pro body (ver anchored-popover.tsx).
+   z acima de modal/drawer pra funcionar tanto na página quanto dentro de um
+   modal; nunca é clipado porque vive direto no body. */
+.wms-anchored-pop { z-index: var(--wms-z-popover); }
+
 /* ============================================================
    Modal
    ============================================================ */
@@ -1113,7 +1132,7 @@
   position: fixed; inset: 0;
   background: rgba(12,10,9,.4);
   backdrop-filter: blur(2px);
-  z-index: 999;
+  z-index: var(--wms-z-modal);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
@@ -1173,7 +1192,7 @@
   border-radius: var(--wms-r-2);
   box-shadow: var(--wms-shadow-md);
   max-height: 280px; overflow-y: auto;
-  z-index: 5;
+  z-index: var(--wms-z-popover);
 }
 .wms-picker-item {
   width: 100%;
@@ -1236,7 +1255,7 @@
   position: fixed; inset: 0;
   background: rgba(12,10,9,.32);
   backdrop-filter: blur(2px);
-  z-index: 998;
+  z-index: var(--wms-z-drawer);
   display: flex; justify-content: flex-end;
 }
 .wms-dw {
@@ -1628,7 +1647,7 @@
   font-size: 13px;
   display: flex; align-items: center; gap: 8px;
   box-shadow: var(--wms-shadow-lg);
-  z-index: 1100;
+  z-index: var(--wms-z-toast);
   animation: wms-toast-in .25s ease-out;
 }
 .wms-toast svg { color: var(--wms-c-ok); }
@@ -1769,7 +1788,7 @@
   border-radius: var(--wms-r-2);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.10), 0 2px 6px rgba(0, 0, 0, 0.04);
   padding: 4px;
-  z-index: 50;
+  z-index: var(--wms-z-dropdown);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -2758,7 +2777,7 @@
   bottom: 100%;
   left: 0;
   margin-bottom: 6px;
-  z-index: 30;
+  z-index: var(--wms-z-popover);
   width: 240px;
   background: var(--wms-c-panel);
   border: 1px solid var(--wms-c-border);

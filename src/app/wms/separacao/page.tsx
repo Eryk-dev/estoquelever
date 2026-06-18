@@ -40,6 +40,7 @@ import {
   fmtNum,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
+import { AnchoredPopover } from "@/components/wms/ui/anchored-popover";
 import {
   TabsStatusSeparacao,
   type TabIdStatusSeparacao,
@@ -1953,22 +1954,15 @@ function EncaminharDropdown({
   onSubmit: (galpao_destino_id: string) => void;
   pending: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onToggle();
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open, onToggle]);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const destinos = galpoes.filter((g) => g.id !== pedido.galpao_id);
   if (destinos.length === 0) return null;
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <>
       <button
+        ref={btnRef}
         type="button"
         className="wms-btn-icon"
         title="Encaminhar para outro galpão"
@@ -1977,48 +1971,45 @@ function EncaminharDropdown({
       >
         <Icon name="arrows" size={12} />
       </button>
-      {open && (
+      <AnchoredPopover
+        anchorRef={btnRef}
+        open={open}
+        onClose={onToggle}
+        placement="bottom-end"
+        style={{
+          minWidth: 180,
+          background: "var(--wms-c-panel)",
+          border: "1px solid var(--wms-c-border)",
+          borderRadius: "var(--wms-r-3)",
+          padding: 4,
+          boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
+        }}
+      >
         <div
+          className="wms-td-mute"
           style={{
-            position: "absolute",
-            right: 0,
-            top: "100%",
-            marginTop: 4,
-            minWidth: 180,
-            background: "var(--wms-c-panel)",
-            border: "1px solid var(--wms-c-border)",
-            borderRadius: "var(--wms-r-3)",
-            padding: 4,
-            boxShadow: "0 10px 28px -12px rgba(0,0,0,.25)",
-            zIndex: 20,
+            fontSize: 10,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: ".06em",
+            padding: "6px 10px 2px",
           }}
         >
-          <div
-            className="wms-td-mute"
-            style={{
-              fontSize: 10,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              letterSpacing: ".06em",
-              padding: "6px 10px 2px",
-            }}
-          >
-            Encaminhar para
-          </div>
-          {destinos.map((g) => (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => onSubmit(g.id)}
-              disabled={pending}
-              style={moverItem()}
-            >
-              {g.nome}
-            </button>
-          ))}
+          Encaminhar para
         </div>
-      )}
-    </div>
+        {destinos.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            onClick={() => onSubmit(g.id)}
+            disabled={pending}
+            style={moverItem()}
+          >
+            {g.nome}
+          </button>
+        ))}
+      </AnchoredPopover>
+    </>
   );
 }
 

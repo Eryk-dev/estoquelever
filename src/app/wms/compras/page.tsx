@@ -1517,13 +1517,15 @@ function ItemKebab({
       </button>
       {open && coords &&
         createPortal(
-        <>
+        // wms-root re-aplica os tokens (--wms-c-*) que se perdem ao portalizar
+        // pro body — senão background:var(--wms-c-panel) fica transparente.
+        <div className="wms-root" style={{ display: "contents" }}>
           <div
             onClick={() => setOpen(false)}
             style={{
               position: "fixed",
               inset: 0,
-              zIndex: 950,
+              zIndex: 1000,
             }}
           />
           <div
@@ -1538,7 +1540,7 @@ function ItemKebab({
               borderRadius: "var(--wms-r-2)",
               boxShadow: "var(--wms-shadow-sm)",
               minWidth: 200,
-              zIndex: 951,
+              zIndex: 1001,
               padding: 4,
               display: "flex",
               flexDirection: "column",
@@ -1582,7 +1584,7 @@ function ItemKebab({
               Trocar fornecedor
             </button>
           </div>
-        </>,
+        </div>,
         document.body,
       )}
     </div>

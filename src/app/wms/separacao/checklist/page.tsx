@@ -1611,7 +1611,6 @@ function ItemRow({
   // Sugestão de outras locs só faz sentido na linha acionável e ainda aberta.
   const podeVerLocs = !isPego && !done && !!produto.separacao_galpao_id;
   return (
-    <>
     <div
       className={`wms-hand-item${done ? " is-done" : ""}`}
       style={{ gridTemplateColumns: "28px 44px minmax(0,1fr) 64px 170px" }}
@@ -1663,15 +1662,73 @@ function ItemRow({
         </div>
       )}
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
-          <span className="wms-hand-item-loc">
-            {produto.localizacao || "Sem loc"}
-          </span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 3,
+            position: "relative",
+          }}
+        >
+          {podeVerLocs ? (
+            // O próprio endereço é o gatilho: clica → dropdown ancorado com as
+            // outras locs (endereço + disponível), pra trocar de onde pegar.
+            <button
+              type="button"
+              className="wms-hand-item-loc"
+              onClick={() => setVerLocs((v) => !v)}
+              title="Ver outras localizações com saldo"
+              style={{ cursor: "pointer", border: "none", appearance: "none", gap: 4 }}
+            >
+              {produto.localizacao || "Sem loc"}
+              <Icon name={verLocs ? "chevron-u" : "chevron-d"} size={11} />
+            </button>
+          ) : (
+            <span className="wms-hand-item-loc">
+              {produto.localizacao || "Sem loc"}
+            </span>
+          )}
           <span
             className={`wms-hand-item-saldo${produto.saldo < qtyExibida ? " is-low" : ""}`}
           >
             saldo {fmtNum(produto.saldo)}
           </span>
+          {podeVerLocs && verLocs && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                marginTop: 6,
+                zIndex: 30,
+                background: "var(--wms-c-panel, #fff)",
+                border: "1px solid var(--wms-c-border)",
+                borderRadius: 10,
+                boxShadow: "0 10px 30px rgba(0,0,0,.14)",
+                padding: 8,
+                minWidth: 250,
+                maxWidth: 340,
+              }}
+            >
+              <div
+                className="wms-td-mute"
+                style={{ fontSize: 11, fontWeight: 600, padding: "2px 4px 6px" }}
+              >
+                Outras localizações
+              </div>
+              <LocHistoricoPanel
+                sku={produto.sku}
+                galpaoId={produto.separacao_galpao_id!}
+                variant="sugestao"
+                onPickFromLoc={(loc) => {
+                  setVerLocs(false);
+                  onTrocarLoc?.(loc.localizacao_id);
+                }}
+              />
+            </div>
+          )}
         </div>
         <div
           className="wms-mono"
@@ -1757,28 +1814,6 @@ function ItemRow({
         )}
       </div>
     </div>
-    {podeVerLocs && (
-      <div style={{ padding: "0 12px 10px 84px" }}>
-        <button
-          type="button"
-          className="wms-btn wms-btn-sm wms-btn-ghost"
-          onClick={() => setVerLocs((v) => !v)}
-          style={{ marginBottom: verLocs ? 8 : 0 }}
-        >
-          <Icon name={verLocs ? "chevron-u" : "chevron-d"} size={11} />
-          {verLocs ? "Ocultar localizações" : "Ver outras localizações"}
-        </button>
-        {verLocs && (
-          <LocHistoricoPanel
-            sku={produto.sku}
-            galpaoId={produto.separacao_galpao_id!}
-            variant="sugestao"
-            onPickFromLoc={(loc) => onTrocarLoc?.(loc.localizacao_id)}
-          />
-        )}
-      </div>
-    )}
-    </>
   );
 }
 

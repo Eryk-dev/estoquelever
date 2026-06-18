@@ -13,6 +13,11 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import type { Fornecedor } from "@/lib/wms/fornecedores";
 
+interface Galpao {
+  id: string;
+  nome: string;
+}
+
 interface LeadTimeForm {
   min: string;
   medio: string;
@@ -50,6 +55,7 @@ export default function FornecedoresPage() {
     nome: "",
     cnpj: "",
     prefixo_sku: "",
+    galpao_id: "",
     lt: { min: "", medio: "", max: "" } as LeadTimeForm,
   });
   const [editando, setEditando] = useState<Fornecedor | null>(null);
@@ -58,8 +64,15 @@ export default function FornecedoresPage() {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["wms-fornecedores"],
-    queryFn: () => wmsApi<{ rows: Fornecedor[] }>("/api/wms/fornecedores"),
+    queryFn: () =>
+      wmsApi<{ rows: Fornecedor[]; galpoes: Galpao[] }>("/api/wms/fornecedores"),
   });
+  const galpoes = useMemo(() => data?.galpoes ?? [], [data]);
+  const galpaoNomeById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of galpoes) m.set(g.id, g.nome);
+    return m;
+  }, [galpoes]);
 
   const criar = useMutation({
     mutationFn: () =>
@@ -70,6 +83,7 @@ export default function FornecedoresPage() {
           nome: novo.nome,
           cnpj: novo.cnpj || undefined,
           prefixo_sku: novo.prefixo_sku || undefined,
+          galpao_id: novo.galpao_id || null,
           lead_time_dias_min: parseLt(novo.lt.min),
           lead_time_dias_medio: parseLt(novo.lt.medio),
           lead_time_dias_max: parseLt(novo.lt.max),
@@ -81,6 +95,7 @@ export default function FornecedoresPage() {
         nome: "",
         cnpj: "",
         prefixo_sku: "",
+        galpao_id: "",
         lt: { min: "", medio: "", max: "" },
       });
       setShowForm(false);
@@ -177,6 +192,22 @@ export default function FornecedoresPage() {
                 }
                 placeholder="TGR"
               />
+            </Field>
+            <Field label="Galpão de recebimento">
+              <select
+                className="wms-select"
+                value={novo.galpao_id}
+                onChange={(e) =>
+                  setNovo({ ...novo, galpao_id: e.target.value })
+                }
+              >
+                <option value="">— (cai no prefixo do SKU)</option>
+                {galpoes.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.nome}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
           <div
@@ -289,6 +320,7 @@ export default function FornecedoresPage() {
                   <th>Nome</th>
                   <th>Prefixo SKU</th>
                   <th>CNPJ</th>
+                  <th>Galpão</th>
                   <th title="Lead time min / médio / máx (dias)">
                     Lead time (dias)
                   </th>
@@ -303,6 +335,15 @@ export default function FornecedoresPage() {
                     </td>
                     <td className="wms-mono">{f.prefixo_sku ?? "—"}</td>
                     <td className="wms-mono wms-td-mute">{f.cnpj ?? "—"}</td>
+                    <td>
+                      {f.galpao_id ? (
+                        <span className="wms-pcard-chip is-galpao">
+                          {galpaoNomeById.get(f.galpao_id) ?? "?"}
+                        </span>
+                      ) : (
+                        <span className="wms-td-mute">prefixo</span>
+                      )}
+                    </td>
                     <td className="wms-mono">{fmtLt(f)}</td>
                     {podeEditar && (
                       <td>
@@ -335,6 +376,7 @@ export default function FornecedoresPage() {
       {editando && (
         <EditarFornecedorModal
           fornecedor={editando}
+          galpoes={galpoes}
           onClose={() => setEditando(null)}
           onSaved={() => {
             setEditando(null);
@@ -348,14 +390,17 @@ export default function FornecedoresPage() {
 
 function EditarFornecedorModal({
   fornecedor,
+  galpoes,
   onClose,
   onSaved,
 }: {
   fornecedor: Fornecedor;
+  galpoes: Galpao[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [lt, setLt] = useState<LeadTimeForm>(ltFromFornecedor(fornecedor));
+  const [galpaoId, setGalpaoId] = useState<string>(fornecedor.galpao_id ?? "");
 
   const salvar = useMutation({
     mutationFn: () =>
@@ -363,6 +408,7 @@ function EditarFornecedorModal({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          galpao_id: galpaoId || null,
           lead_time_dias_min: parseLt(lt.min),
           lead_time_dias_medio: parseLt(lt.medio),
           lead_time_dias_max: parseLt(lt.max),
@@ -397,7 +443,24 @@ function EditarFornecedorModal({
         </>
       }
     >
-      <p className="wms-td-mute" style={{ fontSize: 12, marginBottom: 12 }}>
+      <Field label="Galpão de recebimento">
+        <select
+          className="wms-select"
+          value={galpaoId}
+          onChange={(e) => setGalpaoId(e.target.value)}
+        >
+          <option value="">— (cai no prefixo do SKU)</option>
+          {galpoes.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.nome}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <p
+        className="wms-td-mute"
+        style={{ fontSize: 12, marginBottom: 12, marginTop: 12 }}
+      >
         Lead time (dias). Em branco = sem default. Vínculos já existentes em{" "}
         <strong>produto × fornecedor</strong> não são alterados aqui.
       </p>

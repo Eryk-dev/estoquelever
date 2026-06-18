@@ -8,6 +8,8 @@ export interface Fornecedor {
   ativo: boolean;
   observacoes: string | null;
   tiny_fornecedor_id: number | null;
+  /** Galpão de recebimento padrão (config da localização). null = cai no prefix map. */
+  galpao_id: string | null;
   /** Default mínimo herdado em vínculos novos com produto. */
   lead_time_dias_min: number | null;
   lead_time_dias_medio: number | null;
@@ -47,6 +49,7 @@ export async function criarFornecedor(input: {
   cnpj?: string;
   prefixo_sku?: string;
   observacoes?: string;
+  galpao_id?: string | null;
   lead_time_dias_min?: number | null;
   lead_time_dias_medio?: number | null;
   lead_time_dias_max?: number | null;
@@ -105,7 +108,7 @@ export async function vincularProdutoFornecedor(input: {
     input.lead_time_dias_min === undefined ||
     input.lead_time_dias_medio === undefined ||
     input.lead_time_dias_max === undefined;
-  let payload: Record<string, unknown> = { ...input };
+  const payload: Record<string, unknown> = { ...input };
   if (precisaHerdar) {
     const { data: forn } = await sb
       .from("siso_fornecedores")

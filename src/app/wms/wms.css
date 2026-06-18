@@ -2442,6 +2442,23 @@
   border-top: 1px solid var(--wms-c-border);
   padding: 8px 14px 14px;
 }
+
+/* Cabeçalho de coluna ordenável (lista de compras item-cêntrica) */
+.wms-sort-h {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wms-sort-h:hover { color: var(--wms-c-fg); }
 .wms-frc-row {
   display: grid;
   grid-template-columns: 24px 44px minmax(0,1fr) 90px 90px 24px;

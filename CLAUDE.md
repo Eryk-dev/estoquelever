@@ -170,7 +170,7 @@ src/
     tiny-polling.ts                     # polling fallback Tiny (pedidos aprovados/cancelados + NFs autorizadas, janela 7d, cron 10min)
     empresa-lookup.ts                   # CNPJ→empresa (cache 5min)
     grupo-resolver.ts                   # lookup de grupo (não roteia mais)
-    compras-*.ts                        # release, equivalencia, embalagem, necessidade, utils
+    compras-*.ts                        # release, equivalencia, embalagem, necessidade, utils, sourcing (necessidade por galpão, pura), oc (findOrCreateOcAberta race-safe), ui (lista item-cêntrica, pura)
     cross/**                            # busca universal, OEM, fetch Tiny
     separacao/**                        # bridge Tiny↔WMS (wms-mapping, realocacao-resolver, ...)
     tiny-{api,oauth,stub,queue}.ts · rate-limiter.ts · sku-fornecedor.ts
@@ -178,6 +178,8 @@ src/
     printnode.ts · etiqueta-*.ts · zpl-produto.ts · agrupamento-service.ts
     session.ts · permissions.ts · roles-loader.ts · auth-context.tsx
     logger.ts · supabase-server.ts · config.ts · historico-service.ts · utils.ts
+    discord-erros.ts                    # forward de erro (backend+front) → webhook Discord, formatado p/ colar no Claude (gated em DISCORD_ERROR_WEBHOOK_URL; dedup+cooldown 10min; só error/critical)
+    client-error-report.ts              # helper client → POST /api/wms/client-error (crash de tela, window.onerror, 5xx do sisoFetch); throttle 5s
     wms/
       cutover.ts                        # BACKSTOP de lançamento de estoque (NÃO é feature-flag!)
       ledger.ts                         # inserirMovimentacao(), estornarMovimentacao(), venderKit()
@@ -188,7 +190,7 @@ src/
       inventario.ts · inventario-reconciliacao.ts (pura) · inventario-recovery.ts
       vendas-{disponibilidade,cancelamento}.ts · mandar-compras.ts · varredura-validacao-oc.ts
       trocas-equivalencia.ts · trocas-equivalencia-regra.ts (pura) · trocas-roteamento.ts · trocas-api.ts
-      fornecedores.ts · compras-manuais.ts · sync-tiny.ts · sync-produtos-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
+      fornecedores.ts · fornecedores-sku.ts (opções de fornecedor por SKU: cadastro + fallback prefix) · compras-manuais.ts · sync-tiny.ts · sync-produtos-tiny.ts · snapshot-inicial.ts · galpoes-com-saldo.ts
       reconciliacao.ts · reconciliacao-tiny.ts · cobertura.ts
       devolucoes.ts · devolucao-detector.ts (puro) · dashboard-{geral,tarefas}.ts
       separacao/{pick-mov,distribuir-qty-pega,reset-state,alocacao-contagem}.ts
@@ -201,7 +203,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### API — grupos por domínio (206 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`).
+`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`, `client-error`).
 
 ### Database — tabelas principais
 
@@ -220,7 +222,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 | `siso_inventario_{sessoes,operadores,localizacoes,contagens,divergencias}` | Inventário v2 (pull queue + claim hierárquico). |
 | `siso_wms_pendencias_guarda` | Fila put-away. `qty_pendente` GENERATED. status `pendente→em_guarda→guardada\|cancelada\|encerrada_sem_saldo`. FASE 6: iniciar reserva o saldo (R `reserva_guarda`); `encerrada_sem_saldo` = pick consumiu antes da guarda. |
 | `siso_transferencias_galpao` (+itens) | Transferência inter-galpão (2 pernas S→E). |
-| `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
+| `siso_devolucoes_pendentes` · `siso_fornecedores` (+`produto_fornecedores`; `galpao_id` = galpão de recebimento FIXO do fornecedor, null cai no prefix map) · `siso_impressoes_log` · `siso_localizacao_locks` | Devoluções / fornecedores / log de impressão / locks. |
 | `siso_compras_manuais` (+itens) | Compra avulsa de fornecedor (sem pedido). Recebimento gera mov `E` reusando `origem_tipo='nf_compra'` + `origem_detalhes.origem='compra_manual'` (sem NF) **+ pendência de put-away** (estorna a `E` se a pendência falhar). Sem RLS. |
 | `siso_trocas_equivalencia` · `siso_equivalencias_verificadas` | Troca de equivalência (2026-06-12): solicitação de troca (1 `pendente` por item; `reserva_mov_ids` = R `reserva_troca`) + curadoria de pares (`verificado`/`bloqueado`, par normalizado `sku_a<sku_b`). `siso_produtos.tier_qualidade` (`original/primeira_linha/segunda_linha`, NULL = exige aprovação). Item ganha `produto_wms_substituto_id` + `troca_equivalencia_id`. |
 
@@ -233,6 +235,8 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 **Raio-X Fase 5 (atomicidade tudo-ou-nada, tudo idempotente):** `wms_aplicar_sessao_inventario` (aplica divergências aprovadas de uma sessão de inventário em bloco) · `wms_pick_parcial_atomico` (S + ajuste loc_zerou na mesma tx) · `wms_desmarcar_item_atomico` (estorna par S+L do pick; recria R clampada ao saldo livre, retorna `status_alerta`) · `wms_reverter_cutover_atomico` (estorna S do pedido + recria R + flipa `estoque_lancado=false`) · `wms_vender_baixa_direta_atomico` (baixa N S de venda manual; advisory lock por tripla) · `wms_cancelar_venda_atomico` (estorna S `venda_manual` + marca pedido cancelado) · `wms_aprovar_e_enfileirar` (transição de status + INSERT do job `lancar_estoque` na mesma tx; `p_marcadores` é `text[]`) · `wms_reconciliar_retroativo` (lock + idempotência + estorno parcial clampado ao disponível) · `wms_resolver_pedido_fantasma` (R viva de pedido forward → `saiu`: R→L+S · `cancelado`: R→L + pedido cancelado).
 
 **Troca de Equivalência (2026-06-12):** `wms_aprovar_troca_atomico` (converte R `reserva_troca`→L `liberacao_troca`+R `reserva_pedido` com lock de tripla + seta `produto_wms_substituto_id` no item, tudo-ou-nada) · `wms_encerrar_troca_atomico` (libera R de troca + fecha como rejeitada/cancelada/expirada) · `wms_trocar_substituto_atomico` (2026-06-14 — troca o substituto de uma troca pendente: L das R `reserva_troca` antigas + R novas no substituto novo + UPDATE da linha, tudo-ou-nada; locs resolvidas no app via `p_reservas`).
+
+**Troca de localização no pick (2026-06-18):** `wms_trocar_reserva_localizacao_atomico` (move a R `reserva_pedido` de uma loc pra outra no mesmo galpão — L na loc antiga + R na destino, atômico; move a reserva INTEIRA; destino-saldo validado pela R-check do `wms_inserir_movimentacao` → rollback total se não cobre; idempotência por `estorno_de`). Endpoint `POST /api/wms/separacao/trocar-localizacao`; o operador escolhe outra loc no painel "Ver outras localizações" do checklist (`LocHistoricoPanel variant="sugestao"`). Não pica — só move a reserva; o pick seguinte acha a R nova. Escopo v1 = R única (item em `separacao_parcial` recusado; cascade multi-loc segue por `marcar-realocacao`). Escolha de loc (reserva em `aprovar` + loc exibida no checklist) usa a regra **"picking só se cobre tudo"** (`escolherLocCobrindo` em `separacao/wms-mapping.ts`): prefere a loc `picking` que sozinha cobre a qty; senão a de maior `disponivel` entre as vendáveis.
 
 **FASE 6 — Guarda dinâmica (reserva forte + auto-encerrar):** o put-away agora reserva o saldo na loc de recebimento ao INICIAR, evitando que um pick consuma a peça antes da guarda.
 - `wms_iniciar_guarda_atomico(p_pendencia_id, p_usuario_id, p_forcar)`: `FOR UPDATE` + claim (status→`em_guarda`, idempotente p/ mesmo operador; `p_forcar`=takeover preservando `qty_guardada`) + cria **reserva forte** = mov `R` `origem_tipo='reserva_guarda'` (TTL 7d) sobre o saldo LIVRE da loc de recebimento (`LEAST(qty_pendente, saldo-reservado)`; não cria R de 0; idempotente). Zera o `disponivel` → roteamento de um pedido novo do mesmo SKU decide OC em vez de separar do recebimento. Conflito de claim → `55006`, mapeado p/ `PENDENCIA_OUTRA_GUARDA` (409) no serviço.

@@ -6322,3 +6322,58 @@ erros:
       (mercadoria recebida em loc não-vendável). Pedidos já aprovados com R em
       overstock seguem lá — corrige via troca de localização no pick
       (POST /api/wms/separacao/trocar-localizacao, RPC wms_trocar_reserva_localizacao_atomico).
+
+  - id: compras-em-transito-somado-global-por-sku
+    date: "2026-06-18"
+    source: wms.compras.route
+    category: business_logic
+    message: "Necessidade de compra subestimada: OC chegando num galpão zerava a necessidade de outro (G3)"
+    cause: >
+      fetchComprar (compras/route.ts) somava em_transito GLOBAL por SKU e netava
+      contra a demanda total. Uma OC de N un chegando em CWB reduzia a necessidade
+      do MESMO SKU em SP, mesmo SP não tendo cobertura nenhuma — o comprador comprava
+      a menos e o pedido de SP ficava preso. Estoque é por (produto, galpão); netar
+      trânsito global ignora a dimensão física.
+    fix: >
+      Pura calcularNecessidadeSkuPorGalpao (src/lib/compras-sourcing.ts): neta
+      demanda/livre/trânsito POR GALPÃO (cada galpão clampado em ≥0) e SOMA. Excesso
+      num galpão não compensa falta em outro. carregarContextoNecessidade passou a
+      acumular por galpão (siso_pedidos.separacao_galpao_id + siso_estoque.galpao_id);
+      fetchComprar chama a pura por SKU. Coberto por compras-sourcing.test.ts.
+    files:
+      - src/lib/compras-sourcing.ts
+      - src/lib/compras-sourcing.test.ts
+      - src/app/api/wms/compras/route.ts
+    tags: [wms, compras, necessidade, em-transito, por-galpao, G3, calcularNecessidadeSkuPorGalpao, fetchComprar]
+    notes: >
+      A quantidade resultante é só SUGESTÃO — o comprador edita na tela quantas
+      unidades vai comprar (sem MOQ/caixa/múltiplo, decisão 2026-06-18).
+
+  - id: compras-oc-duplicada-galpao-null
+    date: "2026-06-18"
+    source: wms.compras-oc
+    category: database
+    message: "Duas OCs abertas duplicadas pro mesmo (fornecedor, empresa) quando galpão é null (G6)"
+    cause: >
+      A criação de OC vivia em 2 callers (compras/comprar com retry 23505 race-safe;
+      separacao/validar-oc-item SEM retry, usando o deprecado siso_empresas.galpao_id).
+      O índice único uq_oc_aberta_fornecedor_galpao é PARCIAL — WHERE status='aguardando_compra'
+      AND galpao_id IS NOT NULL — então OC aberta sem galpão (galpao_id NULL) ficava
+      desprotegida: 2 requests concorrentes criavam 2 OCs.
+    fix: >
+      Helper único findOrCreateOcAberta (src/lib/compras-oc.ts), race-safe (branch
+      23505 re-select), usado por compras/comprar, compras/redestinar e
+      separacao/validar-oc-item. Migration 20260618_oc_unique_aberta_empresa_null.sql
+      adiciona o índice único parcial complementar uq_oc_aberta_fornecedor_empresa
+      (fornecedor, empresa_id) WHERE status='aguardando_compra' AND galpao_id IS NULL.
+      Aplicada no staging ehbxpbeijofxtsbezwxd.
+    files:
+      - src/lib/compras-oc.ts
+      - src/lib/compras-oc.test.ts
+      - src/app/api/wms/compras/comprar/route.ts
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+      - supabase/migrations/20260618_oc_unique_aberta_empresa_null.sql
+    tags: [wms, compras, oc, ordens-compra, race-condition, indice-unico-parcial, G6, findOrCreateOcAberta, uq_oc_aberta_fornecedor_empresa]
+    notes: >
+      O galpão do validar-oc-item ainda usa siso_empresas.galpao_id (deprecado) — fix
+      pra separacao_galpao_id ficou como follow-up; o helper só fechou a race-safety.

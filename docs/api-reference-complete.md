@@ -1539,6 +1539,31 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 
 ---
 
+### POST /api/wms/separacao/trocar-localizacao
+
+**File:** `src/app/api/wms/separacao/trocar-localizacao/route.ts`
+
+**Purpose:** Move a reserva R do pedido pra OUTRA localização do mesmo galpão, quando o operador escolhe picar de um local diferente do sugerido (painel "Ver outras localizações" do checklist). **NÃO pica** — só troca a posição reservada; o pick seguinte (`marcar-item`) acha a R na loc nova e funciona sem mudança.
+
+**Auth:** `getSessionUser` (401 `{ error: "sessao_invalida" }`).
+
+**Request Body:**
+```json
+{ "pedido_item_id": "string", "localizacao_destino_id": "uuid" }
+```
+
+**Behavior:** resolve o produto FÍSICO (substituto pós-troca) via `resolverProdutoEfetivoComAutoSync`, acha a R viva via `buscarReservaPendentePorProduto`, e chama a RPC `wms_trocar_reserva_localizacao_atomico` (L na loc antiga + R na destino, atômico; move a reserva INTEIRA). Recusa item em `separacao_parcial` (v1 = R única). NÃO escreve `siso_pedido_item_mov_links` (move ≠ pick).
+
+**Response (200):**
+```json
+{ "status": "movido", "reserva_id": "uuid (nova)", "reserva_antiga_id": "uuid", "destino_localizacao_id": "uuid", "qty": 0 }
+```
+`{ "status": "sem_mudanca", "reserva_id": "uuid" }` quando a loc destino já é a reservada.
+
+**Errors:** 409 `sem_reserva_viva` (item já picado/sem R) · 409 `destino_sem_saldo` (loc escolhida sem saldo livre — rollback, R original intacta) · 409 `reserva_ja_consumida` (R já picada/movida) · 409 `item_em_parcial` · 422 `loc_invalida` (loc fora do galpão) · 400 status não permite.
+
+---
+
 ### POST /api/wms/separacao/desfazer-bip
 
 **File:** `src/app/api/wms/separacao/desfazer-bip/route.ts`
@@ -3181,7 +3206,9 @@ OR
 
 **Purpose:** Comprehensive purchase management dashboard. Returns counts and item groups by supplier, with aging and priority metrics.
 
-> Na tab `comprar`, a `quantidade_necessaria` de cada item é recalculada na leitura (necessidade líquida viva = `max(0, demanda_aberta − estoque_livre − em_transito)`), não um valor congelado. Pode ser 0 quando livre + em-trânsito já cobrem a demanda.
+> Na tab `comprar`, a `quantidade_necessaria` de cada item é recalculada na leitura (necessidade líquida viva = `max(0, demanda_aberta − estoque_livre − em_transito)`, **netada por galpão** — uma OC chegando em CWB não reduz a necessidade de SP), não um valor congelado. Pode ser 0 quando livre + em-trânsito já cobrem a demanda.
+>
+> A resposta ainda agrupa por fornecedor, mas cada SKU já carrega `fornecedores[]` (opções de `siso_produto_fornecedores` com preço/lead/MOQ, preferencial primeiro; fallback no prefix map quando sem cadastro), `fornecedor_escolhido`, `galpao_sugerido_*` e o `galpao_id`/`galpao_nome` de cada pedido. A tela `/wms/compras` achata tudo numa **lista item-cêntrica (1 linha por SKU)** com dropdown de fornecedor, "quanto comprar" editável e galpão de entrega inline (→ `redestinar`).
 
 **Auth:** X-Session-Id (required). `tab=comprar|historico` exige `compras.ver`; `tab=receber|counts` aceita `compras.ver` OU `operacoes.receber` (operador de doca chega pela rota /wms/receber sem ser comprador).
 
@@ -3223,6 +3250,20 @@ OR
           "status_cobertura": "critico | lead_time_risco | atencao | ok | sem_giro  // pior status entre galpões",
           "lead_time_medio": "number | null  // maior lead time entre galpões (dias) ou null",
           "aging_dias": "number",
+          "fornecedores": [
+            {
+              "fornecedorId": "uuid | null  // null = veio do fallback prefix map",
+              "nome": "string",
+              "custo_unitario": "number | null",
+              "lead_time_dias_medio": "number | null",
+              "qty_minima_pedido": "number",
+              "multiplo_compra": "number",
+              "preferencial": "boolean",
+              "galpao_id": "uuid | null  // galpão de recebimento FIXO do fornecedor (siso_fornecedores.galpao_id; fallback prefix map)",
+              "galpao_nome": "string | null"
+            }
+          ],
+          "fornecedor_escolhido": "FornecedorOpcao | null  // pré-selecionado (preferencial, ou o 1º); a tela usa o galpão DESTA opção como destino fixo",
           "pedidos": [
             {
               "pedido_id": "string",
@@ -3230,7 +3271,9 @@ OR
               "cliente_nome": "string",
               "quantidade": "number",
               "aging_dias": "number",
-              "item_id": "string"
+              "item_id": "string",
+              "galpao_id": "uuid | null  // galpão de separação atual do pedido",
+              "galpao_nome": "string | null"
             }
           ]
         }
@@ -3275,7 +3318,8 @@ OR
           "skus_count": "number (SKUs distintos com pendência no documento)",
           "criado_em": "ISO datetime | null",
           "custo_total": "number | null (only for manual purchases)",
-          "href": "string (link to rich receiving page: /wms/receber/oc/[id] or /wms/receber/manual/[id])"
+          "href": "string (link to rich receiving page: /wms/receber/oc/[id] or /wms/receber/manual/[id])",
+          "pedidos_cobertos": "[{ pedido_id, numero }]  // pegging: pedidos que o doc destrava ao receber (só OC; manual vem [])"
         }
       ]
     }
@@ -3309,7 +3353,7 @@ OR
 **Business Logic:**
 - **Counts:** `counts.receber` conta DOCUMENTOS pendentes (mesma fonte/filtro da tab receber: ocDocs + manualDocs com qty_pendente>0) — o badge do tab bate com as linhas visíveis.
 - **Comprar tab:** Groups items by fornecedor, aggregates by SKU, includes all unique pedidos per SKU
-- **Receber tab:** Unifies OC documents (`siso_ordens_compra` status=comprado with pending items) + manual purchases (`siso_compras_manuais` status=comprado|parcial with pending items) grouped by fornecedor. Each document carries `origem` flag and links to its rich receiving page. Documents sorted by `criado_em` ascending (oldest first = highest priority).
+- **Receber tab:** Unifies OC documents (`siso_ordens_compra` status=comprado with pending items) + manual purchases (`siso_compras_manuais` status=comprado|parcial with pending items) grouped by fornecedor. Each document carries `origem` flag, links to its rich receiving page, e o **pegging** `pedidos_cobertos` (quais pedidos a OC destrava ao receber — chip "destrava N pedidos" na UI; manual vem `[]`). Documents sorted by `criado_em` ascending (oldest first = highest priority).
 - **Historico tab:** Shows received items (compra_status = "recebido") grouped by fornecedor and date, with `origem` field marking source (OC vs manual). Paginação cursor-based via `?cursor=<comprado_em>&limit=<N>` (default 100, max 200); `next_cursor` é null quando exausto. Ordering `comprado_em DESC, id DESC` (tiebreaker estável). Manual receipts appear only on first page (subsequent pages have OC only).
 
 **Side Effects:** None (read-only view combining two data sources)
@@ -3519,12 +3563,13 @@ OR
 **Request Body:**
 ```json
 {
+  "fornecedor_oc": "string (opcional — fornecedor escolhido; a UI item-cêntrica chama 1× por fornecedor selecionado e grava esse nome no item + OC)",
   "itens": [
     {
       "sku": "string",
       "quantidade_comprada": "number",
       "galpao_id": "string (opcional — galpão de recebimento escolhido pelo comprador)",
-      "preco_unitario": "number (opcional no backend; obrigatório na UI — deve ser > 0 se presente)"
+      "preco_unitario": "number (opcional — a UI item-cêntrica deriva do custo_unitario do fornecedor escolhido; deve ser > 0 se presente)"
     }
   ]
 }
@@ -3571,6 +3616,45 @@ OR
 - Updates `siso_pedido_itens.compra_status`, `compra_quantidade_comprada`, `comprado_em`, `comprado_por`, `compra_preco_unitario` (quando `preco_unitario` enviado)
 - Updates `siso_pedidos.separacao_galpao_id` quando o galpão escolhido difere do galpão do pedido
 - Logs to `siso_logs`
+
+**Rate Limiting:** None
+
+---
+
+### POST /api/wms/compras/redestinar
+
+**File:** `src/app/api/wms/compras/redestinar/route.ts`
+
+**Purpose:** Troca o galpão de recebimento/separação de pedidos OC que ainda **não foram recebidos** (G2 — "destino editável até a mercadoria chegar"). Por pedido: (1) re-aponta `siso_pedidos.separacao_galpao_id` — o `reconciliador-oc` casa a entrada por esse campo, então o pedido destrava no galpão novo; (2) move as OCs dos itens já comprados pro galpão novo via `findOrCreateOcAberta` (race-safe) + fecha a OC antiga se esvaziar (`cancelOcIfEmpty`). Não mexe em reservas (OC não reserva). Usado pela tela item-cêntrica quando o comprador troca o "Entregar em" de uma linha (manda todos os pedidos da peça pro galpão escolhido).
+
+**Auth:** X-Session-Id (required), `compras.executar`.
+
+**Request Body:**
+```json
+{
+  "pedido_ids": ["string", "..."],
+  "galpao_id": "string"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "redestinados": ["pedido_id", "..."],
+  "pulados": [{ "id": "pedido_id", "motivo": "string" }]
+}
+```
+
+**Business Logic:**
+- Só re-aponta pedidos em status pré-recebimento: `STATUS_REDESTINAVEL = ["aguardando_compra", "validacao_oc", "comprado"]` (espelha o guard de `/compras/comprar`).
+- Pula (com motivo) pedidos não encontrados, fora desses status, ou já no galpão alvo (`já está nesse galpão`).
+- Atômico por pedido; uma falha de update vira `pulado`, não derruba o lote.
+
+**Response (400):** `{ "error": "Envie { pedido_ids: [...], galpao_id }" }`
+**Response (403):** `{ "error": "Apenas compradores podem redestinar" }`
+
+**Side Effects:** Updates `siso_pedidos.separacao_galpao_id`; move `siso_pedido_itens.ordem_compra_id` pras OCs novas; fecha OCs vazias; loga em `siso_logs`.
 
 **Rate Limiting:** None
 
@@ -5829,6 +5913,18 @@ Galpão sem locs `recebimento` ou sem saldos retorna `{ itens: [] }` (200, não 
 
 ---
 
+### POST /api/wms/client-error
+
+Recebe erros do navegador do operador (crash de tela via `error.tsx`/`global-error.tsx`, `window.onerror`/`unhandledrejection`, e respostas 5xx capturadas no `sisoFetch`) e encaminha pro Discord via `forwardErrorToDiscord` (`lib/discord-erros.ts`), formatado como bloco pronto pra colar no Claude. Espelho client de `lib/client-error-report.ts`.
+
+**Auth:** nenhuma (intencional — o erro pode ter sido a própria sessão quebrar). Tagueia o operador via `getSessionUser` quando há sessão válida, mas nunca rejeita. Abuso é limitado pelo throttle client (5s) + dedup do Discord (cooldown 10min).
+
+**Body:** `{ message (1-1000), stack?, source?, url?, requestPath?, requestMethod?, status?, metadata? }` (Zod).
+
+**Response:** `{ ok: true }` (200) · `{ error: "invalid_json" | "invalid_payload" }` (400). No-op silencioso se `DISCORD_ERROR_WEBHOOK_URL` ausente.
+
+---
+
 ### Guarda (put-away — etapa 2/2)
 
 Fila consumida no tablet. Operador imprime etiquetas → cola nas peças → leva pra loc destino → bipa o QR → confirma. Mov de guarda usa `origem_tipo='transferencia_localizacao'` (replenishment_intra) saindo de RECEBIMENTO. Custo médio da loc origem é propagado pra loc destino via `recalcularCustoMedio`.
@@ -6119,13 +6215,13 @@ levantava 23502/23503 com mensagens crípticas.
 Motor de decisão própria/empréstimo/OC. Algoritmo puro testável (`rotearPedido`) + wrapper de produção (`rotearPedidoDoBanco`) que filtra locks de localização e aplica limites por par credora↔devedora antes de consultar saldo.
 
 ### GET /api/wms/fornecedores
-Lista fornecedores ativos. **Response:** `{ rows: Fornecedor[] }`.
+Lista fornecedores ativos + galpões ativos (pro seletor de galpão de recebimento na tela). **Response:** `{ rows: Fornecedor[], galpoes: { id, nome }[] }`. `Fornecedor` carrega `galpao_id: uuid | null` (galpão de recebimento padrão; null = cai no prefix map).
 
 ### POST /api/wms/fornecedores
-Cria fornecedor. **Body:** `{ nome, cnpj?, prefixo_sku?, observacoes?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. **400** se sem nome. Lead time é validado: `min ≤ medio ≤ max`, todos opcionais e independentes (qualquer um pode ficar null). Quando setado, vira default para novos vínculos `siso_produto_fornecedores`.
+Cria fornecedor. **Body:** `{ nome, cnpj?, prefixo_sku?, observacoes?, galpao_id?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. **400** se sem nome. `galpao_id` (FK `siso_galpoes`, opcional/null) define o galpão de recebimento FIXO do fornecedor — usado pela lista de compras item-cêntrica. Lead time é validado: `min ≤ medio ≤ max`, todos opcionais e independentes (qualquer um pode ficar null). Quando setado, vira default para novos vínculos `siso_produto_fornecedores`.
 
 ### PATCH /api/wms/fornecedores/[id]
-Atualiza campos. **Body:** `{ nome?, cnpj?, prefixo_sku?, ativo?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. Lead time pode receber `null` pra limpar. Ordenação `min ≤ medio ≤ max` validada considerando valores atuais quando só parte é informada.
+Atualiza campos. **Body:** `{ nome?, cnpj?, prefixo_sku?, ativo?, galpao_id?, lead_time_dias_min?, lead_time_dias_medio?, lead_time_dias_max? }`. `galpao_id` aceita `null`/`""` (limpa → volta a cair no prefix map). Lead time pode receber `null` pra limpar. Ordenação `min ≤ medio ≤ max` validada considerando valores atuais quando só parte é informada.
 
 ### DELETE /api/wms/fornecedores/[id]
 Soft delete (ativo=false).

@@ -10,6 +10,10 @@ export interface FornecedorOpcao {
   qty_minima_pedido: number;
   multiplo_compra: number;
   preferencial: boolean;
+  /** Galpão de recebimento FIXO: do cadastro do fornecedor (siso_fornecedores.galpao_id);
+   *  fallback no prefix map (filialOC). null quando nenhum resolve. */
+  galpao_id: string | null;
+  galpao_nome: string | null;
 }
 
 export interface FornecedoresPorSku {
@@ -26,13 +30,18 @@ type PfRow = {
   qty_minima_pedido: number | null;
   multiplo_compra: number | null;
   preferencial: boolean | null;
-  fornecedor: { nome: string } | null;
+  fornecedor: { nome: string; galpao_id: string | null } | null;
 };
 
 /**
  * Resolve, por SKU, as opções de fornecedor a partir de `siso_produto_fornecedores`
  * (preço/lead/MOQ/múltiplo, preferencial primeiro). Quando o SKU não tem vínculo
  * cadastrado, cai no `getFornecedorBySku` (prefix map) como fallback.
+ *
+ * Cada opção carrega o **galpão de recebimento fixo**: o `galpao_id` do cadastro do
+ * fornecedor (siso_fornecedores), e quando esse está nulo, o galpão do prefix map
+ * (filialOC, resolvido nome→id). Assim a tela de compras exibe o galpão como chip
+ * read-only seguindo o fornecedor escolhido.
  *
  * Junção: `sku` → `siso_produtos.id` (UNIQUE) → `produto_fornecedores.produto_id`
  * (evita o legado `siso_pedido_itens.produto_id = tiny_produto_id`).
@@ -45,6 +54,31 @@ export async function listarFornecedoresPorSkus(
   if (skusUnicos.length === 0) return resultado;
 
   const sb = createServiceClient();
+
+  // Mapa de galpões (nome ↔ id) — o prefix map usa NOME ("CWB"/"SP") em filialOC.
+  const { data: galpoes } = await sb.from("siso_galpoes").select("id, nome");
+  const nomeToId = new Map<string, string>();
+  const idToNome = new Map<string, string>();
+  for (const g of (galpoes ?? []) as { id: string; nome: string }[]) {
+    nomeToId.set(g.nome, g.id);
+    idToNome.set(g.id, g.nome);
+  }
+
+  // Galpão de recebimento de um SKU+fornecedor: cadastro tem prioridade; senão prefix.
+  function resolverGalpao(
+    sku: string,
+    galpaoIdCadastro: string | null,
+  ): { galpao_id: string | null; galpao_nome: string | null } {
+    if (galpaoIdCadastro) {
+      return {
+        galpao_id: galpaoIdCadastro,
+        galpao_nome: idToNome.get(galpaoIdCadastro) ?? null,
+      };
+    }
+    const filial = getFornecedorBySku(sku).filialOC ?? null;
+    const gid = filial ? (nomeToId.get(filial) ?? null) : null;
+    return { galpao_id: gid, galpao_nome: gid ? (idToNome.get(gid) ?? filial) : filial };
+  }
 
   // sku -> produto uuid (siso_produtos.sku é UNIQUE)
   const { data: produtos } = await sb
@@ -74,6 +108,7 @@ export async function listarFornecedoresPorSkus(
       const sku = skuPorProdutoId.get(pf.produto_id);
       if (!sku) continue;
       const lista = opcoesPorSku.get(sku) ?? [];
+      const g = resolverGalpao(sku, pf.fornecedor?.galpao_id ?? null);
       lista.push({
         fornecedorId: pf.fornecedor_id ?? null,
         nome: pf.fornecedor?.nome ?? "—",
@@ -82,6 +117,8 @@ export async function listarFornecedoresPorSkus(
         qty_minima_pedido: Number(pf.qty_minima_pedido ?? 1),
         multiplo_compra: Number(pf.multiplo_compra ?? 1),
         preferencial: Boolean(pf.preferencial),
+        galpao_id: g.galpao_id,
+        galpao_nome: g.galpao_nome,
       });
       opcoesPorSku.set(sku, lista);
     }
@@ -95,6 +132,7 @@ export async function listarFornecedoresPorSkus(
     }
     // fallback: prefix map
     const { fornecedor } = getFornecedorBySku(sku);
+    const g = resolverGalpao(sku, null);
     resultado.set(sku, {
       origem: "prefixo",
       opcoes: [
@@ -106,6 +144,8 @@ export async function listarFornecedoresPorSkus(
           qty_minima_pedido: 1,
           multiplo_compra: 1,
           preferencial: true,
+          galpao_id: g.galpao_id,
+          galpao_nome: g.galpao_nome,
         },
       ],
     });

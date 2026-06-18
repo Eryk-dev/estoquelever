@@ -604,10 +604,13 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 **Indexes:**
 - `idx_ordens_compra_status` (status)
 - `idx_ordens_compra_fornecedor` (fornecedor)
+- `uq_oc_aberta_fornecedor_galpao` — UNIQUE parcial `(fornecedor, galpao_id) WHERE status='aguardando_compra' AND galpao_id IS NOT NULL` (`20260611p_oc_unique_aberta.sql`): 1 OC aberta por (fornecedor, galpão); base do find-or-create race-safe (`findOrCreateOcAberta`, retry no `23505`).
+- `uq_oc_aberta_fornecedor_empresa` — UNIQUE parcial `(fornecedor, empresa_id) WHERE status='aguardando_compra' AND galpao_id IS NULL` (`20260618_oc_unique_aberta_empresa_null.sql`): fecha o buraco do índice acima — OC aberta **sem galpão** ficava desprotegida (o parcial só cobre `galpao_id IS NOT NULL`), deixando 2 requests concorrentes criarem OCs duplicadas.
 
 **Notes:**
 - PO created when an order item needs purchase (`decisao = 'oc'`)
 - Multiple items can belong to same PO if from same supplier
+- Criação de OC unificada em `findOrCreateOcAberta` (`src/lib/compras-oc.ts`), compartilhada por `/compras/comprar`, `/compras/redestinar` e `separacao/validar-oc-item` — race-safe via os 2 índices únicos parciais acima.
 - Status transitions: waiting → purchased → partially/fully received
 - Items linked via `siso_pedido_itens.ordem_compra_id`
 
@@ -2048,6 +2051,8 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-12 | `20260612d_rpc_separacao_counts.sql` | **Perf Tier 3** — RPC `wms_separacao_counts(p_galpao_id, p_empresa_id, p_marketplace, p_tag, p_busca, p_busca_pedido_ids)` retorna jsonb `{status: count}` num único GROUP BY, substituindo os 9 HEAD-counts paralelos de `GET /api/wms/separacao`. Filtros réplica da rota (galpão NÃO filtra `aguardando_compra`). Rota mantém caminho legado como fallback se a RPC falhar. |
 | 2026-06-12 | `20260612e_rpc_session_load.sql` | **Perf Tier 3** — RPC `wms_session_load(p_session_id text, p_galpao_id text)` consolida em 1 round-trip as 2-4 queries de `getSessionUser` (sessão+usuário, roles ativas+permissões com fallback por `cargos[]`, `galpao_valido` via `siso_usuario_galpoes`, `galpao_cargo_id` legado operador_cwb/sp). Cast inválido de uuid → NULL. `session.ts` mantém caminho legado como fallback. Verificada equivalência contra sessões vivas do staging (roles/perms/galpão idênticos). |
 | 2026-06-18 | `20260618_wms_trocar_reserva_localizacao_atomico.sql` | **Troca de localização no pick.** RPC `wms_trocar_reserva_localizacao_atomico(p_reserva_id, p_destino_localizacao_id, p_pedido_id text, p_usuario_id, p_motivo)` move a R `reserva_pedido` de uma loc pra outra no mesmo galpão (L na antiga + R na destino, atômico; reserva INTEIRA; idempotência por `estorno_de`; destino-saldo via R-check do `wms_inserir_movimentacao` → rollback total se não cobre). Endpoint `POST /api/wms/separacao/trocar-localizacao`; UI no painel "Ver outras localizações" do checklist. NÃO pica. |
+| 2026-06-18 | `20260618c_fornecedor_galpao.sql` | **Compras item-cêntrico (review Eryk).** `siso_fornecedores` +`galpao_id uuid REFERENCES siso_galpoes(id)` (nullable) — galpão de recebimento FIXO por fornecedor (config da localização). A lista de compras deixa de pedir galpão por linha: vem do fornecedor escolhido (fallback no prefix map `sku-fornecedor.ts` filialOC quando null). Setável na tela `/wms/fornecedores`. |
+| 2026-06-18 | `20260618_oc_unique_aberta_empresa_null.sql` | **Compras item-cêntrico Fase 1 (G6).** `UNIQUE INDEX uq_oc_aberta_fornecedor_empresa (fornecedor, empresa_id) WHERE status='aguardando_compra' AND galpao_id IS NULL` — fecha o buraco do `uq_oc_aberta_fornecedor_galpao` (que só cobre `galpao_id IS NOT NULL`): OC aberta sem galpão ficava desprotegida contra duplicação concorrente. Base, junto do índice de 2026-06-11, do helper único `findOrCreateOcAberta` (`src/lib/compras-oc.ts`). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

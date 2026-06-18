@@ -2,11 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { listarFornecedores, criarFornecedor } from "@/lib/wms/fornecedores";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
+import { createServiceClient } from "@/lib/supabase-server";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) return auth.response;
-  return NextResponse.json({ rows: await listarFornecedores() });
+  // Galpões ativos pra alimentar o seletor de galpão de recebimento na tela
+  // (evita gate de compras.ver / sistema.galpoes da rota de contexto).
+  const { data: galpoes } = await createServiceClient()
+    .from("siso_galpoes")
+    .select("id, nome")
+    .eq("ativo", true)
+    .order("nome");
+  return NextResponse.json({
+    rows: await listarFornecedores(),
+    galpoes: galpoes ?? [],
+  });
 }
 
 function parseLeadTime(b: Record<string, unknown>, key: string): number | null | undefined {
@@ -37,12 +48,19 @@ export async function POST(req: NextRequest) {
     if (medio != null && max != null && medio > max) {
       return NextResponse.json({ error: "médio não pode ser maior que máximo" }, { status: 400 });
     }
+    const galpaoId =
+      typeof body.galpao_id === "string" && body.galpao_id.length > 0
+        ? body.galpao_id
+        : body.galpao_id === null
+          ? null
+          : undefined;
     return NextResponse.json(
       await criarFornecedor({
         nome: body.nome,
         cnpj: body.cnpj,
         prefixo_sku: body.prefixo_sku,
         observacoes: body.observacoes,
+        ...(galpaoId !== undefined ? { galpao_id: galpaoId } : {}),
         ...(min !== undefined ? { lead_time_dias_min: min } : {}),
         ...(medio !== undefined ? { lead_time_dias_medio: medio } : {}),
         ...(max !== undefined ? { lead_time_dias_max: max } : {}),

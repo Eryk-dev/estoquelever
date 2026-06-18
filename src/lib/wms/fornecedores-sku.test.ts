@@ -11,6 +11,17 @@ vi.mock("@/lib/supabase-server", () => ({ createServiceClient: () => buildSb() }
 function buildSb() {
   return {
     from: (table: string) => {
+      if (table === "siso_galpoes") {
+        return {
+          select: async () => ({
+            data: [
+              { id: "g-cwb", nome: "CWB" },
+              { id: "g-sp", nome: "SP" },
+            ],
+            error: null,
+          }),
+        };
+      }
       if (table === "siso_produtos") {
         return {
           select: () => ({
@@ -36,7 +47,7 @@ function buildSb() {
                       qty_minima_pedido: 10,
                       multiplo_compra: 1,
                       preferencial: true,
-                      fornecedor: { nome: "Tiger" },
+                      fornecedor: { nome: "Tiger", galpao_id: "g-sp" },
                     },
                     {
                       produto_id: "p-filtro",
@@ -75,8 +86,13 @@ describe("listarFornecedoresPorSkus", () => {
       preferencial: true,
       custo_unitario: 12,
       lead_time_dias_medio: 7,
+      galpao_id: "g-sp", // do cadastro do fornecedor
+      galpao_nome: "SP",
     });
     expect(filtro.opcoes[1].nome).toBe("Bosch");
+    // Bosch sem galpao_id no cadastro → fallback no prefix map do SKU (FILTRO-X → CWB)
+    expect(filtro.opcoes[1].galpao_nome).toBe("CWB");
+    expect(filtro.opcoes[1].galpao_id).toBe("g-cwb");
   });
 
   it("SKU sem vínculo → origem prefixo, 1 opção do mapa, sem fornecedorId", async () => {
@@ -89,6 +105,9 @@ describe("listarFornecedoresPorSkus", () => {
     expect(sem.opcoes[0].qty_minima_pedido).toBe(1);
     expect(sem.opcoes[0].multiplo_compra).toBe(1);
     expect(typeof sem.opcoes[0].nome).toBe("string");
+    // prefixo → galpão do prefix map (DEFAULT = CWB)
+    expect(sem.opcoes[0].galpao_id).toBe("g-cwb");
+    expect(sem.opcoes[0].galpao_nome).toBe("CWB");
   });
 
   it("lista vazia → mapa vazio (não bate no banco)", async () => {

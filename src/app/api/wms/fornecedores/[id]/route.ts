@@ -8,6 +8,7 @@ interface PatchFornecedorBody {
   cnpj?: string | null;
   prefixo_sku?: string | null;
   ativo?: boolean;
+  galpao_id?: string | null;
   lead_time_dias_min?: number | null;
   lead_time_dias_medio?: number | null;
   lead_time_dias_max?: number | null;
@@ -30,6 +31,9 @@ function pickPatchFields(body: unknown): PatchFornecedorBody {
     out.prefixo_sku = b.prefixo_sku;
   }
   if (typeof b.ativo === "boolean") out.ativo = b.ativo;
+  if (b.galpao_id === null || typeof b.galpao_id === "string") {
+    out.galpao_id = b.galpao_id === "" ? null : (b.galpao_id as string | null);
+  }
   if ("lead_time_dias_min" in b) out.lead_time_dias_min = parseLeadTime(b.lead_time_dias_min);
   if ("lead_time_dias_medio" in b) out.lead_time_dias_medio = parseLeadTime(b.lead_time_dias_medio);
   if ("lead_time_dias_max" in b) out.lead_time_dias_max = parseLeadTime(b.lead_time_dias_max);

@@ -26,6 +26,15 @@ import {
   fmtNum,
 } from "@/components/wms/ui/wms-ui";
 import { EquivalentesCompra } from "@/components/wms/compras/equivalentes-compra";
+import {
+  flattenItensPorSku,
+  agruparCompra,
+  filtrarOrdenarLinhas,
+  type CompraSelecionada,
+  type LinhaCompra,
+  type SortKey,
+  type SortDir,
+} from "@/lib/compras-ui";
 
 // ── Tipos ────────────────────────────────────────────────────────────
 
@@ -46,6 +55,21 @@ interface PedidoVinc {
   quantidade: number;
   aging_dias: number;
   item_id: string;
+  galpao_id: string | null;
+  galpao_nome: string | null;
+}
+
+interface FornecedorOpcao {
+  fornecedorId: string | null;
+  nome: string;
+  custo_unitario: number | null;
+  lead_time_dias_medio: number | null;
+  qty_minima_pedido: number;
+  multiplo_compra: number;
+  preferencial: boolean;
+  /** Galpão de recebimento fixo do fornecedor (cadastro ou fallback prefix). */
+  galpao_id: string | null;
+  galpao_nome: string | null;
 }
 
 type StatusCobertura = "critico" | "atencao" | "ok" | "sem_giro" | "lead_time_risco";
@@ -64,6 +88,8 @@ interface ComprarItem {
   lead_time_medio: number | null;
   aging_dias: number;
   pedidos: PedidoVinc[];
+  fornecedores: FornecedorOpcao[];
+  fornecedor_escolhido: FornecedorOpcao | null;
 }
 
 interface ComprarFornecedor {
@@ -93,6 +119,8 @@ interface ReceberDoc {
   galpao_nome: string | null;
   skus_count: number;
   href: string;
+  /** pedidos que o documento destrava ao receber (só OC; manual vem vazio). */
+  pedidos_cobertos: { pedido_id: string; numero: string }[];
 }
 
 interface ReceberFornecedorGrupo {
@@ -148,13 +176,6 @@ function coberturaLabel(s: StatusCobertura): { txt: string; color: string } {
     default:
       return { txt: "sem giro", color: "var(--wms-c-mute)" };
   }
-}
-
-// P3-04: chave de seleção/override composta por fornecedor+SKU. O mesmo SKU pode
-// aparecer em fornecedores diferentes; uma chave só por SKU vazaria seleção e
-// qty entre cards (risco de double-buy ao confirmar).
-function selKey(fornecedor: string, sku: string): string {
-  return `${fornecedor}::${sku}`;
 }
 
 // ── Página ──────────────────────────────────────────────────────────
@@ -317,167 +338,203 @@ function TabComprar({
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  // Lazy: painel de equivalentes só monta quando o comprador expande a linha.
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [qtyOverrides, setQtyOverrides] = useState<Map<string, number>>(
+  const [qtyOverrides, setQtyOverrides] = useState<Map<string, number>>(new Map());
+  // Escolha de fornecedor por SKU (nome). O galpão segue o fornecedor (fixo).
+  const [fornecedorOverrides, setFornecedorOverrides] = useState<Map<string, string>>(
     new Map(),
   );
+  // Toolbar
+  const [busca, setBusca] = useState("");
+  const [filtroFornecedor, setFiltroFornecedor] = useState("");
+  const [filtroGalpao, setFiltroGalpao] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("urgencia");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Modais
   const [pendingExcId, setPendingExcId] = useState<string | null>(null);
+  const [confirmSel, setConfirmSel] = useState<CompraSelecionada[] | null>(null);
   const [trocaSkuAlvo, setTrocaSkuAlvo] = useState<ComprarItem | null>(null);
   const [trocaSkuNovo, setTrocaSkuNovo] = useState("");
   const [trocaSkuErro, setTrocaSkuErro] = useState<string | null>(null);
   const [trocaSkuValidando, setTrocaSkuValidando] = useState(false);
-  const [indisponivelAlvo, setIndisponivelAlvo] = useState<ComprarItem | null>(
-    null,
-  );
+  const [trocaFornAlvo, setTrocaFornAlvo] = useState<ComprarItem | null>(null);
+  const [trocaFornNome, setTrocaFornNome] = useState("");
   const [cancelAlvo, setCancelAlvo] = useState<ComprarItem | null>(null);
   const [cancelMotivo, setCancelMotivo] = useState("");
-  // Modal de confirmação da compra: comprador define galpão destino + preço por item
-  const [confirmItens, setConfirmItens] = useState<
-    | { sku: string; descricao: string; qty: number; galpaoId: string; preco: string }[]
-    | null
-  >(null);
-  // ref-per-fornecedor pra suportar shift+click range select isolado por card
-  const lastCheckedRef = useRef<Map<string, number>>(new Map());
+  const [indispItemIds, setIndispItemIds] = useState<string[] | null>(null);
 
-  const galpoesQuery = useQuery<{ galpoes: { id: string; nome: string }[] }>({
-    queryKey: ["compras-contexto-galpoes"],
-    queryFn: () => wmsApi("/api/wms/compras-manuais/contexto"),
+  // Lista completa de fornecedores (pro modal "Trocar fornecedor" — pode escolher
+  // qualquer fornecedor, não só os cadastrados pro SKU).
+  const fornecedoresQuery = useQuery<{ rows: { id: string; nome: string }[] }>({
+    queryKey: ["compras-manuais-fornecedores"],
+    queryFn: () => wmsApi<{ rows: { id: string; nome: string }[] }>("/api/wms/fornecedores"),
     staleTime: 5 * 60_000,
   });
-  const galpoes = galpoesQuery.data?.galpoes ?? [];
 
   const data = query.data;
 
-  const toggleExpand = useCallback((fornecedor: string) => {
+  // Lista plana 1-linha-por-SKU (a API ainda devolve agrupado por fornecedor).
+  const itens = useMemo<ComprarItem[]>(
+    () => flattenItensPorSku<ComprarItem>(data?.fornecedores ?? []),
+    [data],
+  );
+
+  const toggleExpand = useCallback((sku: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(fornecedor)) next.delete(fornecedor);
-      else next.add(fornecedor);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
       return next;
     });
   }, []);
 
-  const toggleCheckbox = useCallback(
-    (
-      fornecedor: string,
-      sku: string,
-      idx: number,
-      shiftKey: boolean,
-      itens: ComprarItem[],
-    ) => {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        const last = lastCheckedRef.current.get(fornecedor);
-        const isChecking = !next.has(selKey(fornecedor, sku));
+  const toggleCheckbox = useCallback((sku: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sku)) next.delete(sku);
+      else next.add(sku);
+      return next;
+    });
+  }, []);
 
-        if (shiftKey && last != null && last !== idx) {
-          const [from, to] = last < idx ? [last, idx] : [idx, last];
-          for (let i = from; i <= to; i++) {
-            const it = itens[i];
-            if (!it) continue;
-            const k = selKey(fornecedor, it.sku);
-            if (isChecking) next.add(k);
-            else next.delete(k);
-          }
-        } else {
-          const k = selKey(fornecedor, sku);
-          if (isChecking) next.add(k);
-          else next.delete(k);
-        }
-        lastCheckedRef.current.set(fornecedor, idx);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const toggleSelectAll = useCallback(
-    (fornecedor: string, itens: ComprarItem[]) => {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        const allSelected = itens.every((it) =>
-          next.has(selKey(fornecedor, it.sku)),
-        );
-        for (const it of itens) {
-          const k = selKey(fornecedor, it.sku);
-          if (allSelected) next.delete(k);
-          else next.add(k);
-        }
-        lastCheckedRef.current.delete(fornecedor);
-        return next;
-      });
-    },
-    [],
-  );
-
-  const setQtyOverride = useCallback((key: string, value: number) => {
+  const setQtyOverride = useCallback((sku: string, value: number) => {
     setQtyOverrides((prev) => {
       const next = new Map(prev);
-      if (Number.isFinite(value)) next.set(key, value);
-      else next.delete(key);
+      if (Number.isFinite(value)) next.set(sku, value);
+      else next.delete(sku);
       return next;
     });
   }, []);
 
-  // mutations
-  const comprarMut = useMutation({
-    mutationFn: async (
-      itens: {
-        sku: string;
-        quantidade_comprada: number;
-        galpao_id: string;
-        preco_unitario: number;
-      }[],
-    ) => {
-      const r = await sisoFetch("/api/wms/compras/comprar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itens }),
-      });
-      if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error || `HTTP ${r.status}`);
+  const setFornecedorOverride = useCallback((sku: string, nome: string) => {
+    setFornecedorOverrides((prev) => new Map(prev).set(sku, nome));
+  }, []);
+
+  const getQty = useCallback(
+    (it: ComprarItem) => qtyOverrides.get(it.sku) ?? it.quantidade_necessaria,
+    [qtyOverrides],
+  );
+  const getFornecedorOpcao = useCallback(
+    (it: ComprarItem): FornecedorOpcao | null => {
+      const nome = fornecedorOverrides.get(it.sku);
+      if (nome) return it.fornecedores.find((f) => f.nome === nome) ?? it.fornecedor_escolhido;
+      return it.fornecedor_escolhido;
+    },
+    [fornecedorOverrides],
+  );
+
+  // ── Linhas resolvidas (fornecedor/galpão escolhidos) + filtro/ordenação ──
+  type LinhaItem = LinhaCompra & { item: ComprarItem; opcao: FornecedorOpcao | null };
+  const linhas = useMemo<LinhaItem[]>(
+    () =>
+      itens.map((it) => {
+        const opc = getFornecedorOpcao(it);
+        return {
+          sku: it.sku,
+          descricao: it.descricao,
+          fornecedorNome: opc?.nome ?? "Sem fornecedor",
+          galpaoId: opc?.galpao_id ?? null,
+          galpaoNome: opc?.galpao_nome ?? null,
+          quantidade: getQty(it),
+          aging_dias: it.aging_dias,
+          item: it,
+          opcao: opc,
+        };
+      }),
+    [itens, getFornecedorOpcao, getQty],
+  );
+
+  const fornecedorOpcoesFiltro = useMemo(
+    () => [...new Set(linhas.map((l) => l.fornecedorNome))].sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [linhas],
+  );
+  const galpaoOpcoesFiltro = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of linhas) if (l.galpaoId) m.set(l.galpaoId, l.galpaoNome ?? l.galpaoId);
+    return [...m].map(([id, nome]) => ({ id, nome }));
+  }, [linhas]);
+
+  const linhasVisiveis = useMemo(
+    () =>
+      filtrarOrdenarLinhas(linhas, {
+        busca,
+        fornecedor: filtroFornecedor || null,
+        galpao: filtroGalpao || null,
+        sortKey,
+        sortDir,
+      }),
+    [linhas, busca, filtroFornecedor, filtroGalpao, sortKey, sortDir],
+  );
+
+  const toggleSort = useCallback(
+    (key: SortKey) => {
+      if (sortKey === key) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      } else {
+        setSortKey(key);
+        setSortDir(key === "urgencia" ? "desc" : "asc");
       }
     },
-    // Remoção otimista: o POST + refetch da lista levam ~1-2s. Tira os itens
-    // comprados na hora; reconcilia no servidor em background e faz rollback
-    // se a compra falhar.
-    onMutate: async (vars) => {
+    [sortKey],
+  );
+
+  // ── Mutations ──
+  const comprarMut = useMutation({
+    mutationFn: async (sel: CompraSelecionada[]) => {
+      const byForn = new Map<string, CompraSelecionada[]>();
+      for (const s of sel) {
+        const l = byForn.get(s.fornecedorNome) ?? [];
+        l.push(s);
+        byForn.set(s.fornecedorNome, l);
+      }
+      for (const [fornecedor, lista] of byForn) {
+        const r = await sisoFetch("/api/wms/compras/comprar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fornecedor_oc: fornecedor,
+            itens: lista.map((s) => ({
+              sku: s.sku,
+              quantidade_comprada: s.qty,
+              galpao_id: s.galpaoId,
+              ...(s.custoUnitario != null ? { preco_unitario: s.custoUnitario } : {}),
+            })),
+          }),
+        });
+        if (!r.ok) {
+          const b = (await r.json().catch(() => ({}))) as { error?: string };
+          throw new Error(b.error || `HTTP ${r.status}`);
+        }
+      }
+    },
+    onMutate: async (sel) => {
       await queryClient.cancelQueries({ queryKey: ["wms-compras"] });
       const snapshot = queryClient.getQueryData<ComprarResponse>([
         "wms-compras",
         "comprar",
       ]);
-      const skusComprados = new Set(vars.map((v) => v.sku));
-      queryClient.setQueryData<ComprarResponse>(
-        ["wms-compras", "comprar"],
-        (old) =>
-          old
-            ? {
-                ...old,
-                fornecedores: old.fornecedores
-                  .map((f) => {
-                    const itens = f.itens.filter(
-                      (it) => !skusComprados.has(it.sku),
-                    );
-                    return { ...f, itens, skus_count: itens.length };
-                  })
-                  .filter((f) => f.itens.length > 0),
-              }
-            : old,
+      const skus = new Set(sel.map((s) => s.sku));
+      queryClient.setQueryData<ComprarResponse>(["wms-compras", "comprar"], (old) =>
+        old
+          ? {
+              ...old,
+              fornecedores: old.fornecedores
+                .map((f) => {
+                  const fitens = f.itens.filter((it) => !skus.has(it.sku));
+                  return { ...f, itens: fitens, skus_count: fitens.length };
+                })
+                .filter((f) => f.itens.length > 0),
+            }
+          : old,
       );
       setSelected(new Set());
       setQtyOverrides(new Map());
-      setConfirmItens(null);
+      setConfirmSel(null);
       return { snapshot };
     },
-    onSuccess: (_d, vars) => {
-      toast.success(
-        `${vars.length} ite${vars.length === 1 ? "m" : "ns"} marcado${
-          vars.length === 1 ? "" : "s"
-        } como comprado${vars.length === 1 ? "" : "s"}`,
-      );
+    onSuccess: (_d, sel) => {
+      const n = new Set(sel.map((s) => s.sku)).size;
+      toast.success(`${n} ite${n === 1 ? "m" : "ns"} comprado${n === 1 ? "" : "s"}`);
     },
     onError: (e: Error, _vars, ctx) => {
       if (ctx?.snapshot)
@@ -500,9 +557,7 @@ function TabComprar({
         error?: string;
         itens_nao_trocados?: Array<{ item_id: string; motivo: string }>;
       };
-      if (!r.ok) {
-        throw new Error(b.error || `HTTP ${r.status}`);
-      }
+      if (!r.ok) throw new Error(b.error || `HTTP ${r.status}`);
       return b;
     },
     onSuccess: (d) => {
@@ -520,77 +575,35 @@ function TabComprar({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const indisponivelMut = useMutation({
-    // P3-05: 1 request com TODOS os item_ids do card (não só pedidos[0]).
-    mutationFn: async (itemIds: string[]) => {
-      const [first, ...rest] = itemIds;
-      const r = await sisoFetch(
-        `/api/wms/compras/itens/${first}/indisponivel`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ item_ids: rest }),
-        },
-      );
+  const trocarFornecedorMut = useMutation({
+    mutationFn: async (args: { itemIds: string[]; fornecedor_oc: string }) => {
+      const r = await sisoFetch("/api/wms/compras/itens/fornecedor", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: args.itemIds, fornecedor_oc: args.fornecedor_oc }),
+      });
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
       }
     },
-    // Remoção otimista: descobre os itens via item_id em pedidos[] e remove já;
-    // reconcilia no servidor em background, rollback no erro.
-    onMutate: async (itemIds) => {
-      await queryClient.cancelQueries({ queryKey: ["wms-compras"] });
-      const snapshot = queryClient.getQueryData<ComprarResponse>([
-        "wms-compras",
-        "comprar",
-      ]);
-      const ids = new Set(itemIds);
-      queryClient.setQueryData<ComprarResponse>(
-        ["wms-compras", "comprar"],
-        (old) =>
-          old
-            ? {
-                ...old,
-                fornecedores: old.fornecedores
-                  .map((f) => {
-                    const itens = f.itens.filter(
-                      (it) => !it.pedidos.some((p) => ids.has(p.item_id)),
-                    );
-                    return { ...f, itens, skus_count: itens.length };
-                  })
-                  .filter((f) => f.itens.length > 0),
-              }
-            : old,
-      );
-      setIndisponivelAlvo(null);
-      return { snapshot };
-    },
     onSuccess: () => {
-      toast.success("Itens marcados como indisponível");
+      toast.success("Fornecedor atualizado");
+      setTrocaFornAlvo(null);
+      setTrocaFornNome("");
+      onMutated();
     },
-    onError: (e: Error, _vars, ctx) => {
-      if (ctx?.snapshot)
-        queryClient.setQueryData(["wms-compras", "comprar"], ctx.snapshot);
-      toast.error(e.message);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
-    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const cancelamentoMut = useMutation({
-    // P3-05: 1 request com TODOS os item_ids do card (não só pedidos[0]).
     mutationFn: async (vars: { itemIds: string[]; motivo: string }) => {
       const [first, ...rest] = vars.itemIds;
-      const r = await sisoFetch(
-        `/api/wms/compras/itens/${first}/cancelamento`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ motivo: vars.motivo, item_ids: rest }),
-        },
-      );
+      const r = await sisoFetch(`/api/wms/compras/itens/${first}/cancelamento`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: vars.motivo, item_ids: rest }),
+      });
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
@@ -605,7 +618,56 @@ function TabComprar({
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Excecoes — actions
+  const indisponivelMut = useMutation({
+    mutationFn: async (itemIds: string[]) => {
+      const [first, ...rest] = itemIds;
+      const r = await sisoFetch(`/api/wms/compras/itens/${first}/indisponivel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_ids: rest }),
+      });
+      if (!r.ok) {
+        const b = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${r.status}`);
+      }
+    },
+    onMutate: async (itemIds) => {
+      await queryClient.cancelQueries({ queryKey: ["wms-compras"] });
+      const snapshot = queryClient.getQueryData<ComprarResponse>([
+        "wms-compras",
+        "comprar",
+      ]);
+      const ids = new Set(itemIds);
+      queryClient.setQueryData<ComprarResponse>(["wms-compras", "comprar"], (old) =>
+        old
+          ? {
+              ...old,
+              fornecedores: old.fornecedores
+                .map((f) => {
+                  const fitens = f.itens.filter(
+                    (it) => !it.pedidos.some((p) => ids.has(p.item_id)),
+                  );
+                  return { ...f, itens: fitens, skus_count: fitens.length };
+                })
+                .filter((f) => f.itens.length > 0),
+            }
+          : old,
+      );
+      setSelected(new Set());
+      setIndispItemIds(null);
+      return { snapshot };
+    },
+    onSuccess: () => toast.success("Itens marcados como indisponível"),
+    onError: (e: Error, _vars, ctx) => {
+      if (ctx?.snapshot)
+        queryClient.setQueryData(["wms-compras", "comprar"], ctx.snapshot);
+      toast.error(e.message);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["wms-compras"] });
+    },
+  });
+
   const confirmarCancelamentoMut = useMutation({
     mutationFn: async (itemId: string) => {
       setPendingExcId(itemId);
@@ -655,10 +717,9 @@ function TabComprar({
   const devolverMut = useMutation({
     mutationFn: async (itemId: string) => {
       setPendingExcId(itemId);
-      const r = await sisoFetch(
-        `/api/wms/compras/itens/${itemId}/devolver`,
-        { method: "POST" },
-      );
+      const r = await sisoFetch(`/api/wms/compras/itens/${itemId}/devolver`, {
+        method: "POST",
+      });
       if (!r.ok) {
         const b = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(b.error || `HTTP ${r.status}`);
@@ -675,117 +736,53 @@ function TabComprar({
     },
   });
 
-  // Trocar fornecedor do item
-  const fornecedoresQuery = useQuery<{ rows: { id: string; nome: string }[] }>({
-    queryKey: ["compras-manuais-fornecedores"],
-    queryFn: () => wmsApi<{ rows: { id: string; nome: string }[] }>("/api/wms/fornecedores"),
-    staleTime: 5 * 60_000,
-  });
-
-  const [trocaFornAlvo, setTrocaFornAlvo] = useState<ComprarItem | null>(null);
-  const [trocaFornNome, setTrocaFornNome] = useState("");
-
-  const trocarFornecedorMut = useMutation({
-    mutationFn: async (args: { itemIds: string[]; fornecedor_oc: string }) => {
-      const r = await sisoFetch("/api/wms/compras/itens/fornecedor", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ item_ids: args.itemIds, fornecedor_oc: args.fornecedor_oc }),
-      });
-      if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error || `HTTP ${r.status}`);
+  // ── Ações ──
+  const onGerar = useCallback(() => {
+    const sel: CompraSelecionada[] = [];
+    const semGalpao: string[] = [];
+    for (const l of linhas) {
+      if (!selected.has(l.sku)) continue;
+      if (l.quantidade <= 0) continue;
+      if (!l.galpaoId) {
+        semGalpao.push(l.sku);
+        continue;
       }
-    },
-    onSuccess: () => {
-      toast.success("Fornecedor atualizado");
-      setTrocaFornAlvo(null);
-      setTrocaFornNome("");
-      onMutated();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const onTrocarFornecedor = useCallback((item: ComprarItem) => {
-    setTrocaFornAlvo(item);
-    setTrocaFornNome("");
-  }, []);
-
-  // Bulk action: marcar como comprados.
-  // P3-04: indexado por chave composta (fornecedor::sku), não só por SKU.
-  const allItensByKey = useMemo(() => {
-    const map = new Map<string, ComprarItem>();
-    for (const f of data?.fornecedores ?? []) {
-      for (const it of f.itens) map.set(selKey(f.fornecedor, it.sku), it);
-    }
-    return map;
-  }, [data]);
-
-  const galpaoSugeridoByKey = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const f of data?.fornecedores ?? []) {
-      for (const it of f.itens)
-        map.set(selKey(f.fornecedor, it.sku), f.galpao_sugerido_id);
-    }
-    return map;
-  }, [data]);
-
-  // Abre o modal de confirmação — galpão default = sugerido do fornecedor.
-  const onMarcarComprados = useCallback(() => {
-    const lista: NonNullable<typeof confirmItens> = [];
-    for (const key of selected) {
-      const it = allItensByKey.get(key);
-      if (!it) continue;
-      const qty = qtyOverrides.get(key) ?? it.quantidade_necessaria;
-      if (qty <= 0) continue;
-      lista.push({
-        sku: it.sku,
-        descricao: it.descricao,
-        qty,
-        galpaoId: galpaoSugeridoByKey.get(key) ?? "",
-        preco: "",
+      sel.push({
+        sku: l.sku,
+        descricao: l.descricao,
+        qty: l.quantidade,
+        fornecedorNome: l.fornecedorNome,
+        galpaoId: l.galpaoId,
+        galpaoNome: l.galpaoNome ?? "—",
+        custoUnitario: l.opcao?.custo_unitario ?? null,
+        pedidosCobertos: l.item.pedidos.map((p) => ({ numero: p.numero })),
       });
     }
-    if (lista.length === 0) {
+    if (semGalpao.length > 0) {
+      toast.error(
+        `Sem galpão configurado: ${semGalpao.join(", ")}. Defina o galpão do fornecedor em Fornecedores.`,
+      );
+      return;
+    }
+    if (sel.length === 0) {
       toast.error("Nenhum item válido selecionado");
       return;
     }
-    setConfirmItens(lista);
-  }, [selected, allItensByKey, qtyOverrides, galpaoSugeridoByKey]);
+    setConfirmSel(sel);
+  }, [linhas, selected]);
 
-  const confirmValido =
-    confirmItens != null &&
-    confirmItens.every((c) => c.galpaoId && Number(c.preco) > 0);
-
-  const submitCompra = useCallback(() => {
-    if (!confirmItens) return;
-    comprarMut.mutate(
-      confirmItens.map((c) => ({
-        sku: c.sku,
-        quantidade_comprada: c.qty,
-        galpao_id: c.galpaoId,
-        preco_unitario: Number(c.preco),
-      })),
-    );
-  }, [confirmItens, comprarMut]);
-
-  const setConfirmCampo = useCallback(
-    (idx: number, campo: "galpaoId" | "preco", valor: string) => {
-      setConfirmItens((prev) => {
-        if (!prev) return prev;
-        const next = [...prev];
-        next[idx] = { ...next[idx], [campo]: valor };
-        return next;
-      });
-    },
-    [],
-  );
-
-  const onTrocarSku = useCallback((item: ComprarItem) => {
-    setTrocaSkuAlvo(item);
-    setTrocaSkuNovo(item.sku);
-    setTrocaSkuErro(null);
-  }, []);
+  const onMarcarIndisponivelBulk = useCallback(() => {
+    const itemIds: string[] = [];
+    for (const it of itens) {
+      if (!selected.has(it.sku)) continue;
+      for (const p of it.pedidos) if (p.item_id) itemIds.push(p.item_id);
+    }
+    if (itemIds.length === 0) {
+      toast.error("Nenhum item selecionado");
+      return;
+    }
+    setIndispItemIds(itemIds);
+  }, [itens, selected]);
 
   const submitTrocarSku = useCallback(async () => {
     if (!trocaSkuAlvo) return;
@@ -817,16 +814,10 @@ function TabComprar({
     }
   }, [trocaSkuAlvo, trocaSkuNovo, trocarSkuMut]);
 
-  const onIndisponivel = useCallback((item: ComprarItem) => {
-    if (!item.pedidos[0]?.item_id) return;
-    setIndisponivelAlvo(item);
-  }, []);
-
-  const onPropostaCancelamento = useCallback((item: ComprarItem) => {
-    if (!item.pedidos[0]?.item_id) return;
-    setCancelAlvo(item);
-    setCancelMotivo("");
-  }, []);
+  const confirmPreview = useMemo(
+    () => (confirmSel ? agruparCompra(confirmSel) : []),
+    [confirmSel],
+  );
 
   if (query.isLoading) {
     return <div className="wms-loading-pane">Carregando itens…</div>;
@@ -841,8 +832,10 @@ function TabComprar({
   }
   if (!data) return null;
 
-  const fornecedores = data.fornecedores ?? [];
   const excecoes = data.excecoes ?? [];
+  const GRID =
+    "20px minmax(0,1.6fr) 92px minmax(0,1.35fr) 84px minmax(0,0.85fr) 30px";
+  const sortArrow = (k: SortKey) => (sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "");
 
   return (
     <>
@@ -850,267 +843,347 @@ function TabComprar({
         <div style={{ marginBottom: 14 }}>
           <ExcecoesBannerWms
             excecoes={excecoes}
-            onConfirmarCancelamento={(id) =>
-              confirmarCancelamentoMut.mutate(id)
-            }
-            onConfirmarEquivalente={(id) =>
-              confirmarEquivalenteMut.mutate(id)
-            }
+            onConfirmarCancelamento={(id) => confirmarCancelamentoMut.mutate(id)}
+            onConfirmarEquivalente={(id) => confirmarEquivalenteMut.mutate(id)}
             onDevolver={(id) => devolverMut.mutate(id)}
             pendingId={pendingExcId}
           />
         </div>
       )}
 
-      {fornecedores.length === 0 ? (
+      {/* Toolbar: busca + filtros */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "center",
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ position: "relative", flex: 1, minWidth: 220 }}>
+          <input
+            className="wms-input"
+            placeholder="Buscar peça, SKU ou fornecedor…"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            style={{ width: "100%", paddingLeft: 30 }}
+          />
+          <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "var(--wms-c-mute)" }}>
+            <Icon name="search" size={13} />
+          </span>
+        </div>
+        <select
+          className="wms-select"
+          value={filtroFornecedor}
+          onChange={(e) => setFiltroFornecedor(e.target.value)}
+          title="Filtrar por fornecedor"
+        >
+          <option value="">Todos fornecedores</option>
+          {fornecedorOpcoesFiltro.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <select
+          className="wms-select"
+          value={filtroGalpao}
+          onChange={(e) => setFiltroGalpao(e.target.value)}
+          title="Filtrar por galpão de recebimento"
+        >
+          <option value="">Todos galpões</option>
+          {galpaoOpcoesFiltro.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.nome}
+            </option>
+          ))}
+        </select>
+        {(busca || filtroFornecedor || filtroGalpao) && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-ghost wms-btn-sm"
+            onClick={() => {
+              setBusca("");
+              setFiltroFornecedor("");
+              setFiltroGalpao("");
+            }}
+          >
+            Limpar filtros
+          </button>
+        )}
+      </div>
+
+      {itens.length === 0 ? (
         <div className="wms-empty-block">
           <h3>Nenhum item para comprar</h3>
-          <p>Quando pedidos precisarem de compra, os fornecedores aparecem aqui.</p>
+          <p>Quando pedidos precisarem de compra, as peças aparecem aqui.</p>
         </div>
       ) : (
-        fornecedores.map((f) => {
-          const isExpanded = expanded.has(f.fornecedor);
-          const agCls = agingClass(f.aging_dias);
-          const selectedCount = f.itens.filter((it) =>
-            selected.has(selKey(f.fornecedor, it.sku)),
-          ).length;
-          const allSelected =
-            f.itens.length > 0 && selectedCount === f.itens.length;
-          return (
-            <article key={f.fornecedor} className={`wms-frc ${agCls}`}>
-              <div
-                className="wms-frc-h"
-                onClick={() => toggleExpand(f.fornecedor)}
-              >
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  ref={(el) => {
-                    if (el)
-                      el.indeterminate = selectedCount > 0 && !allSelected;
-                  }}
-                  onChange={() => {}}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleSelectAll(f.fornecedor, f.itens);
-                  }}
-                  title="Selecionar todos os itens do fornecedor"
-                  style={{ flexShrink: 0 }}
-                />
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="wms-frc-name">{f.fornecedor}</div>
+        <div className="wms-frc" style={{ borderLeftColor: "var(--wms-c-border-2)" }}>
+          {/* Cabeçalho da lista (ordenável) */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: GRID,
+              gap: 10,
+              alignItems: "center",
+              padding: "8px 14px",
+              borderBottom: "1px solid var(--wms-c-border)",
+              fontSize: 10.5,
+              textTransform: "uppercase",
+              letterSpacing: ".05em",
+              color: "var(--wms-c-mute)",
+              fontWeight: 600,
+            }}
+          >
+            <span />
+            <button type="button" className="wms-sort-h" onClick={() => toggleSort("sku")}>
+              Peça{sortArrow("sku")}
+            </button>
+            <button type="button" className="wms-sort-h" onClick={() => toggleSort("quanto")}>
+              Quanto{sortArrow("quanto")}
+            </button>
+            <button type="button" className="wms-sort-h" onClick={() => toggleSort("fornecedor")}>
+              De quem{sortArrow("fornecedor")}
+            </button>
+            <span>Entregar em</span>
+            <button type="button" className="wms-sort-h" onClick={() => toggleSort("urgencia")}>
+              Urgência{sortArrow("urgencia")}
+            </button>
+            <span />
+          </div>
+
+          {linhasVisiveis.length === 0 ? (
+            <div className="wms-td-mute" style={{ padding: "18px 14px", fontSize: 13 }}>
+              Nenhuma peça com esses filtros.
+            </div>
+          ) : (
+            linhasVisiveis.map((l) => {
+              const item = l.item;
+              const checked = selected.has(item.sku);
+              const isExpanded = expanded.has(item.sku);
+              const qty = l.quantidade;
+              const opc = l.opcao;
+              const itemAg = agingClass(item.aging_dias);
+              const cob = coberturaLabel(item.status_cobertura);
+              return (
+                <div key={item.sku} style={{ borderBottom: "1px solid var(--wms-c-border)" }}>
                   <div
-                    className="wms-frc-meta"
-                    style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: GRID,
+                      gap: 10,
+                      alignItems: "center",
+                      padding: "12px 14px",
+                      background: checked ? "var(--wms-c-info-bg)" : undefined,
+                    }}
                   >
-                    {f.galpao_sugerido_nome ? (
-                      <span className="wms-pcard-chip is-galpao">
-                        {f.galpao_sugerido_nome}
-                      </span>
-                    ) : null}
-                    <span>·</span>
-                    <span>{f.skus_count} SKUs</span>
-                    <span>·</span>
-                    <span>
-                      {f.pedidos_bloqueados} pedido
-                      {f.pedidos_bloqueados === 1 ? "" : "s"} bloqueado
-                      {f.pedidos_bloqueados === 1 ? "" : "s"}
-                    </span>
-                    <span>·</span>
-                    <span className={`wms-aging-chip ${agCls}`}>
-                      {f.aging_dias}d
-                    </span>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <Icon name={isExpanded ? "chevron-d" : "chevron-r"} />
-                </div>
-              </div>
-              {isExpanded && (
-                <div className="wms-frc-body">
-                  <div
-                    className="wms-frc-row wms-td-mute"
-                    style={{ fontSize: 10.5, padding: "4px 0" }}
-                  >
-                    <div />
-                    <div />
-                    <div />
-                    <div className="wms-tar">Necessário</div>
-                    <div className="wms-tar">Comprar</div>
-                    <div />
-                  </div>
-                  {f.itens.map((item, idx) => {
-                    const itemKey = selKey(f.fornecedor, item.sku);
-                    const checked = selected.has(itemKey);
-                    const qty =
-                      qtyOverrides.get(itemKey) ?? item.quantidade_necessaria;
-                    const itemAg = agingClass(item.aging_dias);
-                    return (
-                      <div key={item.sku}>
-                      <div
-                        className="wms-frc-row"
-                        onClick={(e) => {
-                          // ignora clique vindo de botões/inputs internos
-                          const target = e.target as HTMLElement;
-                          if (
-                            target.closest("input") ||
-                            target.closest("button")
-                          )
-                            return;
-                          toggleCheckbox(
-                            f.fornecedor,
-                            item.sku,
-                            idx,
-                            e.shiftKey,
-                            f.itens,
-                          );
-                        }}
-                        style={{ cursor: "pointer" }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {}}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCheckbox(
-                              f.fornecedor,
-                              item.sku,
-                              idx,
-                              (e as unknown as React.MouseEvent).shiftKey,
-                              f.itens,
-                            );
-                          }}
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCheckbox(item.sku)}
+                    />
+
+                    {/* Peça */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
+                      {item.imagem_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.imagem_url}
+                          alt=""
+                          loading="lazy"
+                          className="wms-thumb wms-thumb-sm"
                         />
-                        {item.imagem_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.imagem_url}
-                            alt=""
-                            loading="lazy"
-                            className="wms-thumb wms-thumb-sm"
-                          />
-                        ) : (
-                          <div />
-                        )}
-                        <div style={{ minWidth: 0 }}>
+                      ) : (
+                        <div className="wms-thumb wms-thumb-sm" />
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 14,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {item.descricao}
+                        </div>
+                        <div className="wms-mono wms-td-mute" style={{ fontSize: 11 }}>
+                          {item.sku}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quanto comprar */}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                      <input
+                        className="wms-input wms-mono"
+                        type="number"
+                        min={0}
+                        value={qty}
+                        onChange={(e) => setQtyOverride(item.sku, Number(e.target.value))}
+                        style={{ width: 64, textAlign: "center", fontWeight: 700, fontSize: 16 }}
+                      />
+                      <span className="wms-td-mute" style={{ fontSize: 10, marginTop: 2 }}>
+                        falta {fmtNum(item.quantidade_necessaria)}
+                      </span>
+                    </div>
+
+                    {/* De quem comprar */}
+                    <div style={{ minWidth: 0 }}>
+                      <select
+                        className="wms-select"
+                        value={opc?.nome ?? ""}
+                        onChange={(e) => setFornecedorOverride(item.sku, e.target.value)}
+                        style={{ width: "100%" }}
+                      >
+                        {item.fornecedores.length === 0 && <option value="">Sem fornecedor</option>}
+                        {item.fornecedores.map((f) => (
+                          <option key={f.nome} value={f.nome}>
+                            {f.nome}
+                            {f.custo_unitario != null ? ` — ${fmtBRL(f.custo_unitario)}` : ""}
+                            {f.lead_time_dias_medio != null ? ` · ${f.lead_time_dias_medio}d` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Entregar em — fixo do fornecedor (read-only) */}
+                    <div>
+                      {l.galpaoNome ? (
+                        <span className="wms-pcard-chip is-galpao">{l.galpaoNome}</span>
+                      ) : (
+                        <span
+                          className="wms-aging-chip is-overdue"
+                          title="Fornecedor sem galpão configurado — defina em Fornecedores"
+                        >
+                          sem galpão
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Urgência + expand */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+                      {item.giro_diario > 0 ? (
+                        <span
+                          className="wms-aging-chip"
+                          style={{ color: cob.color, borderColor: cob.color }}
+                          title={
+                            item.dias_cobertura != null
+                              ? `cobertura ${item.dias_cobertura}d · gira ${item.giro_diario.toFixed(1)}/d`
+                              : `gira ${item.giro_diario.toFixed(1)}/d`
+                          }
+                        >
+                          {cob.txt}
+                          {item.dias_cobertura != null ? ` · ${item.dias_cobertura}d` : ""}
+                        </span>
+                      ) : (
+                        <span className={`wms-aging-chip ${itemAg}`}>{item.aging_dias}d</span>
+                      )}
+                      {item.pedidos.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(item.sku)}
+                          style={{
+                            background: "none",
+                            border: 0,
+                            padding: 0,
+                            cursor: "pointer",
+                            color: "var(--wms-c-info)",
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {isExpanded ? "▾" : "▸"} {item.pedidos.length} pedido
+                          {item.pedidos.length === 1 ? "" : "s"}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Kebab de ações por item */}
+                    <ItemKebab
+                      onTrocarSku={() => {
+                        setTrocaSkuAlvo(item);
+                        setTrocaSkuNovo(item.sku);
+                        setTrocaSkuErro(null);
+                      }}
+                      onTrocarFornecedor={() => {
+                        setTrocaFornAlvo(item);
+                        setTrocaFornNome("");
+                      }}
+                      onIndisponivel={() => {
+                        const ids = item.pedidos.map((p) => p.item_id).filter(Boolean);
+                        if (ids.length) setIndispItemIds(ids);
+                      }}
+                      onPropostaCancelamento={() => {
+                        setCancelAlvo(item);
+                        setCancelMotivo("");
+                      }}
+                    />
+                  </div>
+
+                  {/* Expand: pedidos atrás + equivalentes */}
+                  {isExpanded && (
+                    <div style={{ padding: "0 14px 14px 44px" }}>
+                      <div className="wms-td-mute" style={{ fontSize: 11, fontWeight: 600, margin: "2px 0 8px" }}>
+                        Pedidos esperando esta peça
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 1,
+                          background: "var(--wms-c-border)",
+                          borderRadius: "var(--wms-r-2)",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {item.pedidos.map((p) => (
                           <div
-                            className="wms-mono"
-                            style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}
-                          >
-                            {item.sku}
-                            <button
-                              className="wms-btn-icon"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onTrocarSku(item);
-                              }}
-                              title="Trocar SKU"
-                              type="button"
-                            >
-                              <Icon name="edit" size={10} />
-                            </button>
-                            <span
-                              className={`wms-aging-chip ${itemAg}`}
-                              style={{ marginLeft: 4 }}
-                            >
-                              {item.aging_dias}d
-                            </span>
-                          </div>
-                          <div className="wms-pcard-item-desc">
-                            {item.descricao}
-                          </div>
-                          <div
+                            key={p.item_id}
                             style={{
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: 8,
+                              display: "grid",
+                              gridTemplateColumns: "88px 1fr 120px 56px 48px",
+                              gap: 10,
                               alignItems: "center",
-                              fontSize: 11,
-                              marginTop: 3,
+                              background: "var(--wms-c-panel)",
+                              padding: "8px 12px",
+                              fontSize: 12.5,
                             }}
                           >
-                            <span style={{ fontWeight: 600 }}>
-                              precisa {item.quantidade_necessaria}
+                            <span className="wms-mono" style={{ fontWeight: 600, color: "var(--wms-c-info)" }}>
+                              #{p.numero}
                             </span>
-                            <span className="wms-td-mute">
-                              demanda {item.demanda_aberta} · livre {item.estoque_livre} · a
-                              caminho {item.em_transito}
+                            <span className="wms-td-mute">{p.cliente_nome}</span>
+                            <span style={{ fontSize: 11.5 }}>
+                              em <span style={{ fontWeight: 600 }}>{p.galpao_nome ?? "—"}</span>
                             </span>
-                            {item.giro_diario > 0 ? (
-                              <span
-                                style={{ color: coberturaLabel(item.status_cobertura).color }}
-                              >
-                                <span title="giro médio diário de vendas (últimos 30 dias)">
-                                  gira {item.giro_diario.toFixed(1)}/d
-                                </span>
-                                {item.dias_cobertura != null
-                                  ? ` · cobertura ${item.dias_cobertura}d`
-                                  : ""}{" "}
-                                · {coberturaLabel(item.status_cobertura).txt}
-                              </span>
-                            ) : (
-                              <span className="wms-td-mute">sem giro</span>
-                            )}
+                            <span>{fmtNum(p.quantidade)} un</span>
+                            <span className="wms-tar wms-td-mute" style={{ fontSize: 11 }}>
+                              {p.aging_dias}d
+                            </span>
                           </div>
-                          <div
-                            className="wms-td-mute"
-                            style={{ fontSize: 10.5, marginTop: 2 }}
-                          >
-                            {item.pedidos.length} pedido
-                            {item.pedidos.length === 1 ? "" : "s"}:{" "}
-                            {item.pedidos
-                              .slice(0, 3)
-                              .map((p) => `#${p.numero}`)
-                              .join(", ")}
-                            {item.pedidos.length > 3 ? "…" : ""}
-                          </div>
-                          <EquivalentesCompra
-                            sku={item.sku}
-                            itemIds={item.pedidos.map((p) => p.item_id)}
-                            onAplicado={() =>
-                              queryClient.invalidateQueries({
-                                queryKey: ["wms-compras"],
-                              })
-                            }
-                          />
-                        </div>
-                        <div
-                          className="wms-tar wms-mono"
-                          style={{ fontWeight: 600 }}
-                        >
-                          {fmtNum(item.quantidade_necessaria)}
-                        </div>
-                        <input
-                          className="wms-input wms-mono wms-tar"
-                          type="number"
-                          min={0}
-                          max={item.quantidade_necessaria}
-                          value={qty}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) =>
-                            setQtyOverride(itemKey, Number(e.target.value))
-                          }
-                          style={{ width: 80 }}
-                        />
-                        <ItemKebab
-                          onIndisponivel={() => onIndisponivel(item)}
-                          onPropostaCancelamento={() =>
-                            onPropostaCancelamento(item)
-                          }
-                          onTrocarFornecedor={() => onTrocarFornecedor(item)}
-                        />
+                        ))}
                       </div>
-                      </div>
-                    );
-                  })}
+                      <EquivalentesCompra
+                        sku={item.sku}
+                        itemIds={item.pedidos.map((p) => p.item_id)}
+                        onAplicado={() =>
+                          queryClient.invalidateQueries({ queryKey: ["wms-compras"] })
+                        }
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </article>
-          );
-        })
+              );
+            })
+          )}
+        </div>
       )}
 
+      {/* Barra de ação */}
       {selected.size > 0 && (
         <div
           style={{
@@ -1118,7 +1191,6 @@ function TabComprar({
             bottom: 0,
             background: "var(--wms-c-panel)",
             border: "1px solid var(--wms-c-border)",
-            borderTop: "1px solid var(--wms-c-border)",
             padding: "10px 14px",
             display: "flex",
             justifyContent: "space-between",
@@ -1129,159 +1201,113 @@ function TabComprar({
           }}
         >
           <span className="wms-td-mute">
-            {selected.size} ite{selected.size === 1 ? "m" : "ns"} selecionado
-            {selected.size === 1 ? "" : "s"}
+            <b style={{ color: "var(--wms-c-fg)" }}>{selected.size}</b> peça
+            {selected.size === 1 ? "" : "s"} selecionada{selected.size === 1 ? "" : "s"}
           </span>
           <div style={{ display: "flex", gap: 8 }}>
             <button
               className="wms-btn wms-btn-ghost"
+              type="button"
               onClick={() => {
                 setSelected(new Set());
                 setQtyOverrides(new Map());
               }}
-              type="button"
             >
               Limpar
             </button>
             <button
-              className="wms-btn wms-btn-primary"
-              disabled={comprarMut.isPending || !podeExecutar}
-              title={!podeExecutar ? "Sem permissão pra marcar compras" : ""}
-              onClick={onMarcarComprados}
+              className="wms-btn wms-btn-ghost"
               type="button"
+              disabled={indisponivelMut.isPending || !podeExecutar}
+              onClick={onMarcarIndisponivelBulk}
+            >
+              Marcar indisponível
+            </button>
+            <button
+              className="wms-btn wms-btn-primary"
+              type="button"
+              disabled={comprarMut.isPending || !podeExecutar}
+              title={!podeExecutar ? "Sem permissão pra comprar" : ""}
+              onClick={onGerar}
             >
               <Icon name="check" size={11} />
-              {comprarMut.isPending
-                ? "Marcando…"
-                : "Marcar como comprados"}
+              {comprarMut.isPending ? "Gerando…" : "Gerar compra →"}
             </button>
           </div>
         </div>
       )}
 
-      {confirmItens && (
+      {/* Modal de confirmação */}
+      {confirmSel && (
         <Modal
-          title="Confirmar compra"
-          subtitle="Defina o galpão que vai receber e o preço unitário de cada item"
-          onClose={() => setConfirmItens(null)}
+          title={`Confirmar — ${confirmPreview.length} compra${confirmPreview.length === 1 ? "" : "s"}`}
+          subtitle="Agrupadas por fornecedor + galpão. Você não agrupa na mão."
+          onClose={() => setConfirmSel(null)}
         >
-          {/* P3-08: sem a lista de galpões não dá pra escolher destino — mostra
-              o erro e oferece retry em vez de travar o botão sem explicação. */}
-          {galpoesQuery.isError && (
-            <div
-              className="wms-empty-block"
-              style={{ marginBottom: 12, textAlign: "left" }}
-            >
-              <p style={{ color: "var(--wms-c-danger)", fontSize: 12 }}>
-                Não foi possível carregar os galpões.
-              </p>
-              <button
-                className="wms-btn wms-btn-ghost wms-btn-sm"
-                type="button"
-                onClick={() => galpoesQuery.refetch()}
-                disabled={galpoesQuery.isFetching}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {confirmPreview.map((g) => (
+              <div
+                key={`${g.fornecedorNome}::${g.galpaoId}`}
+                style={{
+                  border: "1px solid var(--wms-c-border)",
+                  borderRadius: "var(--wms-r-2)",
+                  padding: "12px 14px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                }}
               >
-                {galpoesQuery.isFetching ? "Tentando…" : "Tentar de novo"}
-              </button>
-            </div>
-          )}
-          <div
-            className="wms-frc-row wms-td-mute"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 56px 140px 110px",
-              gap: 8,
-              fontSize: 10.5,
-              padding: "4px 0",
-            }}
-          >
-            <div>SKU</div>
-            <div className="wms-tar">Qtd</div>
-            <div>Galpão destino</div>
-            <div>Preço unit.</div>
-          </div>
-          {confirmItens.map((c, idx) => (
-            <div
-              key={c.sku}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 56px 140px 110px",
-                gap: 8,
-                alignItems: "center",
-                padding: "6px 0",
-                borderTop: "1px solid var(--wms-c-border)",
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div className="wms-mono" style={{ fontWeight: 600 }}>
-                  {c.sku}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>
+                    {g.fornecedorNome} → {g.galpaoNome}
+                  </div>
+                  <div className="wms-td-mute" style={{ fontSize: 12, marginTop: 2 }}>
+                    {g.itens.map((i) => i.sku).join(", ")}
+                    {g.pedidosCobertos.length > 0
+                      ? ` · destrava ${g.pedidosCobertos.map((n) => `#${n}`).join(" ")}`
+                      : ""}
+                  </div>
                 </div>
-                <div className="wms-pcard-item-desc">{c.descricao}</div>
+                <span
+                  className="wms-mono"
+                  style={{
+                    fontWeight: 600,
+                    background: "var(--wms-c-info-bg)",
+                    color: "var(--wms-c-info)",
+                    padding: "4px 11px",
+                    borderRadius: "var(--wms-r-2)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {fmtNum(g.qtyTotal)} un
+                  {g.custoTotal != null ? ` · ${fmtBRL(g.custoTotal)}` : ""}
+                </span>
               </div>
-              <div className="wms-tar wms-mono">{c.qty}</div>
-              <select
-                className="wms-select"
-                value={c.galpaoId}
-                disabled={galpoesQuery.isLoading || galpoesQuery.isError}
-                onChange={(e) => setConfirmCampo(idx, "galpaoId", e.target.value)}
-              >
-                <option value="">
-                  {galpoesQuery.isLoading
-                    ? "carregando…"
-                    : galpoesQuery.isError
-                      ? "erro ao carregar"
-                      : "selecione…"}
-                </option>
-                {galpoes.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.nome}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="wms-input"
-                type="number"
-                min={0.01}
-                step={0.01}
-                placeholder="R$"
-                value={c.preco}
-                onChange={(e) => setConfirmCampo(idx, "preco", e.target.value)}
-              />
-            </div>
-          ))}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setConfirmItens(null)}
-              type="button"
-            >
-              Cancelar
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
+            <button className="wms-btn wms-btn-ghost" type="button" onClick={() => setConfirmSel(null)}>
+              Voltar
             </button>
             <button
               className="wms-btn wms-btn-primary"
-              disabled={!confirmValido || comprarMut.isPending}
-              title={
-                galpoesQuery.isError
-                  ? "Galpões não carregaram — clique em Tentar de novo acima"
-                  : !confirmValido
-                    ? "Defina galpão e preço de todos os itens"
-                    : ""
-              }
-              onClick={submitCompra}
               type="button"
+              disabled={comprarMut.isPending}
+              onClick={() => comprarMut.mutate(confirmSel)}
             >
               <Icon name="check" size={11} />
-              {comprarMut.isPending ? "Confirmando…" : "Confirmar compra"}
+              {comprarMut.isPending
+                ? "Confirmando…"
+                : `Confirmar ${confirmPreview.length} compra${confirmPreview.length === 1 ? "" : "s"}`}
             </button>
           </div>
         </Modal>
       )}
 
+      {/* Trocar fornecedor (lista completa, persiste) */}
       {trocaFornAlvo && (
-        <Modal
-          title={`Trocar fornecedor — ${trocaFornAlvo.sku}`}
-          onClose={() => setTrocaFornAlvo(null)}
-        >
+        <Modal title={`Trocar fornecedor — ${trocaFornAlvo.sku}`} onClose={() => setTrocaFornAlvo(null)}>
           <Field label="Novo fornecedor">
             <select
               className="wms-select"
@@ -1291,27 +1317,25 @@ function TabComprar({
             >
               <option value="">Escolha um fornecedor…</option>
               {(fornecedoresQuery.data?.rows ?? []).map((f) => (
-                <option key={f.id} value={f.nome}>{f.nome}</option>
+                <option key={f.id} value={f.nome}>
+                  {f.nome}
+                </option>
               ))}
             </select>
           </Field>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setTrocaFornAlvo(null)}
-              type="button"
-            >
+            <button className="wms-btn wms-btn-ghost" type="button" onClick={() => setTrocaFornAlvo(null)}>
               Cancelar
             </button>
             <button
               className="wms-btn wms-btn-primary"
+              type="button"
               disabled={!trocaFornNome || trocarFornecedorMut.isPending}
               onClick={() => {
                 const itemIds = trocaFornAlvo.pedidos.map((p) => p.item_id);
                 if (itemIds.length === 0) return;
                 trocarFornecedorMut.mutate({ itemIds, fornecedor_oc: trocaFornNome });
               }}
-              type="button"
             >
               {trocarFornecedorMut.isPending ? "Salvando…" : "Trocar"}
             </button>
@@ -1319,6 +1343,7 @@ function TabComprar({
         </Modal>
       )}
 
+      {/* Trocar SKU */}
       {trocaSkuAlvo && (
         <Modal
           title={`Trocar SKU — ${trocaSkuAlvo.sku}`}
@@ -1337,20 +1362,15 @@ function TabComprar({
             />
           </Field>
           {trocaSkuErro && (
-            <p style={{ color: "var(--wms-c-danger)", fontSize: 12, marginTop: 6 }}>
-              {trocaSkuErro}
-            </p>
+            <p style={{ color: "var(--wms-c-danger)", fontSize: 12, marginTop: 6 }}>{trocaSkuErro}</p>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setTrocaSkuAlvo(null)}
-              type="button"
-            >
+            <button className="wms-btn wms-btn-ghost" type="button" onClick={() => setTrocaSkuAlvo(null)}>
               Cancelar
             </button>
             <button
               className="wms-btn wms-btn-primary"
+              type="button"
               disabled={
                 !trocaSkuNovo.trim() ||
                 trocaSkuNovo.trim() === trocaSkuAlvo.sku ||
@@ -1358,56 +1378,14 @@ function TabComprar({
                 trocarSkuMut.isPending
               }
               onClick={submitTrocarSku}
-              type="button"
             >
-              {trocaSkuValidando || trocarSkuMut.isPending
-                ? "Trocando…"
-                : "Trocar"}
+              {trocaSkuValidando || trocarSkuMut.isPending ? "Trocando…" : "Trocar"}
             </button>
           </div>
         </Modal>
       )}
 
-      {indisponivelAlvo && (
-        <Modal
-          title="Marcar indisponível"
-          onClose={() => setIndisponivelAlvo(null)}
-        >
-          <p style={{ fontSize: 13 }}>
-            Marcar SKU{" "}
-            <strong className="wms-mono">{indisponivelAlvo.sku}</strong> como
-            indisponível para{" "}
-            {indisponivelAlvo.pedidos.length === 1
-              ? `o pedido #${indisponivelAlvo.pedidos[0]?.numero}`
-              : `os ${indisponivelAlvo.pedidos.length} pedidos vinculados`}
-            ?
-          </p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setIndisponivelAlvo(null)}
-              type="button"
-            >
-              Cancelar
-            </button>
-            <button
-              className="wms-btn wms-btn-danger"
-              disabled={indisponivelMut.isPending}
-              onClick={() => {
-                const itemIds = indisponivelAlvo.pedidos
-                  .map((p) => p.item_id)
-                  .filter((id): id is string => !!id);
-                if (itemIds.length === 0) return;
-                indisponivelMut.mutate(itemIds);
-              }}
-              type="button"
-            >
-              {indisponivelMut.isPending ? "Marcando…" : "Marcar indisponível"}
-            </button>
-          </div>
-        </Modal>
-      )}
-
+      {/* Propor cancelamento */}
       {cancelAlvo && (
         <Modal
           title={`Propor cancelamento — ${cancelAlvo.sku}`}
@@ -1427,15 +1405,12 @@ function TabComprar({
             />
           </Field>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-            <button
-              className="wms-btn wms-btn-ghost"
-              onClick={() => setCancelAlvo(null)}
-              type="button"
-            >
+            <button className="wms-btn wms-btn-ghost" type="button" onClick={() => setCancelAlvo(null)}>
               Cancelar
             </button>
             <button
               className="wms-btn wms-btn-danger"
+              type="button"
               disabled={!cancelMotivo.trim() || cancelamentoMut.isPending}
               onClick={() => {
                 const itemIds = cancelAlvo.pedidos
@@ -1444,9 +1419,31 @@ function TabComprar({
                 if (itemIds.length === 0) return;
                 cancelamentoMut.mutate({ itemIds, motivo: cancelMotivo.trim() });
               }}
-              type="button"
             >
               {cancelamentoMut.isPending ? "Enviando…" : "Propor cancelamento"}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Marcar indisponível */}
+      {indispItemIds && (
+        <Modal title="Marcar indisponível" onClose={() => setIndispItemIds(null)}>
+          <p style={{ fontSize: 13 }}>
+            Marcar {indispItemIds.length} ite{indispItemIds.length === 1 ? "m" : "ns"} como
+            indisponível?
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+            <button className="wms-btn wms-btn-ghost" type="button" onClick={() => setIndispItemIds(null)}>
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-danger"
+              type="button"
+              disabled={indisponivelMut.isPending}
+              onClick={() => indisponivelMut.mutate(indispItemIds)}
+            >
+              {indisponivelMut.isPending ? "Marcando…" : "Marcar indisponível"}
             </button>
           </div>
         </Modal>
@@ -1455,32 +1452,28 @@ function TabComprar({
   );
 }
 
-// Mini popover do kebab. Renderiza o menu via portal no document.body —
-// o card (.wms-frc) tem overflow:hidden, que recortaria um dropdown
-// position:absolute interno (e o z-index não escapa do clip do ancestral).
+// Kebab de ações por item — menu via portal no document.body (o card tem
+// overflow:hidden e recortaria um dropdown absoluto interno).
 function ItemKebab({
+  onTrocarSku,
+  onTrocarFornecedor,
   onIndisponivel,
   onPropostaCancelamento,
-  onTrocarFornecedor,
 }: {
+  onTrocarSku: () => void;
+  onTrocarFornecedor: () => void;
   onIndisponivel: () => void;
   onPropostaCancelamento: () => void;
-  onTrocarFornecedor: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [coords, setCoords] = useState<{
-    top?: number;
-    bottom?: number;
-    right: number;
-  } | null>(null);
+  const [coords, setCoords] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
 
   const abrir = () => {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
     const right = window.innerWidth - r.right;
-    // ~120px de menu; se não cabe abaixo, abre pra cima ancorando no topo do botão
-    if (window.innerHeight - r.bottom < 130) {
+    if (window.innerHeight - r.bottom < 180) {
       setCoords({ bottom: window.innerHeight - r.top + 4, right });
     } else {
       setCoords({ top: r.bottom + 4, right });
@@ -1488,7 +1481,6 @@ function ItemKebab({
     setOpen(true);
   };
 
-  // Fecha em scroll/resize — o menu fixed ficaria deslocado do botão
   useEffect(() => {
     if (!open) return;
     const fechar = () => setOpen(false);
@@ -1500,93 +1492,61 @@ function ItemKebab({
     };
   }, [open]);
 
+  const acao = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
   return (
-    <div style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+    <div style={{ position: "relative" }}>
       <button
         ref={btnRef}
         className="wms-btn-icon"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (open) setOpen(false);
-          else abrir();
-        }}
+        onClick={() => (open ? setOpen(false) : abrir())}
         title="Mais ações"
         type="button"
       >
-        <Icon name="dots" size={11} />
+        <Icon name="dots" size={12} />
       </button>
-      {open && coords &&
+      {open &&
+        coords &&
         createPortal(
-        // wms-root re-aplica os tokens (--wms-c-*) que se perdem ao portalizar
-        // pro body — senão background:var(--wms-c-panel) fica transparente.
-        <div className="wms-root" style={{ display: "contents" }}>
-          <div
-            onClick={() => setOpen(false)}
-            style={{
-              position: "fixed",
-              inset: 0,
-              zIndex: 1000,
-            }}
-          />
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "fixed",
-              top: coords.top,
-              bottom: coords.bottom,
-              right: coords.right,
-              background: "var(--wms-c-panel)",
-              border: "1px solid var(--wms-c-border)",
-              borderRadius: "var(--wms-r-2)",
-              boxShadow: "var(--wms-shadow-sm)",
-              minWidth: 200,
-              zIndex: 1001,
-              padding: 4,
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-            }}
-          >
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              style={{ justifyContent: "flex-start" }}
-              onClick={() => {
-                setOpen(false);
-                onIndisponivel();
+          <div className="wms-root" style={{ display: "contents" }}>
+            <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 1000 }} />
+            <div
+              style={{
+                position: "fixed",
+                top: coords.top,
+                bottom: coords.bottom,
+                right: coords.right,
+                background: "var(--wms-c-panel)",
+                border: "1px solid var(--wms-c-border)",
+                borderRadius: "var(--wms-r-2)",
+                boxShadow: "var(--wms-shadow-sm)",
+                minWidth: 210,
+                zIndex: 1001,
+                padding: 4,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
               }}
-              type="button"
             >
-              <Icon name="x" size={11} />
-              Marcar indisponível
-            </button>
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              style={{ justifyContent: "flex-start" }}
-              onClick={() => {
-                setOpen(false);
-                onPropostaCancelamento();
-              }}
-              type="button"
-            >
-              <Icon name="alert" size={11} />
-              Propor cancelamento
-            </button>
-            <button
-              className="wms-btn wms-btn-ghost wms-btn-sm"
-              style={{ justifyContent: "flex-start" }}
-              onClick={() => {
-                setOpen(false);
-                onTrocarFornecedor();
-              }}
-              type="button"
-            >
-              <Icon name="edit" size={11} />
-              Trocar fornecedor
-            </button>
-          </div>
-        </div>,
-        document.body,
-      )}
+              <button className="wms-btn wms-btn-ghost wms-btn-sm" style={{ justifyContent: "flex-start" }} onClick={acao(onTrocarSku)} type="button">
+                <Icon name="edit" size={11} /> Trocar SKU
+              </button>
+              <button className="wms-btn wms-btn-ghost wms-btn-sm" style={{ justifyContent: "flex-start" }} onClick={acao(onTrocarFornecedor)} type="button">
+                <Icon name="edit" size={11} /> Trocar fornecedor
+              </button>
+              <button className="wms-btn wms-btn-ghost wms-btn-sm" style={{ justifyContent: "flex-start" }} onClick={acao(onIndisponivel)} type="button">
+                <Icon name="x" size={11} /> Marcar indisponível
+              </button>
+              <button className="wms-btn wms-btn-ghost wms-btn-sm" style={{ justifyContent: "flex-start" }} onClick={acao(onPropostaCancelamento)} type="button">
+                <Icon name="alert" size={11} /> Propor cancelamento
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1633,50 +1593,94 @@ function TabReceber({
             )}
           </div>
           <div className="wms-frc-body">
-            {f.documentos.map((d) => (
-              <button
+            {f.documentos.map((d, idx) => (
+              <div
                 key={`${d.origem}-${d.id}`}
-                className="wms-frc-row-doc"
-                style={{ cursor: "pointer", width: "100%", textAlign: "left" }}
-                onClick={() => router.push(d.href)}
-                type="button"
+                style={{
+                  borderBottom:
+                    idx < f.documentos.length - 1
+                      ? "1px solid var(--wms-c-border)"
+                      : undefined,
+                }}
               >
-                <span
-                  className={`wms-badge ${
-                    d.origem === "manual" ? "wms-badge-warn" : "wms-badge-info"
-                  }`}
+                <button
+                  className="wms-frc-row-doc"
+                  style={{
+                    cursor: "pointer",
+                    width: "100%",
+                    textAlign: "left",
+                    borderBottom: 0,
+                  }}
+                  onClick={() => router.push(d.href)}
+                  type="button"
                 >
-                  {d.origem === "manual" ? "Manual" : "OC"}
-                </span>
-                <span>
-                  {d.skus_count} SKU{d.skus_count === 1 ? "" : "s"}
-                  {f.galpao_nome === "Vários galpões" && d.galpao_nome ? (
-                    <span
-                      className="wms-pcard-chip is-galpao"
-                      style={{ marginLeft: 6 }}
-                    >
-                      {d.galpao_nome}
-                    </span>
-                  ) : null}
-                </span>
-                <span>
-                  {fmtNum(d.qty_pendente)} un pendente
-                  {d.qty_pendente === 1 ? "" : "s"}{" "}
                   <span
-                    className="wms-mono wms-td-mute"
-                    style={{ fontSize: 10 }}
+                    className={`wms-badge ${
+                      d.origem === "manual" ? "wms-badge-warn" : "wms-badge-info"
+                    }`}
                   >
-                    {d.id.slice(0, 8)}
+                    {d.origem === "manual" ? "Manual" : "OC"}
                   </span>
-                </span>
-                <span className="wms-tar wms-mono">
-                  {d.custo_total != null ? fmtBRL(d.custo_total) : "—"}
-                </span>
-                <span className="wms-td-mute">
-                  {d.criado_em ? fmtDateTime(d.criado_em) : "—"}
-                </span>
-                <Icon name="chevron-r" />
-              </button>
+                  <span>
+                    {d.skus_count} SKU{d.skus_count === 1 ? "" : "s"}
+                    {f.galpao_nome === "Vários galpões" && d.galpao_nome ? (
+                      <span
+                        className="wms-pcard-chip is-galpao"
+                        style={{ marginLeft: 6 }}
+                      >
+                        {d.galpao_nome}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span>
+                    {fmtNum(d.qty_pendente)} un pendente
+                    {d.qty_pendente === 1 ? "" : "s"}{" "}
+                    <span
+                      className="wms-mono wms-td-mute"
+                      style={{ fontSize: 10 }}
+                    >
+                      {d.id.slice(0, 8)}
+                    </span>
+                  </span>
+                  <span className="wms-tar wms-mono">
+                    {d.custo_total != null ? fmtBRL(d.custo_total) : "—"}
+                  </span>
+                  <span className="wms-td-mute">
+                    {d.criado_em ? fmtDateTime(d.criado_em) : "—"}
+                  </span>
+                  <Icon name="chevron-r" />
+                </button>
+                {d.pedidos_cobertos.length > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      alignItems: "center",
+                      padding: "0 0 9px 60px",
+                    }}
+                  >
+                    <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                      destrava {d.pedidos_cobertos.length} pedido
+                      {d.pedidos_cobertos.length === 1 ? "" : "s"}:
+                    </span>
+                    {d.pedidos_cobertos.slice(0, 8).map((p) => (
+                      <span
+                        key={p.pedido_id}
+                        className="wms-badge wms-badge-ok wms-mono"
+                        style={{ fontSize: 10 }}
+                      >
+                        #{p.numero}
+                      </span>
+                    ))}
+                    {d.pedidos_cobertos.length > 8 && (
+                      <span className="wms-td-mute" style={{ fontSize: 11 }}>
+                        +{d.pedidos_cobertos.length - 8}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </article>

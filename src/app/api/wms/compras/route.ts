@@ -35,6 +35,9 @@ interface PedidoRef {
   quantidade: number;
   aging_dias: number;
   item_id: string;
+  /** galpão atual de separação do pedido (pra UI item-cêntrica + redestinar). */
+  galpao_id: string | null;
+  galpao_nome: string | null;
 }
 
 interface ComprarSkuEntry {
@@ -53,7 +56,8 @@ interface ComprarSkuEntry {
   lead_time_medio: number | null;
   aging_dias: number;
   pedidos: PedidoRef[];
-  /** Opções de fornecedor (cadastro + fallback prefix) pra o comprador escolher. */
+  /** Opções de fornecedor (cadastro + fallback prefix) pra o comprador escolher.
+   *  Cada opção carrega o galpão de recebimento FIXO (do fornecedor). */
   fornecedores: FornecedorOpcao[];
   /** Pré-selecionado (preferencial, ou o 1º). O comprador troca na tela. */
   fornecedor_escolhido: FornecedorOpcao | null;
@@ -377,6 +381,8 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
 
   const rawItems = items as unknown as RawItem[];
   const galpaoByNome = await loadGalpaoMap(supabase);
+  const galpaoNomeById = new Map<string, string>();
+  for (const [nome, id] of galpaoByNome) galpaoNomeById.set(id, nome);
 
   // Demanda residual dos itens AINDA em aguardando_compra (pedida − pega), por SKU.
   const demandaAgPorSkuGalpao = new Map<string, Map<string, number>>();
@@ -422,6 +428,7 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
     group.allPedidoIds.add(item.pedido_id);
     group.oldestAging = Math.max(group.oldestAging, itemAging);
 
+    const pedidoGalpaoId = item.siso_pedidos?.separacao_galpao_id ?? null;
     const pedidoRef: PedidoRef = {
       pedido_id: item.pedido_id,
       numero: item.siso_pedidos?.numero ?? "?",
@@ -429,6 +436,10 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
       quantidade: qtySolicitada,
       aging_dias: getAgingDays(item.siso_pedidos?.criado_em),
       item_id: String(item.id),
+      galpao_id: pedidoGalpaoId,
+      galpao_nome: pedidoGalpaoId
+        ? (galpaoNomeById.get(pedidoGalpaoId) ?? null)
+        : null,
     };
 
     if (!group.skuMap.has(item.sku)) {
@@ -510,6 +521,7 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
       entry.fornecedores = fps?.opcoes ?? [];
       entry.fornecedor_escolhido =
         fps?.opcoes.find((o) => o.preferencial) ?? fps?.opcoes[0] ?? null;
+
       itens.push(entry);
     }
 

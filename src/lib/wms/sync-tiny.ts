@@ -99,6 +99,13 @@ export async function sincronizarProduto(
   // anexo no Tiny). imagem_url = primeira pra manter capa consistente.
   patch.imagens = full.imagens;
   patch.imagem_url = full.imagemUrl;
+  // ── Kit: sincroniza a composição ANTES de resolver eh_kit ──
+  // resolverEhKitSync só marca eh_kit=true se já houver composição cadastrada;
+  // logo a composição precisa ser inserida primeiro — senão um kit novo (órfão)
+  // viria como eh_kit=false e exigiria uma 2ª sync pra convergir.
+  if (full.tipo === "K" && full.kit.length > 0) {
+    await sincronizarComposicaoKit(produtoId, full.kit, mapeamento.empresa_id);
+  }
   // tipo=K vira eh_kit=true só com composição existente (P120) — o trigger
   // wms_kit_exige_componente rejeita kit sem componente.
   patch.eh_kit = await resolverEhKitSync(sb, produtoId, full.tipo);
@@ -137,10 +144,6 @@ export async function sincronizarProduto(
     }
   }
 
-  // ── Kit (apenas se Tiny disser que é tipo=K) ──
-  if (full.tipo === "K" && full.kit.length > 0) {
-    await sincronizarComposicaoKit(produtoId, full.kit, mapeamento.empresa_id);
-  }
 }
 
 /**
@@ -362,4 +365,132 @@ export async function resolverProdutoEfetivoComAutoSync(
   throw new Error(
     `produto não resolvível (sku="${sku || "—"}", tiny=${item.produto_id}, empresa ${empresaId}) — não mapeado em siso_produto_empresas; exige SKU/resolução manual`,
   );
+}
+
+export interface PuxarProdutoTinyResult {
+  encontrado: boolean;
+  produtoId?: string;
+  sku: string;
+  descricao?: string | null;
+  jaExistia?: boolean;
+  empresas?: Array<{ empresaId: string; cnpj: string; tinyProdutoId: number }>;
+  contasComErro?: number;
+}
+
+/**
+ * Consulta + cadastro automático por SKU: busca o SKU em TODAS as contas Tiny
+ * conectadas (`buscarProdutoPorSku`) e, pra cada conta que tem o produto,
+ * garante o catálogo via `ensureProdutoFromTiny` (a 1ª cria + sincroniza; as
+ * demais só registram a ponte tiny→wms da empresa). Botão "Puxar do Tiny" da
+ * página de produtos.
+ *
+ * Não lança quando o SKU não existe em lugar nenhum: retorna `encontrado:false`
+ * pra rota responder 404 com mensagem amigável (erros reais de conexão são
+ * isolados por conta e contados em `contasComErro`).
+ */
+export async function puxarProdutoDoTinyPorSku(
+  skuRaw: string,
+): Promise<PuxarProdutoTinyResult> {
+  const sku = skuRaw.trim();
+  if (!sku) throw new Error("SKU obrigatório");
+  const sb = createServiceClient();
+
+  const { data: existente } = await sb
+    .from("siso_produtos")
+    .select("id, descricao")
+    .eq("sku", sku)
+    .maybeSingle();
+
+  // contas conectadas (conexão ativa + empresa ativa) — mesma regra do polling.
+  const { data: connections, error } = await sb
+    .from("siso_tiny_connections")
+    .select("cnpj, empresa_id")
+    .eq("ativo", true)
+    .not("empresa_id", "is", null)
+    .not("access_token", "is", null);
+  if (error) throw new Error(`Falha listando conexões Tiny: ${error.message}`);
+  const { data: empresasAtivas } = await sb
+    .from("siso_empresas")
+    .select("id")
+    .eq("ativo", true);
+  const ativas = new Set(
+    (empresasAtivas ?? []).map((e) => (e as { id: string }).id),
+  );
+  const conns = (
+    (connections ?? []) as Array<{ cnpj: string; empresa_id: string }>
+  ).filter((c) => ativas.has(c.empresa_id));
+
+  const matches: Array<{
+    empresaId: string;
+    cnpj: string;
+    tinyProdutoId: number;
+    descricao: string | null;
+  }> = [];
+  let contasComErro = 0;
+  for (const conn of conns) {
+    try {
+      const { token } = await getValidTokenByEmpresa(conn.empresa_id);
+      const achado = await runWithEmpresa(conn.empresa_id, () =>
+        buscarProdutoPorSku(token, sku),
+      );
+      if (achado) {
+        matches.push({
+          empresaId: conn.empresa_id,
+          cnpj: conn.cnpj,
+          tinyProdutoId: achado.id,
+          descricao: achado.descricao ?? null,
+        });
+      }
+    } catch (err) {
+      contasComErro++;
+      logger.warn("wms.sync", "busca de SKU no Tiny falhou pra empresa (segue)", {
+        empresaId: conn.empresa_id,
+        sku,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (matches.length === 0) {
+    // Já no catálogo mas não achado agora (ex.: inativo no Tiny / token morto):
+    // não é erro — devolve o existente.
+    if (existente) {
+      return {
+        encontrado: true,
+        produtoId: existente.id,
+        sku,
+        descricao: existente.descricao ?? null,
+        jaExistia: true,
+        empresas: [],
+        contasComErro,
+      };
+    }
+    return { encontrado: false, sku, contasComErro };
+  }
+
+  // 1º match cria + sincroniza; demais só adicionam a ponte da empresa.
+  let produtoId = existente?.id ?? "";
+  for (const m of matches) {
+    produtoId = await ensureProdutoFromTiny(sku, m.empresaId, m.tinyProdutoId);
+  }
+
+  const { data: final } = await sb
+    .from("siso_produtos")
+    .select("descricao")
+    .eq("id", produtoId)
+    .maybeSingle();
+
+  return {
+    encontrado: true,
+    produtoId,
+    sku,
+    descricao: final?.descricao ?? matches[0].descricao,
+    jaExistia: !!existente,
+    empresas: matches.map((m) => ({
+      empresaId: m.empresaId,
+      cnpj: m.cnpj,
+      tinyProdutoId: m.tinyProdutoId,
+    })),
+    contasComErro,
+  };
 }

@@ -9,6 +9,8 @@ import {
   Icon,
   PageHeader,
   Pagination,
+  Modal,
+  Field,
   fmtRelative,
 } from "@/components/wms/ui/wms-ui";
 import { ProdutoDrawer } from "@/components/wms/produto-drawer";
@@ -25,6 +27,8 @@ export default function ProdutosPage() {
   const [tipoFiltro, setTipoFiltro] = useState<TipoFiltro>("todos");
   const [ordem, setOrdem] = useState<OrdemProdutos>("sku_asc");
   const [page, setPage] = useState(1);
+  const [puxarOpen, setPuxarOpen] = useState(false);
+  const [skuInput, setSkuInput] = useState("");
   const PAGE_SIZE = 100;
   const [lightbox, setLightbox] = useState<{
     imagens: string[];
@@ -102,6 +106,37 @@ export default function ProdutosPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const puxar = useMutation({
+    mutationFn: (sku: string) =>
+      wmsApi<{
+        produtoId?: string;
+        sku: string;
+        jaExistia?: boolean;
+        empresas?: unknown[];
+      }>(`/api/wms/produtos/puxar-tiny`, {
+        method: "POST",
+        body: JSON.stringify({ sku }),
+      }),
+    onSuccess: (r) => {
+      const nContas = r.empresas?.length ?? 0;
+      toast.success(
+        r.jaExistia
+          ? `${r.sku} já no catálogo — atualizado do Tiny`
+          : `Cadastrado: ${r.sku}${nContas ? ` (${nContas} conta(s))` : ""}`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["wms-produtos"] });
+      setPuxarOpen(false);
+      setSkuInput("");
+      if (r.produtoId) openDrawer(r.produtoId);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const submitPuxar = () => {
+    const sku = skuInput.trim();
+    if (sku && !puxar.isPending) puxar.mutate(sku);
+  };
+
   const rows = data?.rows ?? [];
   const kitsExtras = data?.kits_por_componente ?? 0;
   const dividerAt = kitsExtras > 0 ? rows.length - kitsExtras : -1;
@@ -113,7 +148,18 @@ export default function ProdutosPage() {
         subtitle={`siso_produtos · sincronizado com Tiny${
           data?.total != null ? ` · ${data.total} registros` : ""
         }`}
-      />
+      >
+        {podeEditar && (
+          <button
+            type="button"
+            className="wms-btn wms-btn-primary"
+            onClick={() => setPuxarOpen(true)}
+            title="Buscar um SKU no Tiny e cadastrar no catálogo"
+          >
+            <Icon name="download" size={13} /> Puxar do Tiny
+          </button>
+        )}
+      </PageHeader>
 
       <div className="wms-toolbar">
         <div className="wms-search-wrap">
@@ -306,6 +352,47 @@ export default function ProdutosPage() {
           descricao={lightbox.descricao}
           onClose={() => setLightbox(null)}
         />
+      )}
+
+      {puxarOpen && (
+        <Modal
+          title="Puxar produto do Tiny"
+          subtitle="Busca o SKU em todas as contas Tiny conectadas e cadastra no catálogo"
+          width={460}
+          onClose={() => setPuxarOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className="wms-btn wms-btn-ghost"
+                onClick={() => setPuxarOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary"
+                disabled={!skuInput.trim() || puxar.isPending}
+                onClick={submitPuxar}
+              >
+                {puxar.isPending ? "Buscando…" : "Buscar e cadastrar"}
+              </button>
+            </>
+          }
+        >
+          <Field label="SKU">
+            <input
+              className="wms-input"
+              autoFocus
+              value={skuInput}
+              onChange={(e) => setSkuInput(e.target.value)}
+              placeholder="ex.: ABC-123"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitPuxar();
+              }}
+            />
+          </Field>
+        </Modal>
       )}
     </>
   );

@@ -5384,6 +5384,20 @@ Força sincronização com Tiny via mapeamento ativo. Atualiza descricao, gtin, 
 
 **Response 200:** `{ ok: true }` ou 500 com erro.
 
+### POST /api/wms/produtos/puxar-tiny
+
+**File:** `src/app/api/wms/produtos/puxar-tiny/route.ts` (lib: `puxarProdutoDoTinyPorSku` em `src/lib/wms/sync-tiny.ts`)
+
+Consulta + cadastro automático por SKU. Busca o SKU em **todas as contas Tiny conectadas** (`buscarProdutoPorSku`) e, pra cada conta que tem o produto, garante o catálogo via `ensureProdutoFromTiny` (a 1ª cria + sincroniza; as demais só registram a ponte tiny→wms). Botão "Puxar do Tiny" da página de produtos.
+
+**Auth:** `requireWarehouseAccess` (mesmo do sync por-linha).
+
+**Request body:** `{ sku }`
+
+**Response 200:** `{ encontrado: true, produtoId, sku, descricao, jaExistia, empresas: [{ empresaId, cnpj, tinyProdutoId }], contasComErro }`
+
+**Erros:** 400 se `sku` ausente · **404** se o SKU não existe em nenhuma conta conectada (mensagem amigável; erros de conexão por conta são isolados e contados em `contasComErro`, não derrubam a busca).
+
 ### POST /api/wms/produtos/sync-by-pedido-item
 
 Resolve o produto físico de um item de pedido cujo produto não foi vinculado no webhook — o pick travava com `não mapeado`. Delega a `resolverProdutoEfetivoComAutoSync` (**SKU-first**): casa `item.sku` no catálogo (`siso_produtos.sku` UNIQUE → 1:1) e, faltando, auto-provisiona do Tiny (por `tiny_produto_id` quando há, senão `buscarProdutoPorSku` na empresa do pedido). Cobre tanto **ponte ausente** (tiny_id válido, ex. #4019) quanto **`produto_id=0` com SKU** (ex. #952573331). NÃO re-roteia o pedido (diferente de `definir-sku`). Backstop manual do auto-sync embutido no pick (`marcar-item`/`validar-oc-item`); botão "Sincronizar do Tiny" no modal Encontrei da separação.

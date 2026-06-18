@@ -5,7 +5,7 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { getSessionUser } from "@/lib/session";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoWmsFlex } from "@/lib/separacao/wms-mapping";
 import { registrarEventos } from "@/lib/historico-service";
 
 /**
@@ -159,9 +159,9 @@ export async function POST(request: NextRequest) {
     let galpoesAlternativos: Array<{ galpao_id: string; galpao_nome: string }> = [];
     if (primeiroAfetado?.empresa_origem_id && produtoIds.length > 0) {
       try {
-        const produtoWmsId = await resolverProdutoWms(
+        const produtoWmsId = await resolverProdutoWmsFlex(
           primeiroAfetado.empresa_origem_id as string,
-          String(produtoIds[0]),
+          { tinyProdutoId: produtoIds[0], sku },
         );
         const alt = await galpoesComSaldo(produtoWmsId);
         galpoesAlternativos = alt

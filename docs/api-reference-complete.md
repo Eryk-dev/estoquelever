@@ -593,7 +593,7 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/pedidos/[id]/itens/[itemId]/definir-sku/route.ts` (2026-06-14)
 
-**Purpose:** Resolve um item que veio do Tiny SEM vínculo de produto (`siso_pedido_itens.produto_id=0` — ex. anúncio sem produto, "VERIFICAR LADO"). O operador informa o SKU; o endpoint vincula o produto WMS, corrige o `payload_original` e REPROCESSA o pedido nativo (roteamento + reservas + fila) via `processWebhookWms`. Pedidos com item id=0 ficam parqueados como `pendente` com marcador `REQUER_SKU` até isso acontecer.
+**Purpose:** Resolve um item que veio do Tiny SEM vínculo de produto (`siso_pedido_itens.produto_id=0` — ex. anúncio sem produto, "VERIFICAR LADO") **e cujo SKU não está no catálogo WMS**. O operador informa o SKU; o endpoint vincula o produto WMS, corrige o `payload_original` e REPROCESSA o pedido nativo (roteamento + reservas + fila) via `processWebhookWms`. **Nota (2026-06-18):** desde a resolução SKU-first centralizada (`resolverProdutoWmsFlex`: substituto → tiny bridge → `siso_produtos.sku` UNIQUE), item id=0 cujo SKU **já existe** no catálogo resolve automático no webhook/aprovar (roteia/reserva normal) — só fica parqueado `pendente`+`REQUER_SKU` quando o SKU **não** casa no catálogo (produto inexistente, ex. precisa cadastro). Este endpoint segue valendo pra esse caso e pra forçar um SKU específico.
 
 **Auth:** X-Session-Id (required) + `userCan(session, "pedidos.aprovar")`
 

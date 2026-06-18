@@ -137,7 +137,29 @@ async function resolverItensWms(
     }
   }
 
-  const produtoIds = Array.from(wmsByTinyId.values());
+  // SKU-first fallback: itens sem vínculo Tiny (produto.id=0) ou cuja empresa
+  // não tem bridge resolvem direto pelo SKU no catálogo unificado
+  // (siso_produtos.sku UNIQUE global). Cobre venda cross-catálogo no ML (ex.
+  // NetParts vendendo SKU cadastrado só na NetAir) sem depender do tiny_id.
+  const skusSemTiny = Array.from(
+    new Set(
+      pedido.itens
+        .filter((it) => !wmsByTinyId.has(it.produto.id) && it.produto.sku)
+        .map((it) => it.produto.sku),
+    ),
+  );
+  const wmsBySku = new Map<string, string>();
+  if (skusSemTiny.length > 0) {
+    const { data: porSku } = await sb
+      .from("siso_produtos")
+      .select("id, sku")
+      .in("sku", skusSemTiny);
+    for (const p of porSku ?? []) wmsBySku.set(p.sku, p.id);
+  }
+
+  const produtoIds = Array.from(
+    new Set([...wmsByTinyId.values(), ...wmsBySku.values()]),
+  );
   const { data: produtos } = await sb
     .from("siso_produtos")
     .select("id, sku, descricao, gtin, imagem_url, eh_kit")
@@ -146,7 +168,9 @@ async function resolverItensWms(
   const produtoById = new Map(produtos?.map((p) => [p.id, p]) ?? []);
 
   const resolvidos: ResolvedItem[] = pedido.itens.map((item) => {
-    const produtoIdWms = wmsByTinyId.get(item.produto.id) ?? null;
+    const produtoIdWms =
+      wmsByTinyId.get(item.produto.id) ??
+      (item.produto.sku ? wmsBySku.get(item.produto.sku) ?? null : null);
     const produto = produtoIdWms ? produtoById.get(produtoIdWms) : null;
     return {
       tinyProdutoId: item.produto.id,
@@ -494,18 +518,14 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     });
   }
 
-  // 1b. Itens com produto_id=0 (sem vínculo de produto no Tiny — ex. anúncio
-  //     sem produto, "VERIFICAR LADO"): não dá pra resolver nem auto-provisionar.
-  //     O pedido é PARQUEADO como pendente (sem auto-OC, sem reservas, sem job)
-  //     com marcador REQUER_SKU até um operador definir o SKU na aba de pedidos
-  //     (POST .../itens/[itemId]/definir-sku → reprocessa nativo).
-  const requerSku = itensResolvidos.some((i) => i.tinyProdutoId === 0);
-  if (requerSku) {
-    logger.warn("processor.wms", "pedido com item sem produto vinculado (id 0) — exige SKU manual", {
-      pedidoId: pedido.id,
-      skus: itensResolvidos.filter((i) => i.tinyProdutoId === 0).map((i) => i.sku),
-    });
-  }
+  // 1b. Itens que NÃO resolveram pra produto WMS (nem por tiny bridge, nem por
+  //     SKU no catálogo unificado): não dá pra rotear/reservar. O pedido é
+  //     PARQUEADO como pendente (sem auto-OC, sem reservas, sem job) com marcador
+  //     REQUER_SKU até um operador definir o SKU / cadastrar o produto na aba de
+  //     pedidos (POST .../itens/[itemId]/definir-sku → reprocessa nativo).
+  //     Item com produto_id=0 que CASA por SKU (siso_produtos.sku UNIQUE) já
+  //     resolveu em resolverItensWms e segue o fluxo normal — não cai aqui.
+  const requerSku = semMapeamento.length > 0;
 
   // 3. Roteamento via algoritmo WMS
   const itensPraRotear = itensResolvidos
@@ -609,7 +629,8 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // requerSku bloqueia qualquer auto-aprovação: o pedido fica pendente até o SKU
   // ser definido. O motivo exibido prioriza a pendência de SKU.
   if (requerSku) {
-    motivo = "Item sem produto vinculado (id 0) — defina o SKU na aba de pedidos";
+    motivo =
+      "Item sem produto resolvível (SKU não cadastrado no WMS) — defina o SKU ou cadastre o produto na aba de pedidos";
   }
   const isAuto = sugestao === "propria" && !requerSku;
   const autoEnfileiraOc = sugestao === "oc" && !requerSku;

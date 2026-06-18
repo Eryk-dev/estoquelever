@@ -5,22 +5,81 @@ import { locsBloqueadasSet } from "@/lib/wms/loc-locks";
 
 export interface MappingDeps {
   buscarProdutoId: (empresaId: string, tinyProdutoId: string) => Promise<string | null>;
+  /** Resolve uuid WMS direto pelo SKU (siso_produtos.sku é UNIQUE global). */
+  buscarProdutoIdPorSku: (sku: string) => Promise<string | null>;
   buscarLocalizacaoId: (galpaoId: string, codigo: string) => Promise<string | null>;
   criarLocalizacao: (galpaoId: string, codigo: string) => Promise<string | null>;
 }
 
+/** Pistas pra resolver o produto FÍSICO de um item, em ordem de prioridade. */
+export interface ProdutoRef {
+  tinyProdutoId?: string | number | null;
+  sku?: string | null;
+  substitutoId?: string | null;
+}
+
+/**
+ * Resolve o uuid do produto WMS por qualquer pista disponível, em ordem:
+ *   1. `substitutoId` — troca de equivalência (uuid físico direto).
+ *   2. tiny bridge `(empresa, tiny_produto_id)` — caminho normal, rápido.
+ *   3. SKU → `siso_produtos.sku` (UNIQUE global) — fallback p/ itens sem vínculo
+ *      Tiny (`produto_id=0`) ou empresa sem bridge (venda cross-catálogo no ML,
+ *      ex. NetParts vendendo SKU cadastrado só na NetAir).
+ *
+ * O SKU é resolvido SEM filtro de empresa de propósito: o catálogo WMS é
+ * unificado (`siso_produtos`) e o estoque é fungível por `(produto, galpão,
+ * loc)` — a empresa é só TAG fiscal (modelo 3D), o tiny_produto_id é a camada
+ * fiscal/marketplace e não importa pro estoque.
+ *
+ * Tiny vem ANTES do SKU pra não regredir o caminho normal (id>0 com bridge):
+ * o SKU só age quando o tiny falha (id=0 ou sem bridge).
+ */
+export async function resolverProdutoWmsFlex(
+  empresaId: string,
+  ref: ProdutoRef,
+  deps: MappingDeps = defaultDeps(),
+): Promise<string> {
+  if (ref.substitutoId) return ref.substitutoId;
+
+  const tiny = ref.tinyProdutoId != null ? String(ref.tinyProdutoId).trim() : "";
+  if (tiny && Number(tiny) > 0) {
+    const byTiny = await deps.buscarProdutoId(empresaId, tiny);
+    if (byTiny) return byTiny;
+  }
+
+  const sku = ref.sku?.trim();
+  if (sku) {
+    const bySku = await deps.buscarProdutoIdPorSku(sku);
+    if (bySku) return bySku;
+  }
+
+  throw new Error(
+    `produto não resolvível (tiny=${tiny || "—"}, sku=${sku || "—"}, empresa ${empresaId}): ` +
+      `não mapeado em siso_produto_empresas nem encontrado por SKU em siso_produtos`,
+  );
+}
+
+/** SKU → uuid WMS (UNIQUE global). null se o SKU não existir no catálogo. */
+export async function resolverProdutoWmsPorSku(
+  sku: string | null | undefined,
+  deps: MappingDeps = defaultDeps(),
+): Promise<string | null> {
+  const s = sku?.trim();
+  if (!s) return null;
+  return deps.buscarProdutoIdPorSku(s);
+}
+
+/**
+ * Resolve produto WMS só por tiny_produto_id (sem fallback SKU). Mantido como
+ * primitivo de compat; prefira `resolverProdutoEfetivoDoItem` (tem o item com
+ * SKU) ou `resolverProdutoWmsFlex` (passa a pista que tiver).
+ */
 export async function resolverProdutoWms(
   empresaId: string,
   tinyProdutoId: string,
   deps: MappingDeps = defaultDeps(),
 ): Promise<string> {
-  const id = await deps.buscarProdutoId(empresaId, tinyProdutoId);
-  if (!id) {
-    throw new Error(
-      `produto Tiny ${tinyProdutoId} (empresa ${empresaId}) não mapeado em siso_produto_empresas`,
-    );
-  }
-  return id;
+  return resolverProdutoWmsFlex(empresaId, { tinyProdutoId }, deps);
 }
 
 /**
@@ -37,12 +96,20 @@ export async function resolverProdutoEfetivoDoItem(
   empresaId: string,
   item: {
     produto_id: number | string;
+    sku?: string | null;
     produto_wms_substituto_id?: string | null;
   },
   deps: MappingDeps = defaultDeps(),
 ): Promise<string> {
-  if (item.produto_wms_substituto_id) return item.produto_wms_substituto_id;
-  return resolverProdutoWms(empresaId, String(item.produto_id), deps);
+  return resolverProdutoWmsFlex(
+    empresaId,
+    {
+      tinyProdutoId: item.produto_id,
+      sku: item.sku,
+      substitutoId: item.produto_wms_substituto_id,
+    },
+    deps,
+  );
 }
 
 export async function resolverLocalizacaoWms(
@@ -174,6 +241,15 @@ function defaultDeps(): MappingDeps {
         .eq("tiny_produto_id", Number(tinyProdutoId))
         .maybeSingle();
       return data?.produto_id ?? null;
+    },
+    buscarProdutoIdPorSku: async (sku) => {
+      const supabase = createServiceClient();
+      const { data } = await supabase
+        .from("siso_produtos")
+        .select("id")
+        .eq("sku", sku)
+        .maybeSingle();
+      return data?.id ?? null;
     },
     buscarLocalizacaoId: async (galpaoId, codigo) => {
       const supabase = createServiceClient();

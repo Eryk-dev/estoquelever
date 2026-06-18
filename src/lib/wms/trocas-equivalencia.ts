@@ -27,7 +27,7 @@ import { registrarEvento } from "@/lib/historico-service";
 import { inserirMovimentacao } from "./ledger";
 import { estornarReservaIndividual } from "./reservas";
 import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoWmsFlex } from "@/lib/separacao/wms-mapping";
 import {
   regraTroca,
   type ParVerificacao,
@@ -278,12 +278,13 @@ export async function solicitarTroca(
     );
   }
 
-  // 3. Produto vendido (uuid WMS via bridge tiny — gotcha #1)
+  // 3. Produto vendido (uuid WMS — SKU-first: tiny → SKU). Substituto não entra:
+  //    aqui é o produto ORIGINAL vendido (a troca ainda não foi aplicada).
   let produtoVendidoId: string;
   try {
-    produtoVendidoId = await resolverProdutoWms(
+    produtoVendidoId = await resolverProdutoWmsFlex(
       pedido.empresa_origem_id as string,
-      String(item.produto_id),
+      { tinyProdutoId: item.produto_id, sku: item.sku },
     );
   } catch {
     throw new TrocaError(

@@ -42,7 +42,7 @@ import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { getFornecedorBySku } from "./sku-fornecedor";
 import { executarEstoquePosNfWms } from "./execution-worker-wms";
 import { dispararCutoverSePronto } from "./wms/cutover";
-import { resolverProdutoWms } from "./separacao/wms-mapping";
+import { resolverProdutoEfetivoDoItem } from "./separacao/wms-mapping";
 import { backoffManutencao } from "./wms/jobs-manutencao";
 
 // ─── Shared: enrich NF data + transition if already authorized ──────────────
@@ -565,21 +565,25 @@ async function resolveCompraItemIds(
   // estale siso_pedido_item_estoques. O snapshot congelava o saldo do momento do
   // webhook; quando outro pedido consumia ou a loc zerava, a decisão de OC saía
   // errada → loop (pedido 937933727). Resolve produto WMS por (empresa,
-  // tiny_produto_id) e soma disponível ao longo de todos os galpões.
-  const tinyIds = [...new Set(items.map((i) => String(i.produto_id)))];
-  const produtoWmsByTiny = new Map<string, string>();
-  for (const tinyId of tinyIds) {
-    try {
-      const wms = await resolverProdutoWms(empresaOrigemId, tinyId);
-      produtoWmsByTiny.set(tinyId, wms);
-    } catch {
-      // Sem mapeamento em siso_produto_empresas → trata como disponível 0
-      // (compra a qty integral). Não bloqueia o fluxo de compra.
-    }
-  }
+  // tiny_produto_id) e soma disponível ao longo de todos os galpões. SKU-first
+  // (substituto → tiny → SKU): poolar por uuid WMS cobre item id=0 que casa por
+  // SKU e linhas repetidas do mesmo produto físico.
+  const wmsPorItem = new Map<string, string>();
+  await Promise.all(
+    items.map(async (item) => {
+      try {
+        wmsPorItem.set(
+          String(item.id),
+          await resolverProdutoEfetivoDoItem(empresaOrigemId, item),
+        );
+      } catch {
+        // não resolvível → sem cobertura → compra a qty integral
+      }
+    }),
+  );
 
   const disponivelPorWms = new Map<string, number>();
-  const wmsIds = [...new Set(produtoWmsByTiny.values())];
+  const wmsIds = [...new Set(wmsPorItem.values())];
   if (wmsIds.length > 0) {
     const { data: estoqueVivo, error: estoqueError } = await supabase
       .from("siso_estoque")
@@ -605,29 +609,26 @@ async function resolveCompraItemIds(
     }
   }
 
-  // Reindexa disponível por tiny_produto_id (chave usada na alocação abaixo).
-  const disponivelPorProduto = new Map<string, number>();
-  for (const [tinyId, wms] of produtoWmsByTiny) {
-    disponivelPorProduto.set(tinyId, disponivelPorWms.get(wms) ?? 0);
-  }
-
   // Allocate the available stock across repeated products before deciding the
-  // missing quantity to buy for each order line.
+  // missing quantity to buy for each order line. Pool por uuid WMS (produto
+  // físico) — linhas repetidas do mesmo produto dividem o mesmo saldo.
   const demandas: Array<{ id: string; quantidadeSolicitada: number; sku: string }> = [];
 
   for (const item of [...items].sort((a, b) =>
     String(a.id).localeCompare(String(b.id)),
   )) {
     const quantidadePedida = Number(item.quantidade_pedida ?? 0);
-    const produtoId = String(item.produto_id);
-    const disponivelAtual = Math.max(disponivelPorProduto.get(produtoId) ?? 0, 0);
+    const wms = wmsPorItem.get(String(item.id));
+    const disponivelAtual = wms ? Math.max(disponivelPorWms.get(wms) ?? 0, 0) : 0;
     const quantidadeCoberta = Math.min(disponivelAtual, quantidadePedida);
     const quantidadeFaltante = Math.max(quantidadePedida - quantidadeCoberta, 0);
 
-    disponivelPorProduto.set(
-      produtoId,
-      Math.max(disponivelAtual - quantidadePedida, 0),
-    );
+    if (wms) {
+      disponivelPorWms.set(
+        wms,
+        Math.max(disponivelAtual - quantidadePedida, 0),
+      );
+    }
 
     if (quantidadeFaltante > 0) {
       demandas.push({

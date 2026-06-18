@@ -6,7 +6,7 @@ import {
   liberarReservaPicking,
 } from "@/lib/wms/reservas-picking";
 import {
-  resolverProdutoWms,
+  resolverProdutoWmsFlex,
   resolverLocalizacaoWms,
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
@@ -81,7 +81,7 @@ interface ReservaResolvida {
 }
 
 export interface PickMovDeps {
-  resolverProdutoWms: (empresaId: string, tinyId: string) => Promise<string>;
+  resolverProdutoWms: (empresaId: string, tinyId: string, sku?: string | null) => Promise<string>;
   resolverLocalizacaoWms: (galpaoId: string, codigo: string | null) => Promise<string>;
   buscarLocComMaiorSaldoNoGalpao: (galpaoId: string, produtoUuid: string) => Promise<string | null>;
   /** Resolve a R viva do pedido por (produto, galpão) — a loc vem dela. */
@@ -105,7 +105,8 @@ export interface PickMovDeps {
 function defaultDeps(): PickMovDeps {
   const sb = createServiceClient();
   return {
-    resolverProdutoWms,
+    resolverProdutoWms: (empresaId, tinyId, sku) =>
+      resolverProdutoWmsFlex(empresaId, { tinyProdutoId: tinyId, sku }),
     resolverLocalizacaoWms,
     buscarLocComMaiorSaldoNoGalpao,
     buscarReservaPorProduto: async ({ pedido_id, produto_id, galpao_id }) => {
@@ -140,7 +141,7 @@ export async function pickMovPicking(
 
   const produtoWmsId =
     input.produto_wms_substituto_id ??
-    (await deps.resolverProdutoWms(input.empresa_origem_id, input.produto_id_tiny));
+    (await deps.resolverProdutoWms(input.empresa_origem_id, input.produto_id_tiny, input.sku));
 
   // Loc do pick vem da R VIVA do pedido (posição reservada por aprovar). Sem R,
   // cai pra loc com maior saldo vivo → DEFAULT-PICKING.

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   resolverProdutoWms,
+  resolverProdutoWmsFlex,
+  resolverProdutoWmsPorSku,
+  resolverProdutoEfetivoDoItem,
   resolverLocalizacaoWms,
   resolveSeparacaoGalpao,
   type MappingDeps,
@@ -9,6 +12,7 @@ import {
 function makeDeps(overrides: Partial<MappingDeps> = {}): MappingDeps {
   return {
     buscarProdutoId: vi.fn(async () => "uuid-prod-1"),
+    buscarProdutoIdPorSku: vi.fn(async () => "uuid-por-sku"),
     buscarLocalizacaoId: vi.fn(async () => "uuid-loc-1"),
     criarLocalizacao: vi.fn(async () => "uuid-loc-novo"),
     ...overrides,
@@ -28,6 +32,80 @@ describe("resolverProdutoWms", () => {
     await expect(resolverProdutoWms("emp-1", "99999", deps)).rejects.toThrow(
       /produto.*99999.*não mapeado/i,
     );
+  });
+});
+
+describe("resolverProdutoWmsFlex (SKU-first fallback)", () => {
+  it("prioriza substituto (troca) sobre tiny e SKU", async () => {
+    const deps = makeDeps();
+    const r = await resolverProdutoWmsFlex(
+      "emp-1",
+      { tinyProdutoId: "123", sku: "MK0244", substitutoId: "uuid-substituto" },
+      deps,
+    );
+    expect(r).toBe("uuid-substituto");
+    expect(deps.buscarProdutoId).not.toHaveBeenCalled();
+    expect(deps.buscarProdutoIdPorSku).not.toHaveBeenCalled();
+  });
+
+  it("usa tiny bridge quando id>0 resolve (não cai pro SKU)", async () => {
+    const deps = makeDeps();
+    const r = await resolverProdutoWmsFlex(
+      "emp-1",
+      { tinyProdutoId: "123", sku: "MK0244" },
+      deps,
+    );
+    expect(r).toBe("uuid-prod-1");
+    expect(deps.buscarProdutoIdPorSku).not.toHaveBeenCalled();
+  });
+
+  it("cai pro SKU quando tiny=0 (item sem vínculo Tiny)", async () => {
+    const deps = makeDeps();
+    const r = await resolverProdutoWmsFlex(
+      "emp-1",
+      { tinyProdutoId: 0, sku: "MK0244" },
+      deps,
+    );
+    expect(r).toBe("uuid-por-sku");
+    expect(deps.buscarProdutoId).not.toHaveBeenCalled();
+    expect(deps.buscarProdutoIdPorSku).toHaveBeenCalledWith("MK0244");
+  });
+
+  it("cai pro SKU quando tiny>0 não tem bridge (venda cross-catálogo)", async () => {
+    const deps = makeDeps({ buscarProdutoId: vi.fn(async () => null) });
+    const r = await resolverProdutoWmsFlex(
+      "emp-1",
+      { tinyProdutoId: "123", sku: "MK0244" },
+      deps,
+    );
+    expect(r).toBe("uuid-por-sku");
+  });
+
+  it("lança quando nem tiny nem SKU resolvem", async () => {
+    const deps = makeDeps({
+      buscarProdutoId: vi.fn(async () => null),
+      buscarProdutoIdPorSku: vi.fn(async () => null),
+    });
+    await expect(
+      resolverProdutoWmsFlex("emp-1", { tinyProdutoId: 0, sku: "X" }, deps),
+    ).rejects.toThrow(/não mapeado em siso_produto_empresas/i);
+  });
+
+  it("resolverProdutoWmsPorSku retorna null pra sku vazio sem consultar", async () => {
+    const deps = makeDeps();
+    expect(await resolverProdutoWmsPorSku("", deps)).toBeNull();
+    expect(await resolverProdutoWmsPorSku(null, deps)).toBeNull();
+    expect(deps.buscarProdutoIdPorSku).not.toHaveBeenCalled();
+  });
+
+  it("resolverProdutoEfetivoDoItem resolve item id=0 pelo SKU", async () => {
+    const deps = makeDeps();
+    const r = await resolverProdutoEfetivoDoItem(
+      "emp-1",
+      { produto_id: 0, sku: "MK0244" },
+      deps,
+    );
+    expect(r).toBe("uuid-por-sku");
   });
 });
 

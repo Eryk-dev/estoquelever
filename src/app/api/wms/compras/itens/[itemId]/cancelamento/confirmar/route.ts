@@ -7,7 +7,7 @@ import { checkAndCancelPedidoIfAllTerminal } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoWmsFlex } from "@/lib/separacao/wms-mapping";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -23,6 +23,7 @@ async function liberarReservasDoProdutoDoItem(
   args: {
     pedido_id: string;
     tiny_produto_id: string;
+    sku?: string | null;
     empresa_origem_id: string | null;
     usuario_id: string;
     source: string;
@@ -36,7 +37,10 @@ async function liberarReservasDoProdutoDoItem(
   }
   let produtoWmsId: string;
   try {
-    produtoWmsId = await resolverProdutoWms(args.empresa_origem_id, args.tiny_produto_id);
+    produtoWmsId = await resolverProdutoWmsFlex(args.empresa_origem_id, {
+      tinyProdutoId: args.tiny_produto_id,
+      sku: args.sku,
+    });
   } catch (e) {
     logger.warn(args.source, "produto não resolvível — não libera reserva (conservador)", {
       pedido_id: args.pedido_id,
@@ -172,6 +176,7 @@ export async function POST(
       const liberadas = await liberarReservasDoProdutoDoItem(supabase, {
         pedido_id: String(item.pedido_id),
         tiny_produto_id: String(item.produto_id),
+        sku: item.sku,
         empresa_origem_id: (pedidoR?.empresa_origem_id as string | null) ?? null,
         usuario_id: session.id,
         source: "compras-cancelamento-confirmar",

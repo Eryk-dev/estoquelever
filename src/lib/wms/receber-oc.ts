@@ -3,7 +3,7 @@ import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { logger } from "@/lib/logger";
 import { registrarEvento } from "@/lib/historico-service";
 import { resolverLocRecebimento, criarPendencia } from "@/lib/wms/guarda";
-import { resolverProdutoWms } from "@/lib/separacao/wms-mapping";
+import { resolverProdutoWmsFlex } from "@/lib/separacao/wms-mapping";
 import { detectarCrossDock } from "@/lib/wms/crossdock-detector";
 import { resolverCustoEntrada } from "./custo-fallback";
 import { checkAndReleasePedidos } from "@/lib/compras-release";
@@ -197,13 +197,13 @@ export async function receberItensViaOC(
       continue;
     }
 
-    // Resolve produto WMS uuid via empresa da OC (tiny_produto_id → uuid)
+    // Resolve produto WMS uuid via empresa da OC (SKU-first: tiny → SKU)
     let produtoWmsId: string;
     try {
-      produtoWmsId = await resolverProdutoWms(
-        String(oc.empresa_id),
-        String(item.produto_id),
-      );
+      produtoWmsId = await resolverProdutoWmsFlex(String(oc.empresa_id), {
+        tinyProdutoId: item.produto_id,
+        sku: item.sku,
+      });
     } catch (mapErr) {
       throw new Error(
         `falha ao resolver produto WMS do item ${item.id} (sku ${item.sku}): ${mapErr instanceof Error ? mapErr.message : String(mapErr)}`,

@@ -3565,6 +3565,35 @@ erros:
       - src/lib/wms/sync-tiny.ts
     tags: [kit, trigger, invariante, sync-tiny]
 
+  - id: wms-kit-orfao-encontrei-500-mascarado
+    date: "2026-06-18"
+    source: wms.separacao.validar-oc-item
+    category: business_logic
+    message: "\"Encontrei\" de item kit-órfão (eh_kit=true, BOM vazio) estourava 500 falhou_contagem_inline no handheld"
+    cause: >
+      O guard wms-kit-sem-componente (2026-06-05) só preveniu órfãos NOVOS; ~122
+      kits legados (eh_kit=true, 0 linhas em siso_produto_kits) sobraram — ex.
+      KLL013 "Par Lampada Farol H4", KP028 "KIT PALHETA 20+18". Kit não tem saldo
+      próprio → pedido roteia pra OC. No "Encontrei", registrarContagemInline faz
+      mov E (ganho) na contagem inline → trigger trg_check_mov_nao_kit_entrada
+      rejeita ("Produto X é um kit — entradas/reservas devem ser feitas nos
+      componentes"). O catch de validar-oc-item só tratava /abaixo do reservado/
+      → caía no 500 genérico falhou_contagem_inline (toast inútil pro operador).
+    fix: >
+      validar-oc-item: novo branch no catch detecta /é um kit/ e retorna 422
+      produto_kit com mensagem acionável (definir composição do kit OU desmarcar
+      "é kit" se vendido como unidade). NÃO resolve o dado — os 122 kits órfãos
+      ainda exigem decisão de cadastro (BOM vs unflag) por SKU. Erro real só foi
+      visível via siso_erros (stack mascarado pelo 500); diagnosticar pela tabela.
+    files:
+      - src/app/api/wms/separacao/validar-oc-item/route.ts
+    tags: [kit, kit-orfao, contagem-inline, encontrei, oc, validar-oc-item, erro-mascarado, 500, trigger, trg_check_mov_nao_kit_entrada, dado-legado]
+    notes: >
+      Caso real staging: pedido 1046361694, item 4280 (KLL013), NetAir.
+      Sintoma do usuário: foto do modal "Encontrei: KLL013" + toast
+      falhou_contagem_inline. Pendente: limpeza dos 122 kits órfãos (eh_kit=true
+      AND NOT EXISTS em siso_produto_kits).
+
   - id: wms-recebimento-nf-dobra-saldo
     date: "2026-06-05"
     source: wms.ledger / wms.movimentacoes.receber
@@ -6142,3 +6171,51 @@ erros:
       distintos — evita ruído). currentColor resolve o caso .is-active.is-danger
       (fundo vermelho sólido) que era o pior. Layout escolhido pelo Eryk: "físico
       grande + R·D ao lado".
+
+  - id: reserva-falhou-produto-id-zero-resolucao-sku-first
+    date: "2026-06-18"
+    source: wms (resolução item→produto WMS — webhook/aprovar/worker/pick/receber/trocas/compras)
+    category: business_logic
+    message: >
+      venda no ML com item produto_id=0 (Tiny não vinculou o anúncio a um produto)
+      ou empresa vendendo SKU cadastrado só em OUTRA empresa (cross-catálogo, ex.
+      NetParts vendendo SKU da NetAir) → pedido parqueado pendente/oc e Aprovar
+      retornava 409 reserva_falhou motivo=mapeamento_ausente, MESMO com saldo
+      físico na prateleira (ex. #84206 MK0244 com 5 em CWB).
+    cause: >
+      Toda resolução item→produto WMS passava SÓ por resolverProdutoWms(empresa,
+      tiny_produto_id) contra siso_produto_empresas. Com produto_id=0 (ou empresa
+      sem bridge) a ponte Tiny falhava e NÃO havia fallback por SKU — embora
+      siso_produtos.sku seja UNIQUE global e o estoque seja fungível por (produto,
+      galpão, loc) no 3D (empresa é só TAG fiscal). webhook-processor-wms parqueava
+      o pedido (requerSku) quando tinyProdutoId===0.
+    fix: >
+      Resolução SKU-first centralizada em wms-mapping: resolverProdutoWmsFlex
+      (substituto → tiny bridge → SKU em siso_produtos) + resolverProdutoWmsPorSku
+      + dep buscarProdutoIdPorSku. resolverProdutoWms e resolverProdutoEfetivoDoItem
+      delegam pro flex (este SKU-aware via item.sku). Migrados TODOS os callers:
+      webhook (resolverItensWms resolve id=0 por SKU; requerSku virou !produtoIdWms),
+      aprovar (reservas + cobertura OC + roteamento transferência, keyed por item.id),
+      execution-worker (cobertura OC poolada por uuid WMS), receber-oc,
+      trocas-equivalencia, produto-esgotado, compras equivalente/cancelamento,
+      pick-mov (dep SKU-aware). Tiny vem ANTES do SKU → zero regressão no caminho
+      normal id>0; SKU só age quando o tiny falha.
+    files:
+      - src/lib/separacao/wms-mapping.ts
+      - src/lib/webhook-processor-wms.ts
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/lib/execution-worker.ts
+      - src/lib/wms/receber-oc.ts
+      - src/lib/wms/trocas-equivalencia.ts
+      - src/app/api/wms/separacao/produto-esgotado/route.ts
+      - src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts
+      - src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts
+      - src/lib/wms/separacao/pick-mov.ts
+    tags: [wms, reserva, reserva_falhou, mapeamento_ausente, produto_id_zero, sku, sku-first, resolverProdutoWmsFlex, cross-catalogo, ml, tiny, siso_produto_empresas, siso_produtos, 3d, fungivel, webhook, aprovar, roteamento]
+    notes: >
+      Casos reais staging: #84206 (NetParts/MK0244) e #83420 (NetParts/MK0241) —
+      maçanetas Cerato com saldo em CWB, SKU cadastrado só na NetAir. #51704
+      (EasyPeasy/"Iphone 6s plus") NÃO resolve — produto inexistente no catálogo WMS
+      (segue parqueado, correto: exige cadastro). resolverProdutoEfetivoComAutoSync
+      (sync-tiny, path do marcar-item) já era SKU-first; mantido. produto_id do item
+      fica intocado (fiscal), físico via SKU — mesmo princípio da troca (D3).

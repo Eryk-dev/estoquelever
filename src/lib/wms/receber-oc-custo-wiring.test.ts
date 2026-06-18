@@ -16,7 +16,10 @@ vi.mock("@/lib/wms/guarda", () => ({
   resolverLocRecebimento: vi.fn(async () => ({ id: "loc-receb" })),
   criarPendencia: vi.fn(async () => "pend-1"),
 }));
-vi.mock("@/lib/separacao/wms-mapping", () => ({ resolverProdutoWms: vi.fn(async () => "prod-uuid") }));
+vi.mock("@/lib/separacao/wms-mapping", () => ({
+  resolverProdutoWms: vi.fn(async () => "prod-uuid"),
+  resolverProdutoWmsFlex: vi.fn(async () => "prod-uuid"),
+}));
 // split sem cross-dock: toda a qty vira guarda normal (1 pendência).
 vi.mock("@/lib/wms/crossdock-detector", () => ({
   detectarCrossDock: vi.fn(async () => ({

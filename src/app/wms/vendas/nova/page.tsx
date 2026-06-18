@@ -382,19 +382,9 @@ function NovaVendaBody() {
 
       {/* Itens — overflow visible pra não clipar dropdown do ProdutoCombo */}
       <section className="wms-card" style={{ padding: 14, overflow: "visible" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 10,
-          }}
-        >
-          <strong style={{ fontSize: 13 }}>Itens</strong>
-          <button className="wms-btn-link" onClick={addItem} type="button">
-            <Icon name="plus" size={11} /> Adicionar item
-          </button>
-        </div>
+        <strong style={{ fontSize: 13, display: "block", marginBottom: 10 }}>
+          Itens
+        </strong>
 
         <div style={{ display: "grid", gap: 10 }}>
           {items.map((item, idx) => {
@@ -518,6 +508,17 @@ function NovaVendaBody() {
             );
           })}
         </div>
+
+        {/* Botão fica embaixo da lista pra seguir o crescimento — o operador
+            não precisa mais subir até o topo a cada SKU adicionado. */}
+        <button
+          className="wms-btn"
+          onClick={addItem}
+          type="button"
+          style={{ width: "100%", marginTop: 10 }}
+        >
+          <Icon name="plus" size={11} /> Adicionar item
+        </button>
       </section>
 
       {/* Footer */}

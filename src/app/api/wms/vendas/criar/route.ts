@@ -118,6 +118,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Dedupe por produto_id somando a qty. O índice único
+  // idx_siso_pedido_itens_pedido_produto (pedido_id, produto_id) rejeita duas
+  // linhas do mesmo produto no mesmo pedido — o operador pode ter adicionado o
+  // mesmo SKU em linhas separadas. Junta numa só (1 row/produto) ANTES de
+  // resolver disponibilidade, pra reserva/baixa/insert verem qty consolidada.
+  const itemsDeduped = Array.from(
+    items
+      .reduce((acc, it) => {
+        const prev = acc.get(it.produto_id);
+        acc.set(it.produto_id, {
+          produto_id: it.produto_id,
+          quantidade: (prev?.quantidade ?? 0) + it.quantidade,
+        });
+        return acc;
+      }, new Map<string, { produto_id: string; quantidade: number }>())
+      .values(),
+  );
+
   const supabase = createServiceClient();
 
   // ─── Vendedor efetivo (em nome de) ──────────────────────────────────────
@@ -190,7 +208,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Resolve mapping produto_wms → tiny_produto_id (necessário pra siso_pedido_itens.produto_id)
-  const produtoIds = items.map((i) => i.produto_id);
+  const produtoIds = itemsDeduped.map((i) => i.produto_id);
   const { data: mapeamentos, error: mapErr } = await supabase
     .from("siso_produto_empresas")
     .select("produto_id, tiny_produto_id")
@@ -259,7 +277,7 @@ export async function POST(request: NextRequest) {
     | { ok: false; error: ResolverError };
 
   const resolvedResults: ResolvedResult[] = await Promise.all(
-    items.map(async (item): Promise<ResolvedResult> => {
+    itemsDeduped.map(async (item): Promise<ResolvedResult> => {
       const prod = prodMap.get(item.produto_id);
       const tinyId = mapMap.get(item.produto_id);
       if (!prod) {

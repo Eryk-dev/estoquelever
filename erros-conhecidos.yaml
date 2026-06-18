@@ -6257,3 +6257,33 @@ erros:
       Componente sem SKU resolvível (nem no payload nem no detalhe Tiny) segue
       pulado com warn — sem regressão. Estoque não é tocado (3D continua por
       componente). Verificar ao vivo puxando um SKU de kit real.
+
+  - id: wms-venda-direta-sku-duplicado-insert
+    date: "2026-06-18"
+    source: wms.vendas.criar
+    category: database
+    message: "Venda direta com mesmo SKU em duas linhas → 'Falha ao inserir itens' (genérico no toast)"
+    cause: >
+      A página /wms/vendas/nova permite adicionar o mesmo produto em linhas
+      separadas (cada ItemForm carrega seu próprio produto). O payload ia com dois
+      items de mesmo produto_id; o backend mapeava ambos pro mesmo tiny_produto_id
+      e o insert em bloco em siso_pedido_itens violava o índice único
+      idx_siso_pedido_itens_pedido_produto (pedido_id, produto_id). Erro do Postgres
+      virava 500 com detalhe, mas o toast do front só mostrava "Falha ao inserir
+      itens" (genérico). Caso real: UTL001 e FRM006 repetidos.
+    fix: >
+      Backend (vendas/criar): dedupe dos items por produto_id somando a quantidade
+      ANTES de resolver disponibilidade — 1 row por produto, consistente com o
+      índice único. Reserva, baixa direta, detecção de falta de saldo e o insert
+      passam a ver a qty consolidada. Frontend (vendas/nova): botão "Adicionar item"
+      movido pro fim da lista (era fixo no topo) — segue o crescimento, operador não
+      sobe a cada SKU.
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+      - src/app/wms/vendas/nova/page.tsx
+    tags: [wms, vendas, venda-direta, sku-duplicado, insert, unique-index, siso_pedido_itens, idx_siso_pedido_itens_pedido_produto, toast-generico, ux]
+    notes: >
+      Dedupe = soma de qty (semântica correta: o índice só admite 1 linha por
+      produto/pedido). Se a qty somada exceder o disponível, degrada pra separação
+      como antes. Erros de typecheck restantes são em .test.ts pré-existentes,
+      não relacionados.

@@ -3,6 +3,7 @@ import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { findOrCreateOcAberta } from "@/lib/compras-oc";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
 import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
@@ -295,6 +296,20 @@ export async function POST(request: NextRequest) {
               return NextResponse.json(
                 { error: "contagem_bloqueada_reserva", message: contMsg },
                 { status: 409 },
+              );
+            }
+            // Produto cadastrado como kit (eh_kit=true): kit não tem saldo
+            // próprio — o trigger trg_check_mov_nao_kit_entrada rejeita a mov de
+            // reconciliação. Surfar como 422 acionável em vez do 500 genérico
+            // (operador não consegue contar/separar a peça enquanto o cadastro
+            // estiver assim).
+            if (/é um kit/i.test(contMsg)) {
+              return NextResponse.json(
+                {
+                  error: "produto_kit",
+                  message: `${primeiro.sku} está cadastrado como kit — não dá pra contar/separar a peça direto. Ajuste o cadastro: defina a composição (componentes) do kit ou, se for vendido como unidade única, desmarque "é kit".`,
+                },
+                { status: 422 },
               );
             }
             return NextResponse.json(
@@ -1217,49 +1232,15 @@ async function linkItemToOC(
 
     const galpaoId = empresa?.galpao_id ?? null;
 
-    // Look for existing draft OC by fornecedor + galpao
-    let existingOCQuery = supabase
-      .from("siso_ordens_compra")
-      .select("id")
-      .eq("fornecedor", fornecedor)
-      .eq("status", "aguardando_compra")
-      .limit(1);
-
-    if (galpaoId) {
-      existingOCQuery = existingOCQuery.eq("galpao_id", galpaoId);
-    } else {
-      existingOCQuery = existingOCQuery.eq("empresa_id", empresaId);
-    }
-
-    const { data: existingOC } = await existingOCQuery.maybeSingle();
-
-    let ordemCompraId: string | null = null;
-
-    if (existingOC) {
-      ordemCompraId = existingOC.id;
-    } else {
-      const { data: newOC, error: ocError } = await supabase
-        .from("siso_ordens_compra")
-        .insert({
-          fornecedor,
-          galpao_id: galpaoId,
-          empresa_id: empresaId,
-          status: "aguardando_compra",
-          observacao: `Criada automaticamente — validação OC SKU ${item.sku}`,
-        })
-        .select("id")
-        .single();
-
-      if (ocError) {
-        logger.warn("validar-oc-item", "Erro ao criar OC automática", {
-          error: ocError.message,
-          fornecedor,
-          empresaId,
-        });
-        return;
-      }
-      ordemCompraId = newOC.id;
-    }
+    // Find-or-create da OC unificado + race-safe (@/lib/compras-oc). Galpão segue
+    // resolvido como antes (siso_empresas.galpao_id) — melhorar p/ separacao_galpao_id
+    // do pedido é follow-up (não muda comportamento aqui).
+    const ordemCompraId = await findOrCreateOcAberta(supabase, {
+      fornecedor,
+      galpaoId,
+      empresaId,
+      observacao: `Criada automaticamente — validação OC SKU ${item.sku}`,
+    });
 
     if (ordemCompraId) {
       await supabase

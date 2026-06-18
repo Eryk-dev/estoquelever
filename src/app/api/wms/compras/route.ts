@@ -8,7 +8,12 @@ import {
   getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
-import { calcularNecessidadeLiquida, piorStatusCobertura } from "@/lib/compras-necessidade";
+import { piorStatusCobertura } from "@/lib/compras-necessidade";
+import { calcularNecessidadeSkuPorGalpao } from "@/lib/compras-sourcing";
+import {
+  listarFornecedoresPorSkus,
+  type FornecedorOpcao,
+} from "@/lib/wms/fornecedores-sku";
 import type { StatusCobertura } from "@/lib/wms/cobertura";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { userCan, userCanAny } from "@/lib/permissions";
@@ -48,6 +53,10 @@ interface ComprarSkuEntry {
   lead_time_medio: number | null;
   aging_dias: number;
   pedidos: PedidoRef[];
+  /** Opções de fornecedor (cadastro + fallback prefix) pra o comprador escolher. */
+  fornecedores: FornecedorOpcao[];
+  /** Pré-selecionado (preferencial, ou o 1º). O comprador troca na tela. */
+  fornecedor_escolhido: FornecedorOpcao | null;
 }
 
 interface FornecedorComprarGroup {
@@ -97,6 +106,7 @@ interface RawItem {
     numero: string;
     cliente_nome: string;
     criado_em: string;
+    separacao_galpao_id: string | null;
   } | null;
 }
 
@@ -229,13 +239,19 @@ async function fetchCounts(supabase: SupabaseClient) {
 // ─── Contexto vivo por SKU (necessidade líquida) ──────────────────────────────
 
 interface ContextoSku {
-  demandaComprado: number; // Σ(pedida − pega) dos itens já 'comprado' (ainda precisam do SKU)
-  emTransito: number; // Σ max(0, solicitada − recebida) dos itens 'comprado'
-  estoqueLivre: number; // Σ siso_estoque.disponivel (ao vivo) do produto
+  /** Σ siso_estoque.disponivel (ao vivo) do produto, GLOBAL — só pra cobertura. */
+  estoqueLivreTotal: number;
+  /** Por galpão de destino: demanda 'comprado' + estoque livre + em-trânsito.
+   *  Netar por galpão (e não global) evita que uma OC chegando em CWB zere a
+   *  necessidade de SP. */
+  porGalpao: Map<string, { demandaComprado: number; livre: number; transito: number }>;
   giroDiario: number;
   statusCobertura: StatusCobertura;
   leadTimeMedio: number | null;
 }
+
+/** Chave de galpão pra demanda/estoque sem galpão de separação definido. */
+const SEM_GALPAO = "__sem_galpao__";
 
 /**
  * Carrega, por SKU, os números VIVOS usados pra calcular a necessidade líquida:
@@ -251,9 +267,8 @@ async function carregarContextoNecessidade(
   const ctx = new Map<string, ContextoSku>();
   for (const sku of skus) {
     ctx.set(sku, {
-      demandaComprado: 0,
-      emTransito: 0,
-      estoqueLivre: 0,
+      estoqueLivreTotal: 0,
+      porGalpao: new Map(),
       giroDiario: 0,
       statusCobertura: "sem_giro",
       leadTimeMedio: null,
@@ -261,11 +276,20 @@ async function carregarContextoNecessidade(
   }
   if (skus.length === 0) return ctx;
 
-  // 1) Itens já COMPRADOS (a caminho): contam como demanda E como em-trânsito.
+  const bucket = (c: ContextoSku, g: string) => {
+    let b = c.porGalpao.get(g);
+    if (!b) {
+      b = { demandaComprado: 0, livre: 0, transito: 0 };
+      c.porGalpao.set(g, b);
+    }
+    return b;
+  };
+
+  // 1) Itens já COMPRADOS (a caminho): demanda + em-trânsito POR GALPÃO de destino.
   const { data: comprados } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "sku, quantidade_pedida, quantidade_pega, compra_quantidade_solicitada, compra_quantidade_recebida, compra_status",
+      "sku, quantidade_pedida, quantidade_pega, compra_quantidade_solicitada, compra_quantidade_recebida, compra_status, siso_pedidos(separacao_galpao_id)",
     )
     .eq("compra_status", "comprado")
     .in("sku", skus);
@@ -273,15 +297,18 @@ async function carregarContextoNecessidade(
   for (const it of comprados ?? []) {
     const c = ctx.get(it.sku as string);
     if (!c) continue;
-    const residual = Math.max(
+    const ped = it.siso_pedidos as unknown as {
+      separacao_galpao_id: string | null;
+    } | null;
+    const b = bucket(c, ped?.separacao_galpao_id ?? SEM_GALPAO);
+    b.demandaComprado += Math.max(
       0,
       Number(it.quantidade_pedida ?? 0) - Number(it.quantidade_pega ?? 0),
     );
-    c.demandaComprado += residual;
-    c.emTransito += Math.max(0, getCompraQuantidadeRestante(it));
+    b.transito += Math.max(0, getCompraQuantidadeRestante(it));
   }
 
-  // 2) Estoque livre AO VIVO por SKU: sku → siso_produtos.id → Σ siso_estoque.disponivel.
+  // 2) Estoque livre AO VIVO por (SKU, GALPÃO): sku → siso_produtos.id → siso_estoque.
   const { data: produtos } = await supabase
     .from("siso_produtos")
     .select("id, sku")
@@ -297,14 +324,17 @@ async function carregarContextoNecessidade(
   if (uuids.length > 0) {
     const { data: saldos } = await supabase
       .from("siso_estoque")
-      .select("produto_id, disponivel")
+      .select("produto_id, galpao_id, disponivel")
       .in("produto_id", uuids);
 
     for (const s of saldos ?? []) {
       const sku = skuPorUuid.get(s.produto_id as string);
       if (!sku) continue;
       const c = ctx.get(sku);
-      if (c) c.estoqueLivre += Number(s.disponivel ?? 0);
+      if (!c) continue;
+      const livre = Number(s.disponivel ?? 0);
+      c.estoqueLivreTotal += livre;
+      bucket(c, (s.galpao_id as string) ?? SEM_GALPAO).livre += livre;
     }
   }
 
@@ -338,7 +368,7 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
   const { data: items, error } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, sku, descricao, quantidade_pedida, quantidade_pega, compra_status, compra_quantidade_solicitada, compra_solicitada_em, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero, cliente_nome, criado_em)",
+      "id, sku, descricao, quantidade_pedida, quantidade_pega, compra_status, compra_quantidade_solicitada, compra_solicitada_em, fornecedor_oc, imagem_url, pedido_id, siso_pedidos(numero, cliente_nome, criado_em, separacao_galpao_id)",
     )
     .eq("compra_status", "aguardando_compra");
 
@@ -349,7 +379,7 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
   const galpaoByNome = await loadGalpaoMap(supabase);
 
   // Demanda residual dos itens AINDA em aguardando_compra (pedida − pega), por SKU.
-  const demandaAgPorSku = new Map<string, number>();
+  const demandaAgPorSkuGalpao = new Map<string, Map<string, number>>();
   const todosSkus = new Set<string>();
 
   const fornecedorMap = new Map<
@@ -375,7 +405,10 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
       0,
       Number(item.quantidade_pedida ?? 0) - Number(item.quantidade_pega ?? 0),
     );
-    demandaAgPorSku.set(item.sku, (demandaAgPorSku.get(item.sku) ?? 0) + residualAg);
+    const galpaoAg = item.siso_pedidos?.separacao_galpao_id ?? SEM_GALPAO;
+    const dPorG = demandaAgPorSkuGalpao.get(item.sku) ?? new Map<string, number>();
+    dPorG.set(galpaoAg, (dPorG.get(galpaoAg) ?? 0) + residualAg);
+    demandaAgPorSkuGalpao.set(item.sku, dPorG);
 
     if (!fornecedorMap.has(fornecedor)) {
       fornecedorMap.set(fornecedor, {
@@ -414,6 +447,8 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
           lead_time_medio: null,
           aging_dias: 0,
           pedidos: [],
+          fornecedores: [],
+          fornecedor_escolhido: null,
         },
         pedidoIds: new Set(),
       });
@@ -427,6 +462,7 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
   }
 
   const ctx = await carregarContextoNecessidade(supabase, [...todosSkus]);
+  const fornecedoresPorSku = await listarFornecedoresPorSkus([...todosSkus]);
 
   const result: FornecedorComprarGroup[] = [];
 
@@ -436,22 +472,44 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
     for (const [, { entry }] of group.skuMap) {
       entry.pedidos.sort((a, b) => b.aging_dias - a.aging_dias);
       const c = ctx.get(entry.sku);
-      const demandaAberta =
-        (demandaAgPorSku.get(entry.sku) ?? 0) + (c?.demandaComprado ?? 0);
-      const res = calcularNecessidadeLiquida({
-        demandaAberta,
-        estoqueLivre: c?.estoqueLivre ?? 0,
-        emTransito: c?.emTransito ?? 0,
+
+      // Necessidade netada POR GALPÃO (G3): junta demanda aguardando + comprado
+      // de cada galpão, neta contra o livre + trânsito daquele galpão, e soma.
+      const demGalpoes = new Set<string>(
+        demandaAgPorSkuGalpao.get(entry.sku)?.keys() ?? [],
+      );
+      for (const [g, b] of c?.porGalpao ?? []) {
+        if (b.demandaComprado > 0) demGalpoes.add(g);
+      }
+      const rows = [...demGalpoes].map((g) => {
+        const b = c?.porGalpao.get(g);
+        return {
+          galpaoId: g,
+          demanda:
+            (demandaAgPorSkuGalpao.get(entry.sku)?.get(g) ?? 0) +
+            (b?.demandaComprado ?? 0),
+          livre: b?.livre ?? 0,
+          transito: b?.transito ?? 0,
+        };
       });
-      entry.quantidade_necessaria = res.necessidadeLiquida;
-      entry.demanda_aberta = res.demandaAberta;
-      entry.estoque_livre = res.estoqueLivre;
-      entry.em_transito = res.emTransito;
+      const nec = calcularNecessidadeSkuPorGalpao(rows);
+
+      entry.quantidade_necessaria = nec.total;
+      entry.demanda_aberta = rows.reduce((soma, r) => soma + r.demanda, 0);
+      entry.estoque_livre = rows.reduce((soma, r) => soma + r.livre, 0);
+      entry.em_transito = rows.reduce((soma, r) => soma + r.transito, 0);
       entry.giro_diario = c?.giroDiario ?? 0;
       entry.dias_cobertura =
-        c && c.giroDiario > 0 ? Math.round(c.estoqueLivre / c.giroDiario) : null;
+        c && c.giroDiario > 0
+          ? Math.round(c.estoqueLivreTotal / c.giroDiario)
+          : null;
       entry.status_cobertura = c?.statusCobertura ?? "sem_giro";
       entry.lead_time_medio = c?.leadTimeMedio ?? null;
+
+      const fps = fornecedoresPorSku.get(entry.sku);
+      entry.fornecedores = fps?.opcoes ?? [];
+      entry.fornecedor_escolhido =
+        fps?.opcoes.find((o) => o.preferencial) ?? fps?.opcoes[0] ?? null;
       itens.push(entry);
     }
 
@@ -507,6 +565,7 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
 
   const ocIds = (ocs ?? []).map((o) => String(o.id));
   const pendenteByOC = new Map<string, number>();
+  const pedidosByOC = new Map<string, Map<string, string>>(); // ocId → pedido_id → numero
   const skusByDoc = new Map<string, number>();
   if (ocIds.length > 0) {
     // Só itens efetivamente comprados contam pendência: uma OC draft pode ter
@@ -514,13 +573,22 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
     // aparecer como "a receber". Itens 'recebido' contribuem 0 de toda forma.
     const { data: itens } = await supabase
       .from("siso_pedido_itens")
-      .select("ordem_compra_id, sku, compra_quantidade_solicitada, compra_quantidade_recebida")
+      .select(
+        "ordem_compra_id, sku, compra_quantidade_solicitada, compra_quantidade_recebida, pedido_id, siso_pedidos(numero)",
+      )
       .in("ordem_compra_id", ocIds)
       .eq("compra_status", "comprado");
     const skusPendentes = new Map<string, Set<string>>();
     for (const it of itens ?? []) {
       const ocId = String(it.ordem_compra_id ?? "");
       if (!ocId) continue;
+      const pedidoId = String(it.pedido_id ?? "");
+      if (pedidoId) {
+        if (!pedidosByOC.has(ocId)) pedidosByOC.set(ocId, new Map());
+        pedidosByOC
+          .get(ocId)!
+          .set(pedidoId, (it.siso_pedidos as { numero?: string } | null)?.numero ?? "?");
+      }
       const pend =
         Number(it.compra_quantidade_solicitada ?? 0) -
         Number(it.compra_quantidade_recebida ?? 0);
@@ -540,6 +608,9 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
       galpao_nome: (oc.siso_galpoes as { nome?: string } | null)?.nome ?? null,
       qty_pendente: pendenteByOC.get(String(oc.id)) ?? 0,
       criado_em: (oc.created_at as string | null) ?? null,
+      pedidos_cobertos: [
+        ...(pedidosByOC.get(String(oc.id)) ?? new Map<string, string>()),
+      ].map(([pedido_id, numero]) => ({ pedido_id, numero })),
     }))
     .filter((d) => d.qty_pendente > 0);
 

@@ -77,6 +77,8 @@ function buildSb() {
                   sku: "X",
                   compra_quantidade_solicitada: 5,
                   compra_quantidade_recebida: 0,
+                  pedido_id: "ped1",
+                  siso_pedidos: { numero: "1001" },
                 },
               ],
               error: null,
@@ -116,5 +118,18 @@ describe("GET /api/wms/compras?tab=receber (unificado por documento)", () => {
     expect(delphi).toBeTruthy();
     const origens = delphi.documentos.map((d: { origem: string }) => d.origem).sort();
     expect(origens).toEqual(["manual", "oc"]);
+  });
+
+  it("doc de OC carrega os pedidos que destrava (pegging); manual vem vazio", async () => {
+    const req = new Request("http://x/api/wms/compras?tab=receber") as never;
+    const res = await GET(req);
+    const json = await res.json();
+    const delphi = json.fornecedores.find(
+      (f: { fornecedor: string }) => f.fornecedor === "Delphi",
+    );
+    const ocDoc = delphi.documentos.find((d: { origem: string }) => d.origem === "oc");
+    expect(ocDoc.pedidos_cobertos).toEqual([{ pedido_id: "ped1", numero: "1001" }]);
+    const manualDoc = delphi.documentos.find((d: { origem: string }) => d.origem === "manual");
+    expect(manualDoc.pedidos_cobertos).toEqual([]);
   });
 });

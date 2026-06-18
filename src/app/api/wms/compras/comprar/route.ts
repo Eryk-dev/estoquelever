@@ -5,6 +5,7 @@ import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { registrarEventos } from "@/lib/historico-service";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { findOrCreateOcAberta } from "@/lib/compras-oc";
 
 /**
  * POST /api/compras/comprar
@@ -189,11 +190,11 @@ export async function POST(request: NextRequest) {
           galpaoId = await resolverGalpaoPreferencial(empresaOrigemId);
         }
 
-        const ocId = await findOrCreateOC(supabase, {
+        const ocId = await findOrCreateOcAberta(supabase, {
           fornecedor,
           galpaoId,
           empresaId: empresaOrigemId,
-          sku,
+          observacao: `Criada por /compras/comprar — SKU ${sku}`,
         });
         if (!firstOcId && ocId) firstOcId = ocId;
         if (ocId) ocIdsTocadas.add(ocId);
@@ -394,61 +395,5 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ─── Helper: find or create OC (defense-in-depth para finding #3.2) ──────
-// Mesmo que `validar-oc-item` já faça find-or-create, /compras/comprar
-// precisa garantir vínculo — senão compras-release nunca acha a OC e o
-// pedido fica preso.
-async function findOrCreateOC(
-  supabase: ReturnType<typeof createServiceClient>,
-  args: { fornecedor: string; galpaoId: string | null; empresaId: string | null; sku: string },
-): Promise<string | null> {
-  const { fornecedor, galpaoId, empresaId, sku } = args;
-  if (!fornecedor) return null;
-
-  let query = supabase
-    .from("siso_ordens_compra")
-    .select("id")
-    .eq("fornecedor", fornecedor)
-    .eq("status", "aguardando_compra")
-    .limit(1);
-  if (galpaoId) query = query.eq("galpao_id", galpaoId);
-  else if (empresaId) query = query.eq("empresa_id", empresaId);
-
-  const { data: existing } = await query.maybeSingle();
-  if (existing) return existing.id as string;
-
-  const { data: created, error } = await supabase
-    .from("siso_ordens_compra")
-    .insert({
-      fornecedor,
-      galpao_id: galpaoId,
-      empresa_id: empresaId,
-      status: "aguardando_compra",
-      observacao: `Criada por /compras/comprar — SKU ${sku}`,
-    })
-    .select("id")
-    .single();
-  if (error) {
-    // P3-06: corrida — outra request criou a OC aberta (fornecedor, galpao)
-    // entre o SELECT e o INSERT. O índice único uq_oc_aberta_fornecedor_galpao
-    // dispara 23505; re-seleciona e reusa a OC existente em vez de falhar.
-    if (error.code === "23505") {
-      let reQuery = supabase
-        .from("siso_ordens_compra")
-        .select("id")
-        .eq("fornecedor", fornecedor)
-        .eq("status", "aguardando_compra")
-        .limit(1);
-      if (galpaoId) reQuery = reQuery.eq("galpao_id", galpaoId);
-      else if (empresaId) reQuery = reQuery.eq("empresa_id", empresaId);
-      const { data: vencedora } = await reQuery.maybeSingle();
-      if (vencedora) return vencedora.id as string;
-    }
-    logger.warn("compras-comprar", "Erro criando OC", {
-      error: error.message,
-      fornecedor,
-    });
-    return null;
-  }
-  return created.id as string;
-}
+// Criação de OC unificada em `findOrCreateOcAberta` (@/lib/compras-oc) — race-safe,
+// compartilhada com /api/wms/separacao/validar-oc-item.

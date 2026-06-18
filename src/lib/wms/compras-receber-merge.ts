@@ -4,6 +4,8 @@ export interface OcDoc {
   galpao_nome: string | null;
   qty_pendente: number;
   criado_em: string | null;
+  /** Pedidos que esta OC destrava quando recebida (pegging). */
+  pedidos_cobertos: { pedido_id: string; numero: string }[];
 }
 
 export interface ManualDoc {
@@ -28,6 +30,8 @@ export interface ReceberDoc {
   galpao_nome: string | null;
   /** rota da page rica de recebimento */
   href: string;
+  /** pedidos que o documento destrava (só OC; manual vem vazio). */
+  pedidos_cobertos: { pedido_id: string; numero: string }[];
 }
 
 export interface ReceberFornecedorGrupo {
@@ -66,6 +70,7 @@ export function mergeReceberDocs(
       custo_total: null,
       galpao_nome: oc.galpao_nome,
       href: `/wms/receber/oc/${oc.id}`,
+      pedidos_cobertos: oc.pedidos_cobertos,
     });
   }
   for (const m of manuais) {
@@ -77,6 +82,7 @@ export function mergeReceberDocs(
       custo_total: m.custo_total,
       galpao_nome: m.galpao_nome,
       href: `/wms/receber/manual/${m.id}`,
+      pedidos_cobertos: [],
     });
   }
 

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compras item-cêntrico — Fluxo em diagramas</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#2563eb;
+    --feliz:#16a34a; --feliz-bg:#dcfce7;
+    --borda:#d97706; --borda-bg:#fef3c7;
+    --erro:#dc2626;  --erro-bg:#fee2e2;
+    --div:#a21caf;   --div-bg:#fae8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);line-height:1.5;padding:48px 24px 96px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  header.top p{margin:0;color:var(--muted);font-size:15px}
+  .legenda{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:22px 0 40px;
+    padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    font-size:13px;color:var(--muted)}
+  .legenda b{color:var(--ink);font-weight:600;margin-right:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;border:1.5px solid}
+  .dot.feliz{background:var(--feliz-bg);border-color:var(--feliz)}
+  .dot.borda{background:var(--borda-bg);border-color:var(--borda)}
+  .dot.erro{background:var(--erro-bg);border-color:var(--erro)}
+  .dot.dec{background:#dbeafe;border-color:var(--accent)}
+  .dot.div{background:var(--div-bg);border-color:var(--div);border-style:dashed}
+  section.diag{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 18px;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  section.diag>h2{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 2px}
+  section.diag.is-div>h2{color:var(--div)}
+  section.diag>.cap{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .mermaid{display:flex;justify-content:center;min-height:60px}
+  .mermaid svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Compras por peça — escolher de quem comprar e pra onde entregar</h1>
+    <p>Como a lista de compras vai funcionar: 1 linha por peça, o comprador escolhe o fornecedor e o galpão que recebe — e isso já manda o pedido pro galpão certo.</p>
+  </header>
+
+  <div class="legenda">
+    <b>Legenda:</b>
+    <span class="chip"><span class="dot feliz"></span> caminho feliz</span>
+    <span class="chip"><span class="dot borda"></span> borda (acontece, tratável)</span>
+    <span class="chip"><span class="dot erro"></span> erro (precisa de atenção)</span>
+    <span class="chip"><span class="dot dec"></span> decisão</span>
+    <span class="chip"><span class="dot div"></span> ⚠ como é hoje (limitação)</span>
+  </div>
+
+  <!-- 1. MAPA DO FLUXO -->
+  <section class="diag">
+    <h2>Mapa do fluxo</h2>
+    <p class="cap">Da peça que falta até o despacho.</p>
+    <pre class="mermaid">
+flowchart TD
+  P["Pedido chega<br/>sem estoque da peça"]:::n --> L["Vira 1 linha na<br/>lista de compras"]:::n
+  L --> D{"Comprador<br/>decide na linha"}:::dec
+  D -->|"de quem comprar"| F["Tiger · Bosch…<br/>preço · prazo · mínimo"]:::feliz
+  D -->|"pra onde entregar"| G["Curitiba ou SP"]:::feliz
+  F --> OC["Gera a compra<br/>1 por fornecedor + galpão"]:::feliz
+  G --> OC
+  OC --> CH{"Peça chega<br/>no galpão?"}:::dec
+  CH -->|"chegou"| DE["Destrava o pedido<br/>no galpão da entrega"]:::feliz
+  DE --> SEP["Separa → embala →<br/>despacha"]:::feliz
+  CH -->|"mudou de ideia"| RD["Troca o galpão<br/>de entrega"]:::borda
+  RD --> CH
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 2. EXEMPLO REAL -->
+  <section class="diag">
+    <h2>Exemplo real · filtro de óleo</h2>
+    <p class="cap">Os números vivem dentro dos balões.</p>
+    <pre class="mermaid">
+flowchart LR
+  A["Filtro de óleo<br/>faltam 4<br/>(3 Curitiba + 1 SP)"]:::n --> F["Fornecedor Tiger<br/>R$ 12 · 7 dias · caixa de 10"]:::feliz
+  F --> Q["Mínimo do fornecedor é 10<br/>→ compra 10"]:::borda
+  Q --> G["Entrega em SP<br/>(perto do fornecedor)"]:::feliz
+  G --> CH["Chegam 10 em SP"]:::feliz
+  CH --> R["Destrava os 4 pedidos<br/>sobram 6 em estoque SP"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 3. ESTADOS -->
+  <section class="diag">
+    <h2>Estados da linha de compra</h2>
+    <p class="cap">Da falta ao despacho.</p>
+    <pre class="mermaid">
+flowchart LR
+  s1["Falta comprar"]:::n --> s2["Comprado<br/>(a caminho)"]:::borda --> s3["Chegou no galpão"]:::feliz --> s4["Pedido destravado"]:::feliz --> s5["Separa e despacha"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 4. G1 fornecedor por linha -->
+  <section class="diag">
+    <h2>Mudança 1 · de quem comprar fica na mão do comprador</h2>
+    <p class="cap">Hoje o fornecedor vem fixo de uma tabela por código; passa a mostrar as opções reais.</p>
+    <pre class="mermaid">
+flowchart TD
+  subgraph HOJE["Hoje"]
+    h1["Fornecedor sai de uma<br/>tabela fixa por código da peça<br/>⚠ 1 só, sem preço nem prazo"]:::div
+  end
+  subgraph NOVO["Proposto"]
+    n1["Filtro tem 2 fornecedores<br/>cadastrados"]:::feliz --> n2["Tiger R$ 12 · 7 dias<br/>Bosch R$ 15 · 3 dias"]:::feliz --> n3["Comprador escolhe<br/>o melhor pra hora"]:::feliz
+  end
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef div fill:#fae8ff,stroke:#a21caf,stroke-width:1.5px,stroke-dasharray:5 4,color:#701a75;
+    </pre>
+  </section>
+
+  <!-- 5. G3 em-transito por galpao -->
+  <section class="diag">
+    <h2>Mudança 2 · compra a caminho conta no galpão certo</h2>
+    <p class="cap">Hoje a conta é global e some demanda de um galpão; passa a contar por galpão.</p>
+    <pre class="mermaid">
+flowchart TD
+  subgraph HOJE["Hoje (errado)"]
+    h["Faltam 3 em Curitiba + 1 em SP<br/>uma compra de 3 chega em Curitiba"]:::erro --> h2["Sistema acha que cobriu tudo ⚠<br/>o 1 de SP some da lista"]:::erro
+  end
+  subgraph NOVO["Proposto (certo)"]
+    n["Faltam 3 Curitiba + 1 SP<br/>a compra de 3 chega em Curitiba"]:::feliz --> n2["Curitiba: coberto<br/>SP: ainda falta 1 🛒"]:::feliz
+  end
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 6. G4 MOQ/multiplo -->
+  <section class="diag">
+    <h2>Mudança 3 · respeitar o mínimo e a caixa do fornecedor</h2>
+    <p class="cap">A quantidade sugerida já vem arredondada pro que dá pra comprar.</p>
+    <pre class="mermaid">
+flowchart LR
+  subgraph C1["Pedido mínimo"]
+    a["Faltam 3<br/>fornecedor só vende a partir de 10"]:::n --> a2["Sugere comprar 10"]:::feliz
+  end
+  subgraph C2["Caixa fechada"]
+    b["Faltam 13<br/>vem em caixa de 5"]:::n --> b2["Sugere 15<br/>(3 caixas)"]:::feliz
+  end
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 7. G2 destino editavel (Curitiba->SP) -->
+  <section class="diag">
+    <h2>Mudança 4 · trocar o galpão de entrega quando quiser</h2>
+    <p class="cap">O caso Curitiba → SP: o comprador manda a peça pro galpão perto do fornecedor.</p>
+    <pre class="mermaid">
+flowchart TD
+  P["Pedido foi pra Curitiba<br/>mas a peça não tem lá"]:::n --> B{"Comprar do<br/>fornecedor de SP"}:::dec
+  B --> CH1["Troca a entrega pra SP"]:::feliz
+  CH1 --> AR["Peça chega em SP"]:::feliz --> SEP["Pedido separa e<br/>despacha de SP"]:::feliz
+  subgraph HOJE["Como é hoje"]
+    h["Depois de comprar,<br/>o galpão trava ⚠<br/>não dá pra trocar"]:::div
+  end
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef div fill:#fae8ff,stroke:#a21caf,stroke-width:1.5px,stroke-dasharray:5 4,color:#701a75;
+    </pre>
+  </section>
+
+  <!-- 8. G6 OC unica -->
+  <section class="diag">
+    <h2>Mudança 5 · uma compra só, sem duplicar</h2>
+    <p class="cap">Dois cliques ao mesmo tempo no mesmo fornecedor não viram 2 compras.</p>
+    <pre class="mermaid">
+flowchart TD
+  subgraph HOJE["Hoje"]
+    a["2 telas criam compra do<br/>mesmo fornecedor ao mesmo tempo"]:::erro --> a2["⚠ 2 compras duplicadas"]:::erro
+  end
+  subgraph NOVO["Proposto"]
+    b["2 telas, mesmo<br/>fornecedor + galpão"]:::feliz --> b2["1 compra só<br/>(a 2ª reaproveita)"]:::feliz
+  end
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 9. G10 pegging -->
+  <section class="diag">
+    <h2>Mudança 6 · ver quais pedidos cada compra destrava</h2>
+    <p class="cap">A compra mostra a fila de pedidos que estão esperando por ela.</p>
+    <pre class="mermaid">
+flowchart LR
+  OC["Compra: 10 filtros Tiger → SP"]:::feliz --> P["Está esperando por ela:<br/>pedido #123 · #124 · #125"]:::feliz
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      fontSize:'16px', lineColor:'#a1a1aa',
+      primaryColor:'#f4f4f5', primaryBorderColor:'#a1a1aa', primaryTextColor:'#18181b'
+    },
+    flowchart:{ useMaxWidth:true, htmlLabels:true, curve:'basis', nodeSpacing:55, rankSpacing:55, padding:14 }
+  });
+</script>
+</body>
+</html>

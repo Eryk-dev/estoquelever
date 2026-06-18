@@ -4,7 +4,7 @@ import { mergeReceberDocs } from "./compras-receber-merge";
 describe("mergeReceberDocs", () => {
   it("agrupa OC + manual por fornecedor, com origem e id do documento", () => {
     const grupos = mergeReceberDocs(
-      [{ id: "oc1", fornecedor: "Delphi", galpao_nome: "CWB", qty_pendente: 5, criado_em: "2026-06-01T00:00:00Z" }],
+      [{ id: "oc1", fornecedor: "Delphi", galpao_nome: "CWB", qty_pendente: 5, criado_em: "2026-06-01T00:00:00Z", pedidos_cobertos: [] }],
       [{ id: "m1", fornecedor: "Delphi", galpao_nome: "CWB", qty_pendente: 3, criado_em: "2026-06-02T00:00:00Z", custo_total: 30 }],
     );
     expect(grupos).toHaveLength(1);
@@ -18,7 +18,7 @@ describe("mergeReceberDocs", () => {
 
   it("fornecedores distintos viram grupos distintos, ordenados por nome", () => {
     const grupos = mergeReceberDocs(
-      [{ id: "oc1", fornecedor: "Zeta", galpao_nome: null, qty_pendente: 1, criado_em: "2026-06-01T00:00:00Z" }],
+      [{ id: "oc1", fornecedor: "Zeta", galpao_nome: null, qty_pendente: 1, criado_em: "2026-06-01T00:00:00Z", pedidos_cobertos: [] }],
       [{ id: "m1", fornecedor: "Alpha", galpao_nome: null, qty_pendente: 1, criado_em: "2026-06-01T00:00:00Z", custo_total: 0 }],
     );
     expect(grupos.map((g) => g.fornecedor)).toEqual(["Alpha", "Zeta"]);

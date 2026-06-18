@@ -12,6 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Icon, Modal, Field, fmtNum, useAutoFocus } from "./wms-ui";
 import { wmsApi } from "@/lib/wms/api-client";
+import { calcularAjustes } from "@/lib/wms/ajuste-calc";
 import { sisoFetch, useAuth } from "@/lib/auth-context";
 import type { Produto, Localizacao, TipoLocalizacao } from "@/lib/wms/types";
 
@@ -498,6 +499,38 @@ export function buildTimestamp(dateStr: string): string {
 // ──────────────────────────────────────────────────────────────────
 // Saída / Ajuste
 
+type AjusteCategoria =
+  | "avaria"
+  | "perda"
+  | "achado"
+  | "correcao_inventario"
+  | "devolucao_sem_fluxo"
+  | "outro";
+
+// Data de hoje em dd/mm/aaaa (motivo auto do balanço).
+function hojeBR(): string {
+  const [y, m, d] = hojeISODate().split("-");
+  return `${d}/${m}/${y}`;
+}
+
+interface NovaLinha {
+  key: string;
+  localizacao_id: string;
+  qty: string;
+  custoOpen: boolean;
+  custo: string;
+}
+
+/**
+ * Ajuste de estoque — Modelo A "editar a realidade".
+ *
+ * Lista as localizações ativas (saldo>0) do produto no galpão com a quantidade
+ * editável inline; o operador digita o saldo REAL de cada posição e o sistema
+ * calcula o delta (entrada se subiu, saída se desceu) e posta. Balanço fica
+ * embutido. "+ nova localização" cobre entrada num lugar novo (custo opcional).
+ * Categoria/motivo auto-preenchidos (correcao_inventario / "Balanço dd/mm/aaaa")
+ * — confirma em 1 clique, ambos editáveis.
+ */
 export function AjusteModal({
   seed,
   onClose,
@@ -510,125 +543,250 @@ export function AjusteModal({
   const defaultGalpao = galpoesList[0];
 
   const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
-  const [qty, setQty] = useState("");
-  const [direcao, setDirecao] = useState<"entrada" | "saida">("saida");
-  const [motivo, setMotivo] = useState("");
-  const [motivoCategoria, setMotivoCategoria] = useState<
-    | ""
-    | "avaria"
-    | "perda"
-    | "achado"
-    | "correcao_inventario"
-    | "devolucao_sem_fluxo"
-    | "outro"
-  >("");
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
-  const [locIdUser, setLocIdUser] = useState<string | null>(null);
-  const qc = useQueryClient();
-
   const galpaoId = galpaoIdUser ?? defaultGalpao?.id ?? "";
 
-  // Em saída: lista locs com saldo > 0 pro produto+galpão (reusa /receber).
-  // Em entrada qualquer loc serve, então não puxa.
-  const locaisQuery = useQuery({
-    queryKey: ["wms-putaway", pid?.id, galpaoId],
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [novas, setNovas] = useState<NovaLinha[]>([]);
+  const [categoria, setCategoria] =
+    useState<AjusteCategoria>("correcao_inventario");
+  const [motivo, setMotivo] = useState<string>(() => `Balanço ${hojeBR()}`);
+  const [erros, setErros] = useState<Record<string, string>>({});
+  const novaKey = useRef(0);
+  const qc = useQueryClient();
+
+  // Trocar produto/galpão zera a edição (evita aplicar draft de um contexto
+  // noutro). Feito nos handlers (não em effect) pra não disparar renders em
+  // cascata.
+  function resetEdicao() {
+    setDrafts({});
+    setNovas([]);
+    setErros({});
+  }
+
+  // view=produto → 1 agregado com itens por tripla (saldo/reservado/disponivel
+  // + loc{id,codigo,tipo}). Filtra pelo galpão (siso_estoque é UNIQUE por
+  // produto+galpão+loc → 1 item por loc). Mesmo padrão do RealocarModal.
+  const estoqueQuery = useQuery({
+    queryKey: ["wms-ajuste-locs", pid?.id],
     queryFn: () =>
-      wmsApi<{
-        localizacao_id: string | null;
-        codigo: string | null;
-        razao: string | null;
-        locaisExistentes: LocalSaldo[];
-      }>(`/api/wms/receber?produto_id=${pid!.id}&galpao_id=${galpaoId}`),
-    enabled: direcao === "saida" && !!pid && !!galpaoId,
-    staleTime: 30 * 1000,
+      wmsApi<{ rows: EstoqueProdutoView[] }>(
+        `/api/wms/estoque?view=produto&produto_id=${pid!.id}`,
+      ),
+    enabled: !!pid?.id,
+    staleTime: 15 * 1000,
   });
-  const locaisDisp = useMemo(
-    () => locaisQuery.data?.locaisExistentes ?? [],
-    [locaisQuery.data],
+
+  const linhas = useMemo<EstoqueLocLinha[]>(() => {
+    const agg = estoqueQuery.data?.rows?.[0];
+    if (!agg) return [];
+    return agg.itens
+      .filter((l) => l.galpao.id === galpaoId)
+      .sort((a, b) => {
+        const ap = a.localizacao.tipo === "picking" ? 0 : 1;
+        const bp = b.localizacao.tipo === "picking" ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+        return Number(b.saldo) - Number(a.saldo);
+      });
+  }, [estoqueQuery.data, galpaoId]);
+
+  const totais = useMemo(
+    () =>
+      linhas.reduce(
+        (a, l) => ({
+          saldo: a.saldo + Number(l.saldo),
+          reservado: a.reservado + Number(l.reservado),
+          disponivel: a.disponivel + Number(l.disponivel),
+        }),
+        { saldo: 0, reservado: 0, disponivel: 0 },
+      ),
+    [linhas],
   );
 
-  // Em saída, se o operador ainda não escolheu manualmente uma loc, cai na
-  // 1ª disponível (a query já ordena: picking primeiro, maior saldo desc).
-  // Eliminamos o useEffect+setState pra evitar cascading renders.
-  const locId =
-    locIdUser ??
-    (direcao === "saida" ? locaisDisp[0]?.localizacao_id ?? "" : "");
-  const locSelDisp = locaisDisp.find((l) => l.localizacao_id === locId);
-  const qtyNum = Number(qty);
-  const overSaldo =
-    direcao === "saida" && !!locSelDisp && qtyNum > Number(locSelDisp.saldo);
+  const { ajustes, erroReserva, erroDuplicada } = useMemo(
+    () =>
+      calcularAjustes(
+        linhas.map((l) => ({
+          localizacao_id: l.localizacao.id,
+          saldo: Number(l.saldo),
+          reservado: Number(l.reservado),
+        })),
+        drafts,
+        novas.map((n) => ({
+          localizacao_id: n.localizacao_id,
+          qty: n.qty,
+          custo: n.custo,
+        })),
+      ),
+    [linhas, drafts, novas],
+  );
 
-  const mut = useMutation({
-    mutationFn: async () => {
-      const r = await sisoFetch("/api/wms/ajuste", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tripla: {
-            produto_id: pid!.id,
-            galpao_id: galpaoId,
-            localizacao_id: locId,
-          },
-          qty: Number(qty),
-          direcao,
-          motivo,
-          motivo_categoria: motivoCategoria,
-        }),
-      });
-      if (!r.ok) {
-        const body = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error || `HTTP ${r.status}`);
-      }
-    },
-    onSuccess: () => {
-      const sign = direcao === "entrada" ? "+" : "−";
-      toast.success(`Ajuste registrado: ${sign}${fmtNum(Number(qty))} de ${pid!.sku}`);
-      qc.invalidateQueries({ queryKey: ["wms-estoque"] });
-      qc.invalidateQueries({ queryKey: ["wms-ledger"] });
-      qc.invalidateQueries({ queryKey: ["wms-produtos"] });
-      qc.invalidateQueries({ queryKey: ["wms-cobertura-all"] });
-      qc.invalidateQueries({ queryKey: ["wms-cobertura"] });
-      qc.invalidateQueries({ queryKey: ["wms-dashboard-geral"] });
-      qc.invalidateQueries({ queryKey: ["wms-produto"] });
-      qc.invalidateQueries({ queryKey: ["wms-produto-estoque"] });
-      qc.invalidateQueries({ queryKey: ["wms-produto-ledger"] });
-      qc.invalidateQueries({ queryKey: ["wms-produto-cobertura"] });
-      onClose();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
+  const temMudanca = ajustes.length > 0;
   const valid =
     !!pid &&
     !!galpaoId &&
-    !!locId &&
-    Number(qty) > 0 &&
-    motivo.trim().length >= 3 &&
-    !!motivoCategoria;
+    temMudanca &&
+    !erroReserva &&
+    !erroDuplicada &&
+    motivo.trim().length >= 3;
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      // Sequencial: movs de ajuste são independentes no ledger; falha parcial
+      // deixa estado consistente (as aplicadas estão certas) e recuperável.
+      const results: { localizacao_id: string; ok: boolean; msg?: string }[] =
+        [];
+      for (const a of ajustes) {
+        try {
+          const r = await sisoFetch("/api/wms/ajuste", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tripla: {
+                produto_id: pid!.id,
+                galpao_id: galpaoId,
+                localizacao_id: a.localizacao_id,
+              },
+              qty: a.qty,
+              direcao: a.direcao,
+              motivo: motivo.trim(),
+              motivo_categoria: categoria,
+              ...(a.direcao === "entrada" && a.custo_unitario != null
+                ? { custo_unitario: a.custo_unitario }
+                : {}),
+            }),
+          });
+          if (!r.ok) {
+            const b = (await r.json().catch(() => ({}))) as { error?: string };
+            results.push({
+              localizacao_id: a.localizacao_id,
+              ok: false,
+              msg: b.error || `HTTP ${r.status}`,
+            });
+          } else {
+            results.push({ localizacao_id: a.localizacao_id, ok: true });
+          }
+        } catch (e) {
+          results.push({
+            localizacao_id: a.localizacao_id,
+            ok: false,
+            msg: (e as Error).message,
+          });
+        }
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      const okIds = new Set(
+        results.filter((r) => r.ok).map((r) => r.localizacao_id),
+      );
+      const falhas = results.filter((r) => !r.ok);
+
+      // Parte do estoque mudou mesmo em falha parcial → invalida tudo.
+      for (const key of [
+        "wms-estoque",
+        "wms-ledger",
+        "wms-produtos",
+        "wms-cobertura",
+        "wms-cobertura-all",
+        "wms-dashboard-geral",
+        "wms-produto",
+        "wms-produto-estoque",
+        "wms-produto-ledger",
+        "wms-produto-cobertura",
+        "wms-ajuste-locs",
+      ]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+
+      if (falhas.length === 0) {
+        const n = results.length;
+        toast.success(
+          `${n} ajuste${n === 1 ? "" : "s"} aplicado${n === 1 ? "" : "s"}`,
+        );
+        onClose();
+        return;
+      }
+
+      toast.warning(
+        `${okIds.size} de ${results.length} aplicados — ${falhas.length} falhou${falhas.length === 1 ? "" : "ram"}`,
+      );
+      // Limpa as que aplicaram (o refetch traz o saldo novo → delta zera); mantém
+      // as falhas com o erro inline.
+      setDrafts((d) => {
+        const next = { ...d };
+        for (const id of okIds) delete next[id];
+        return next;
+      });
+      setNovas((ns) => ns.filter((n) => !okIds.has(n.localizacao_id)));
+      setErros(
+        Object.fromEntries(
+          falhas.map((f) => [f.localizacao_id, f.msg ?? "falhou"]),
+        ),
+      );
+      estoqueQuery.refetch();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  function clearErro(locId: string) {
+    setErros((e) => {
+      if (!e[locId]) return e;
+      const next = { ...e };
+      delete next[locId];
+      return next;
+    });
+  }
+  function bump(locId: string, saldo: number, n: number) {
+    clearErro(locId);
+    setDrafts((d) => {
+      const raw = d[locId];
+      const base = raw !== undefined && raw.trim() !== "" ? Number(raw) : saldo;
+      return { ...d, [locId]: String(Math.max(0, base + n)) };
+    });
+  }
+  function setDraft(locId: string, value: string) {
+    clearErro(locId);
+    setDrafts((d) => ({ ...d, [locId]: value }));
+  }
+  const addNova = () =>
+    setNovas((ns) => [
+      ...ns,
+      {
+        key: `n${novaKey.current++}`,
+        localizacao_id: "",
+        qty: "",
+        custoOpen: false,
+        custo: "",
+      },
+    ]);
+  const updateNova = (key: string, patch: Partial<NovaLinha>) =>
+    setNovas((ns) => ns.map((n) => (n.key === key ? { ...n, ...patch } : n)));
+  const removeNova = (key: string) =>
+    setNovas((ns) => ns.filter((n) => n.key !== key));
 
   return (
     <Modal
       title="Ajuste de estoque"
-      subtitle="Entrada ou saída avulsa, sem NF. Motivo obrigatório (mín. 3 chars)."
+      subtitle="Balanço por localização — edite o saldo real de cada posição (sem NF)."
       onClose={onClose}
+      width={720}
       footer={
         <>
           <button className="wms-btn wms-btn-ghost" onClick={onClose}>
             Cancelar
           </button>
           <button
-            className={
-              direcao === "entrada"
-                ? "wms-btn wms-btn-primary"
-                : "wms-btn wms-btn-danger"
-            }
+            className="wms-btn wms-btn-primary"
             disabled={!valid || mut.isPending}
             onClick={() => mut.mutate()}
           >
-            <Icon name={direcao === "entrada" ? "plus" : "minus"} size={11} />
+            <Icon name="check" size={11} />
             {mut.isPending
-              ? "Enviando…"
-              : `Confirmar ${direcao === "entrada" ? "entrada" : "saída"}`}
+              ? "Aplicando…"
+              : ajustes.length > 0
+                ? `Confirmar ${ajustes.length} ajuste${ajustes.length === 1 ? "" : "s"}`
+                : "Confirmar ajuste"}
           </button>
         </>
       }
@@ -638,37 +796,28 @@ export function AjusteModal({
           value={pid}
           onChange={(p) => {
             setPid(p);
-            setLocIdUser(null);
+            resetEdicao();
           }}
           autoFocus={!seed?.produto}
         />
       </Field>
 
-      <Field label="Direção">
-        <div className="wms-seg wms-seg-full">
-          {(["saida", "entrada"] as const).map((d) => (
-            <button
-              key={d}
-              className={`wms-seg-btn ${direcao === d ? "is-active" : ""}`}
-              onClick={() => {
-                setDirecao(d);
-                setLocIdUser(null);
-              }}
-            >
-              {d === "saida" ? "Saída (−)" : "Entrada (+)"}
-            </button>
-          ))}
-        </div>
-      </Field>
-
-      <div className="wms-row-2">
-        <Field label="Galpão">
+      <Field label="Galpão">
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <select
             className="wms-select"
+            style={{ width: 200 }}
             value={galpaoId}
             onChange={(e) => {
               setGalpaoIdUser(e.target.value);
-              setLocIdUser(null);
+              resetEdicao();
             }}
           >
             {galpoesList.map((g) => (
@@ -677,115 +826,302 @@ export function AjusteModal({
               </option>
             ))}
           </select>
-        </Field>
-        <Field label="Localização" required>
-          <LocalizacaoCombo
-            galpaoId={galpaoId}
-            value={locId}
-            onChange={(v) => setLocIdUser(v)}
-            allowCreate={false}
-          />
-        </Field>
-      </div>
-
-      {direcao === "saida" && !!pid && !!galpaoId && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 6,
-            marginTop: -4,
-            marginBottom: 4,
-          }}
-        >
-          <span
-            className="wms-td-mute"
-            style={{ fontSize: 11, alignSelf: "center", marginRight: 2 }}
-          >
-            <Icon name="box" size={10} /> Onde tem saldo:
-          </span>
-          {locaisQuery.isLoading && (
-            <span className="wms-td-mute" style={{ fontSize: 11, alignSelf: "center" }}>
-              carregando…
-            </span>
+          {!!pid && linhas.length > 0 && (
+            <div style={{ display: "flex", gap: 16 }}>
+              {(
+                [
+                  ["saldo físico", totais.saldo, "var(--wms-c-fg)"],
+                  ["reservado", totais.reservado, "var(--wms-c-warn)"],
+                  ["disponível", totais.disponivel, "var(--wms-c-ok)"],
+                ] as const
+              ).map(([lbl, val, color]) => (
+                <div key={lbl}>
+                  <div
+                    className="wms-mono"
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 700,
+                      lineHeight: 1.1,
+                      color,
+                    }}
+                  >
+                    {fmtNum(val)}
+                  </div>
+                  <div className="wms-td-mute" style={{ fontSize: 10.5 }}>
+                    {lbl}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-          {!locaisQuery.isLoading && locaisDisp.length === 0 && (
-            <span className="wms-td-mute" style={{ fontSize: 11, alignSelf: "center" }}>
-              sem saldo nesse galpão
-            </span>
-          )}
-          {locaisDisp.map((l) => {
-            const isSelected = l.localizacao_id === locId;
-            return (
-              <button
-                key={l.localizacao_id}
-                type="button"
-                onClick={() => setLocIdUser(l.localizacao_id)}
-                className={`wms-btn wms-btn-sm ${
-                  isSelected ? "wms-btn-primary" : "wms-btn-ghost"
-                }`}
-                style={{ fontSize: 11 }}
-              >
-                <span className="wms-mono">{l.codigo}</span>
-                <span
-                  className="wms-td-mute"
-                  style={{ marginLeft: 5, fontSize: 10.5 }}
-                >
-                  {fmtNum(Number(l.saldo))} un · {l.tipo}
-                </span>
-              </button>
-            );
-          })}
         </div>
+      </Field>
+
+      {!!pid && (
+        <Field
+          label="Localizações ativas"
+          hint="edite p/ bater com a contagem real"
+        >
+          <div
+            style={{
+              border: "1px solid var(--wms-c-border)",
+              borderRadius: "var(--wms-r-3)",
+              overflow: "hidden",
+            }}
+          >
+            {estoqueQuery.isLoading && (
+              <div className="wms-td-mute" style={{ padding: 12, fontSize: 12 }}>
+                carregando…
+              </div>
+            )}
+            {!estoqueQuery.isLoading && linhas.length === 0 && (
+              <div className="wms-td-mute" style={{ padding: 12, fontSize: 12 }}>
+                Nenhum saldo neste galpão — use “+ adicionar em nova
+                localização” para registrar entrada.
+              </div>
+            )}
+            {linhas.map((l) => {
+              const locId = l.localizacao.id;
+              const saldo = Number(l.saldo);
+              const reservado = Number(l.reservado);
+              const raw = drafts[locId];
+              const hasVal = raw !== undefined && raw.trim() !== "";
+              const inputVal = raw ?? String(saldo);
+              const real = hasVal ? Number(raw) : saldo;
+              const delta = hasVal ? real - saldo : 0;
+              const below = hasVal && real < reservado;
+              const erro = erros[locId];
+              return (
+                <div
+                  key={locId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderTop: "1px solid var(--wms-c-border)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span className="wms-mono" style={{ fontWeight: 600 }}>
+                      {l.localizacao.codigo}
+                    </span>
+                    <div className="wms-td-mute" style={{ fontSize: 11 }}>
+                      {l.localizacao.tipo} · sistema: {fmtNum(saldo)} un
+                      {reservado > 0 ? ` · ${fmtNum(reservado)} reserv.` : ""}
+                    </div>
+                    {(below || erro) && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--wms-c-danger)",
+                          marginTop: 3,
+                        }}
+                      >
+                        <Icon name="alert" size={10} />{" "}
+                        {below
+                          ? `real ${fmtNum(real)} < ${fmtNum(reservado)} reservados`
+                          : erro}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{ display: "flex", flexDirection: "column", gap: 2 }}
+                  >
+                    <button
+                      type="button"
+                      className="wms-btn-icon wms-btn-sm"
+                      onClick={() => bump(locId, saldo, 1)}
+                      aria-label="mais um"
+                    >
+                      <Icon name="chevron-u" size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wms-btn-icon wms-btn-sm"
+                      onClick={() => bump(locId, saldo, -1)}
+                      aria-label="menos um"
+                    >
+                      <Icon name="chevron-d" size={11} />
+                    </button>
+                  </div>
+                  <input
+                    className="wms-input"
+                    type="number"
+                    min="0"
+                    value={inputVal}
+                    onChange={(e) => setDraft(locId, e.target.value)}
+                    style={{
+                      width: 78,
+                      textAlign: "center",
+                      fontWeight: 600,
+                      ...(below || erro
+                        ? { borderColor: "var(--wms-c-danger)" }
+                        : delta !== 0
+                          ? { borderColor: "var(--wms-c-ok)" }
+                          : {}),
+                    }}
+                  />
+                  <span
+                    className="wms-mono"
+                    style={{
+                      width: 52,
+                      textAlign: "right",
+                      fontSize: 12.5,
+                      fontWeight: 700,
+                      color:
+                        delta > 0
+                          ? "var(--wms-c-ok)"
+                          : delta < 0
+                            ? "var(--wms-c-danger)"
+                            : "var(--wms-c-mute)",
+                    }}
+                  >
+                    {delta > 0
+                      ? `+${fmtNum(delta)}`
+                      : delta < 0
+                        ? fmtNum(delta)
+                        : "—"}
+                  </span>
+                </div>
+              );
+            })}
+
+            {novas.map((n) => {
+              const dup =
+                !!n.localizacao_id &&
+                (linhas.some((l) => l.localizacao.id === n.localizacao_id) ||
+                  novas.some(
+                    (x) =>
+                      x.key !== n.key && x.localizacao_id === n.localizacao_id,
+                  ));
+              return (
+                <div
+                  key={n.key}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderTop: "1px solid var(--wms-c-border)",
+                    background: "var(--wms-c-faint)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <LocalizacaoCombo
+                      galpaoId={galpaoId}
+                      value={n.localizacao_id}
+                      onChange={(v) => updateNova(n.key, { localizacao_id: v })}
+                      allowCreate
+                      placeholder="Bipar ou criar localização…"
+                    />
+                    {dup && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--wms-c-danger)",
+                          marginTop: 3,
+                        }}
+                      >
+                        <Icon name="alert" size={10} /> essa loc já está na lista
+                        acima
+                      </div>
+                    )}
+                    {n.custoOpen ? (
+                      <input
+                        className="wms-input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={n.custo}
+                        onChange={(e) =>
+                          updateNova(n.key, { custo: e.target.value })
+                        }
+                        placeholder="custo unitário (R$)"
+                        style={{ marginTop: 6, maxWidth: 200 }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => updateNova(n.key, { custoOpen: true })}
+                        style={{
+                          marginTop: 5,
+                          fontSize: 11.5,
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          color: "var(--wms-c-mute)",
+                        }}
+                      >
+                        <Icon name="plus" size={9} /> informar custo unitário
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    className="wms-input"
+                    type="number"
+                    min="0"
+                    value={n.qty}
+                    onChange={(e) => updateNova(n.key, { qty: e.target.value })}
+                    placeholder="qty"
+                    style={{ width: 78, textAlign: "center", fontWeight: 600 }}
+                  />
+                  <button
+                    type="button"
+                    className="wms-btn-icon"
+                    onClick={() => removeNova(n.key)}
+                    aria-label="remover linha"
+                  >
+                    <Icon name="x" size={12} />
+                  </button>
+                </div>
+              );
+            })}
+
+            <button
+              type="button"
+              className="wms-btn wms-btn-ghost wms-btn-sm"
+              onClick={addNova}
+              style={{
+                width: "100%",
+                borderRadius: 0,
+                borderTop: "1px solid var(--wms-c-border)",
+                justifyContent: "center",
+              }}
+            >
+              <Icon name="plus" size={11} /> adicionar em nova localização
+            </button>
+          </div>
+        </Field>
       )}
 
-      <Field
-        label="Quantidade"
-        required
-        hint={
-          locSelDisp ? `disp na loc: ${fmtNum(Number(locSelDisp.saldo))}` : undefined
-        }
-      >
-        <input
-          className={`wms-input ${overSaldo ? "wms-input-danger" : ""}`}
-          type="number"
-          min="1"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          placeholder="0"
-        />
-      </Field>
-
-      <Field
-        label="Categoria"
-        required
-        hint="estruturada para apuração — selecione antes do motivo livre"
-      >
-        <select
-          className="wms-select"
-          value={motivoCategoria}
-          onChange={(e) =>
-            setMotivoCategoria(e.target.value as typeof motivoCategoria)
-          }
-        >
-          <option value="">Selecione…</option>
-          <option value="avaria">Avaria</option>
-          <option value="perda">Perda</option>
-          <option value="achado">Achado</option>
-          <option value="correcao_inventario">Correção de inventário</option>
-          <option value="devolucao_sem_fluxo">Devolução sem fluxo</option>
-          <option value="outro">Outro</option>
-        </select>
-      </Field>
-
-      <Field label="Motivo" required hint="Mínimo 3 caracteres. Será gravado no ledger.">
-        <textarea
-          className="wms-textarea"
-          value={motivo}
-          onChange={(e) => setMotivo(e.target.value)}
-          placeholder="Ex: Avariado em manuseio, achado no inventário…"
-        />
-      </Field>
+      {temMudanca && (
+        <div className="wms-row-2">
+          <Field label="Categoria">
+            <select
+              className="wms-select"
+              value={categoria}
+              onChange={(e) => setCategoria(e.target.value as AjusteCategoria)}
+            >
+              <option value="correcao_inventario">Correção de inventário</option>
+              <option value="avaria">Avaria</option>
+              <option value="perda">Perda</option>
+              <option value="achado">Achado</option>
+              <option value="devolucao_sem_fluxo">Devolução sem fluxo</option>
+              <option value="outro">Outro</option>
+            </select>
+          </Field>
+          <Field label="Motivo" hint="vai pro ledger">
+            <input
+              className="wms-input"
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Ex: Balanço, avaria em manuseio…"
+            />
+          </Field>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cross — o caderno de peças que se substituem · Fluxo em diagramas</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#2563eb;
+    --feliz:#16a34a; --feliz-bg:#dcfce7;
+    --borda:#d97706; --borda-bg:#fef3c7;
+    --erro:#dc2626;  --erro-bg:#fee2e2;
+    --div:#a21caf;   --div-bg:#fae8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);line-height:1.5;padding:48px 24px 96px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  header.top p{margin:0;color:var(--muted);font-size:15px}
+  .legenda{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:22px 0 40px;
+    padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    font-size:13px;color:var(--muted)}
+  .legenda b{color:var(--ink);font-weight:600;margin-right:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;border:1.5px solid}
+  .dot.feliz{background:var(--feliz-bg);border-color:var(--feliz)}
+  .dot.borda{background:var(--borda-bg);border-color:var(--borda)}
+  .dot.erro{background:var(--erro-bg);border-color:var(--erro)}
+  .dot.dec{background:#dbeafe;border-color:var(--accent)}
+  .dot.imp{background:#f4f4f5;border-color:#a1a1aa;border-style:dashed}
+  section.diag{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 18px;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  section.diag>h2{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 2px}
+  section.diag>.cap{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .mermaid{display:flex;justify-content:center;min-height:60px}
+  .mermaid svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Cross — o caderno de peças que se substituem</h1>
+    <p>Você liga peça com peça, confirma olhando as fotos, e isso destrava troca e compra sozinho.</p>
+  </header>
+
+  <div class="legenda">
+    <b>Legenda:</b>
+    <span class="chip"><span class="dot feliz"></span> caminho feliz</span>
+    <span class="chip"><span class="dot borda"></span> borda (acontece, tratável)</span>
+    <span class="chip"><span class="dot erro"></span> erro / atenção</span>
+    <span class="chip"><span class="dot dec"></span> decisão</span>
+    <span class="chip"><span class="dot imp"></span> depois (floreio)</span>
+  </div>
+
+  <!-- 1. MAPA DO FLUXO -->
+  <section class="diag">
+    <h2>Mapa do fluxo</h2>
+    <p class="cap">Da ligação à mão até espalhar pro sistema. Nada se confirma sozinho.</p>
+    <pre class="mermaid">
+flowchart TD
+  LIGA["Você liga 2 peças<br/>na mão"]:::start --> PAL["Vira PALPITE<br/>no caderno"]:::borda
+  IMP["depois: catálogos de fornecedor<br/>enchem a fila sozinhos"]:::imp -.->|"mais palpites"| PAL
+  PAL --> FILA["Fila de validação<br/>fotos lado a lado"]:::borda
+  FILA --> P{"Pessoa olha<br/>e decide"}:::dec
+  P -->|"é a mesma"| CONF["CONFIRMADO"]:::feliz
+  P -->|"não é / bloqueia"| BLK["Bloqueado<br/>nunca troca"]:::erro
+  CONF --> IRR["Espalha sozinho<br/>o caderno é um só"]:::feliz
+  IRR --> I1["Aparece na ficha<br/>da peça"]:::feliz
+  IRR --> I2["Troca destrava<br/>na hora"]:::feliz
+  IRR --> I3["depois: vira código de compra<br/>e re-roteia pedido preso"]:::imp
+  classDef start fill:#1e293b,color:#fff,stroke:#1e293b,stroke-width:0px;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef imp fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#a1a1aa,stroke-dasharray:4 3;
+    </pre>
+  </section>
+
+  <!-- 2. EXEMPLO REAL -->
+  <section class="diag">
+    <h2>Exemplo real · eletroventilador</h2>
+    <p class="cap">Os números vivem dentro dos balões.</p>
+    <pre class="mermaid">
+flowchart LR
+  N["Nosso A143372<br/>0 em estoque"]:::erro --> LIG["Ligo ao ACA 012744<br/>mesmo código 4B0260403R"]:::borda
+  LIG --> OK["Pessoa confirma"]:::dec
+  OK --> EST["ACA 012744<br/>nosso: 6 disponíveis"]:::feliz
+  EST --> PED["Pedido pedia A143372 sem estoque<br/>agora manda a ACA 012744"]:::feliz
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 3. ESTADOS -->
+  <section class="diag">
+    <h2>Estados de uma ligação</h2>
+    <p class="cap">Do palpite até ativo — e o que sai do caminho.</p>
+    <pre class="mermaid">
+flowchart LR
+  s1["Palpite<br/>alguém ligou"]:::borda --> s2["Confirmado<br/>validado"]:::feliz --> s3["Ativo<br/>espalhando"]:::feliz
+  s2 -->|"desfaz"| s1
+  s1 -->|"bloqueia"| s4["Bloqueado<br/>nunca troca"]:::erro
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 4. BORDA · ligar inválido -->
+  <section class="diag">
+    <h2>Borda · ligação que não vale</h2>
+    <p class="cap">O sistema não deixa ligar errado nem duplicar.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Tentou ligar"]:::borda --> D{"Confere"}:::dec
+  D -->|"peça com ela mesma"| E1["Recusa<br/>não liga"]:::erro
+  D -->|"par já existe"| E2["Não duplica<br/>mantém o que tem"]:::borda
+  D -->|"tudo certo"| F["Cria palpite"]:::feliz
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 5. BORDA · peça sem equivalente -->
+  <section class="diag">
+    <h2>Borda · peça sem equivalente</h2>
+    <p class="cap">Não some — fica visível esperando alguém ligar.</p>
+    <pre class="mermaid">
+flowchart TD
+  P["Peça nova<br/>ninguém ligou"]:::borda --> ISO["Fica sozinha<br/>sem cross"]:::borda --> Q["Aparece na busca como<br/>sem cross, esperando ligar"]:::borda
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 6. CONFIRMAR DESTRAVA PEDIDO PRESO -->
+  <section class="diag">
+    <h2>Confirmar destrava pedido preso</h2>
+    <p class="cap">O retorno que importa: pedido parado volta a andar.</p>
+    <pre class="mermaid">
+flowchart TD
+  PED["Pedido pede A143372<br/>0 em estoque · preso"]:::erro --> CONF["Confirmo<br/>A143372 = ACA 012744"]:::dec
+  CONF --> CHK{"ACA 012744<br/>tem estoque?"}:::dec
+  CHK -->|"tem 6"| GO["Pedido destrava<br/>manda a ACA"]:::feliz
+  CHK -->|"não tem"| WAIT["Segue preso<br/>vai pra compra"]:::borda
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 7. BORDA · palpite na troca exige aprovação -->
+  <section class="diag">
+    <h2>Borda · a troca mostra tudo, mas só confirmado vai direto</h2>
+    <p class="cap">Palpite aparece pra não esconder opção — mas não troca sozinho.</p>
+    <pre class="mermaid">
+flowchart TD
+  T["Troca quer usar<br/>um equivalente"]:::borda --> S{"Esse par<br/>está como?"}:::dec
+  S -->|"confirmado"| AUTO["Troca direto"]:::feliz
+  S -->|"só palpite"| APR["Aparece, mas<br/>pede aprovação"]:::borda
+  S -->|"bloqueado"| NO["Nem aparece"]:::erro
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 8. BORDA · desfazer reverte tudo -->
+  <section class="diag">
+    <h2>Borda · desfazer reverte tudo</h2>
+    <p class="cap">Tirou o cross, o sistema desmonta o que ele espalhou.</p>
+    <pre class="mermaid">
+flowchart TD
+  RV["Desfaz um cross<br/>confirmado"]:::borda --> R1["Volta a palpite"]:::borda
+  RV --> R2["Some da ficha<br/>da peça"]:::borda
+  RV --> R3["Troca volta a<br/>pedir aprovação"]:::borda
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 9. BORDA · estoque sempre o nosso -->
+  <section class="diag">
+    <h2>Borda · o estoque mostrado é sempre o nosso</h2>
+    <p class="cap">Antes pegava de fora e mentia; agora é o número real do galpão.</p>
+    <pre class="mermaid">
+flowchart TD
+  Q["Quanto temos<br/>dessa peça?"]:::dec --> SRC{"De onde vem<br/>o número?"}:::dec
+  SRC -->|"antes: sistema externo"| OLD["Caía e mostrava 0<br/>a peça sumia da tela"]:::erro
+  SRC -->|"agora: nosso galpão"| NEW["Número real<br/>sempre confiável"]:::feliz
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      fontSize:'16px', lineColor:'#a1a1aa',
+      primaryColor:'#f4f4f5', primaryBorderColor:'#a1a1aa', primaryTextColor:'#18181b'
+    },
+    flowchart:{ useMaxWidth:true, htmlLabels:true, curve:'basis', nodeSpacing:55, rankSpacing:55, padding:14 }
+  });
+</script>
+</body>
+</html>

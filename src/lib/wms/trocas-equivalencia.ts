@@ -34,6 +34,8 @@ import {
   type TierQualidade,
   type TrocaTipo,
 } from "./trocas-equivalencia-regra";
+import { statusParCross } from "@/lib/cross/equivalencias";
+import { statusParaRegra } from "@/lib/cross/equivalencias-core";
 
 const TTL_RESERVA_TROCA_HORAS = 48;
 
@@ -104,14 +106,8 @@ export async function buscarParVerificacao(
   skuB: string,
 ): Promise<ParVerificacao> {
   const sb = createServiceClient();
-  const [a, b] = [skuA, skuB].sort();
-  const { data } = await sb
-    .from("siso_equivalencias_verificadas")
-    .select("status")
-    .eq("sku_a", a)
-    .eq("sku_b", b)
-    .maybeSingle();
-  return (data?.status as ParVerificacao) ?? null;
+  const status = await statusParCross(sb, skuA, skuB);
+  return status ? statusParaRegra(status) : null;
 }
 
 /**

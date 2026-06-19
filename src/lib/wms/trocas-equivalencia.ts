@@ -34,7 +34,7 @@ import {
   type TierQualidade,
   type TrocaTipo,
 } from "./trocas-equivalencia-regra";
-import { statusParCross } from "@/lib/cross/equivalencias";
+import { statusParCross, paresDoSku } from "@/lib/cross/equivalencias";
 import { statusParaRegra } from "@/lib/cross/equivalencias-core";
 
 const TTL_RESERVA_TROCA_HORAS = 48;
@@ -98,8 +98,9 @@ export class TrocaError extends Error {
 }
 
 /**
- * Status do par (sku_a, sku_b) na curadoria — par normalizado lexicográfico
- * (mesma convenção de siso_produto_links / siso_equivalencias_verificadas).
+ * Status do par (sku_a, sku_b) na curadoria — lê o caderno do cross
+ * (siso_cross_equivalencias) e mapeia pro vocabulário da regra de troca.
+ * confirmado→verificado, bloqueado→bloqueado, sugestao/inexistente→null.
  */
 export async function buscarParVerificacao(
   skuA: string,
@@ -783,18 +784,20 @@ export async function listarEquivalentesComEstoque(args: {
 }): Promise<EquivalenteComEstoque[]> {
   const sb = createServiceClient();
 
-  const { data: cluster, error } = await sb.rpc("siso_cross_cluster_skus", {
-    p_sku: args.sku,
-  });
-  if (error || !cluster || cluster.length === 0) return [];
-  const skus = (cluster as Array<{ sku: string } | string>).map((r) =>
-    typeof r === "string" ? r : r.sku,
-  );
+  // Pares DIRETOS do caderno (sem corrente transitiva).
+  const pares = await paresDoSku(sb, args.sku);
+  if (pares.length === 0) return [];
+  const skusEq = pares.map((p) => (p.sku_a === args.sku ? p.sku_b : p.sku_a));
+  const parPorSku = new Map<string, ParVerificacao>();
+  for (const p of pares) {
+    const outro = p.sku_a === args.sku ? p.sku_b : p.sku_a;
+    parPorSku.set(outro, statusParaRegra(p.status));
+  }
 
   const { data: produtos } = await sb
     .from("siso_produtos")
     .select("id, sku, descricao, imagem_url, imagens, tier_qualidade")
-    .in("sku", skus)
+    .in("sku", skusEq)
     .eq("ativo", true);
   if (!produtos || produtos.length === 0) return [];
 
@@ -812,19 +815,7 @@ export async function listarEquivalentesComEstoque(args: {
     dispPorProduto.set(pid, (dispPorProduto.get(pid) ?? 0) + Number(e.disponivel));
   }
 
-  // Curadoria dos pares (sku base ↔ cada equivalente)
-  const { data: pares } = await sb
-    .from("siso_equivalencias_verificadas")
-    .select("sku_a, sku_b, status")
-    .or(`sku_a.eq.${args.sku},sku_b.eq.${args.sku}`);
-  const parPorSku = new Map<string, ParVerificacao>();
-  for (const p of pares ?? []) {
-    const outro = p.sku_a === args.sku ? (p.sku_b as string) : (p.sku_a as string);
-    parPorSku.set(outro, p.status as ParVerificacao);
-  }
-
   return produtos
-    .filter((p) => p.sku !== args.sku)
     .map((p) => ({
       produto_id: p.id as string,
       sku: p.sku as string,
@@ -870,18 +861,20 @@ export async function listarEquivalentesParaCompra(args: {
 }): Promise<EquivalenteParaCompra[]> {
   const sb = createServiceClient();
 
-  const { data: cluster, error } = await sb.rpc("siso_cross_cluster_skus", {
-    p_sku: args.sku,
-  });
-  if (error || !cluster || cluster.length === 0) return [];
-  const skus = (cluster as Array<{ sku: string } | string>).map((r) =>
-    typeof r === "string" ? r : r.sku,
-  );
+  // Pares DIRETOS do caderno (sem corrente transitiva).
+  const pares = await paresDoSku(sb, args.sku);
+  if (pares.length === 0) return [];
+  const skusEq = pares.map((p) => (p.sku_a === args.sku ? p.sku_b : p.sku_a));
+  const parPorSku = new Map<string, ParVerificacao>();
+  for (const p of pares) {
+    const outro = p.sku_a === args.sku ? p.sku_b : p.sku_a;
+    parPorSku.set(outro, statusParaRegra(p.status));
+  }
 
   const { data: produtos } = await sb
     .from("siso_produtos")
     .select("id, sku, descricao, imagem_url, tier_qualidade")
-    .in("sku", skus)
+    .in("sku", skusEq)
     .eq("ativo", true);
   if (!produtos || produtos.length === 0) return [];
 
@@ -916,19 +909,7 @@ export async function listarEquivalentesParaCompra(args: {
       nomePorGalpao.set(g.id as string, g.nome as string);
   }
 
-  // Curadoria dos pares (sku base ↔ cada equivalente)
-  const { data: pares } = await sb
-    .from("siso_equivalencias_verificadas")
-    .select("sku_a, sku_b, status")
-    .or(`sku_a.eq.${args.sku},sku_b.eq.${args.sku}`);
-  const parPorSku = new Map<string, ParVerificacao>();
-  for (const p of pares ?? []) {
-    const outro = p.sku_a === args.sku ? (p.sku_b as string) : (p.sku_a as string);
-    parPorSku.set(outro, p.status as ParVerificacao);
-  }
-
   return produtos
-    .filter((p) => p.sku !== args.sku)
     .map((p) => {
       const m = porProduto.get(p.id as string) ?? new Map<string, number>();
       const saldo_por_galpao: SaldoGalpaoEquivalente[] = [...m.entries()]

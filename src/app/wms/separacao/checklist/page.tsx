@@ -57,6 +57,8 @@ interface ChecklistItem {
   separacao_galpao_id: string | null;
   saldo: number;
   disponivel: number;
+  /** Nº de locs com saldo disponível no galpão — gate da flechinha de outras locs. */
+  locs_disponiveis: number;
   galpao_nome: string | null;
   compra_status:
     | "oc_pendente"
@@ -97,6 +99,8 @@ interface ConsolidatedProduct {
   compra_status: ChecklistItem["compra_status"];
   saldo: number;
   disponivel: number;
+  /** Nº de locs com saldo disponível no galpão — gate da flechinha de outras locs. */
+  locs_disponiveis: number;
 }
 
 type SortMode = "localizacao" | "sku" | "descricao";
@@ -221,6 +225,7 @@ function consolidar(items: ChecklistItem[]): {
         compra_status: it.compra_status,
         saldo: it.saldo,
         disponivel: it.disponivel,
+        locs_disponiveis: it.locs_disponiveis ?? 0,
       });
     }
   }
@@ -1624,8 +1629,14 @@ function ItemRow({
   };
   const [verLocs, setVerLocs] = useState(false);
   const verLocsBtnRef = useRef<HTMLButtonElement>(null);
-  // Sugestão de outras locs só faz sentido na linha acionável e ainda aberta.
-  const podeVerLocs = !isPego && !done && !!produto.separacao_galpao_id;
+  // Sugestão de outras locs só faz sentido na linha acionável e ainda aberta —
+  // E quando o produto tem MAIS DE UMA loc com saldo no galpão (senão a única
+  // já é a exibida e a flechinha não levaria a lugar nenhum).
+  const podeVerLocs =
+    !isPego &&
+    !done &&
+    !!produto.separacao_galpao_id &&
+    produto.locs_disponiveis > 1;
   return (
     <div
       className={`wms-hand-item${done ? " is-done" : ""}`}

@@ -6446,3 +6446,21 @@ erros:
       - src/lib/cross/equivalencias.ts
       - src/lib/wms/trocas-equivalencia.ts
     tags: [cross, equivalencia]
+
+  - id: separacao-flechinha-loc-unica
+    date: "2026-06-19"
+    source: src/app/wms/separacao/checklist/page.tsx
+    category: business_logic
+    message: "Flechinha 'outras localizações' aparecia em itens com 1 só loc (a já exibida), sem destino útil"
+    cause: >
+      Gate podeVerLocs checava só !isPego && !done && separacao_galpao_id —
+      nunca o nº de locs. O painel busca as locs lazy, então a row não sabia a
+      contagem no render.
+    fix: >
+      checklist-items expõe locs_disponiveis (nº de locs pegáveis, disponivel>0,
+      não-travadas, derivado do locCandidatesMap já existente); gate passa a
+      exigir locs_disponiveis > 1.
+    files:
+      - src/app/api/wms/separacao/checklist-items/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+    tags: [separacao, ui, localizacao]

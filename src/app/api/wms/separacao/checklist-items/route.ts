@@ -489,6 +489,12 @@ export async function GET(request: NextRequest) {
           : null,
         saldo: live?.saldo ?? 0,
         disponivel: live?.disponivel ?? 0,
+        // Nº de locs pegáveis (disponivel>0, não-travadas) no galpão. Gate da
+        // flechinha "outras localizações": só faz sentido quando há mais de uma.
+        locs_disponiveis: liveKey
+          ? (locCandidatesMap.get(liveKey) ?? []).filter((c) => c.disponivel > 0)
+              .length
+          : 0,
         empresa_origem_id: sepEmpresaId,
         separacao_galpao_id: sepGalpaoId,
         galpao_nome: galpaoMap.get(sepEmpresaId ?? "") ?? null,

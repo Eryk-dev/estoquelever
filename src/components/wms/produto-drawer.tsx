@@ -225,7 +225,7 @@ export function ProdutoDrawer({
                     className="wms-btn wms-btn-sm wms-btn-ghost"
                     onClick={() => openAction("ajuste")}
                   >
-                    <Icon name="minus" size={11} />
+                    <Icon name="box" size={11} />
                     Ajuste de estoque
                   </button>
                   <button
@@ -701,7 +701,7 @@ function EstoquePorLocal({
                   onClick={() => onAction("ajuste")}
                   title="Ajuste de estoque"
                 >
-                  <Icon name="minus" size={11} />
+                  <Icon name="box" size={11} />
                 </button>
                 <button
                   className="wms-btn-icon"

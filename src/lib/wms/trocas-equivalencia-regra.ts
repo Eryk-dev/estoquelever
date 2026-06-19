@@ -31,7 +31,7 @@ export interface RegraTrocaInput {
   tierVendido: TierQualidade | null;
   /** tier do produto SUBSTITUTO (peça física a enviar) */
   tierSubstituto: TierQualidade | null;
-  /** status do par em siso_equivalencias_verificadas (null = nunca curado) */
+  /** status do par no caderno do cross (null = nunca curado) */
   parVerificacao: ParVerificacao;
   /** true quando o item já tem quantidade_pega > 0 do vendido (cliente receberá mistura) */
   misto: boolean;

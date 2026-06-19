@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { sisoFetch } from "@/lib/auth-context";
 
 /**
- * Sinal leve "este SKU tem equivalentes no cluster cross?" — usado pra só
- * mostrar o botão Equivalentes onde há equivalência de verdade (decisão Eryk
- * 2026-06-14). Mesma fonte do has-cross do cross-popover (RPC transitiva
- * siso_cross_cluster_skus). Cache módulo-level + dedup de in-flight pra não
+ * Sinal leve "este SKU tem equivalentes no cross?" — usado pra só mostrar o
+ * botão Equivalentes onde há equivalência de verdade (decisão Eryk 2026-06-14).
+ * Fonte única: a ficha do caderno (/api/wms/cross/produtos/[sku]); tem cross =
+ * equivalentes.length>0. Cache módulo-level + dedup de in-flight pra não
  * re-checar o mesmo SKU em vários cards na mesma sessão.
  */
 const hasCrossCache = new Map<string, boolean>();
@@ -23,11 +23,11 @@ async function checkHasCross(sku: string): Promise<boolean> {
   const promise = (async () => {
     try {
       const res = await sisoFetch(
-        `/api/wms/cross/produtos/${encodeURIComponent(sku)}/has-cross`,
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}`,
       );
       if (!res.ok) return false;
-      const data = (await res.json()) as { has?: boolean };
-      const has = !!data.has;
+      const data = (await res.json()) as { equivalentes?: unknown[] };
+      const has = (data.equivalentes?.length ?? 0) > 0;
       hasCrossCache.set(sku, has);
       return has;
     } catch {

@@ -29,22 +29,14 @@ export default {
     // Saldo do equivalente SÓ em SP. SKU-A fica sem saldo em lugar nenhum.
     await ctx.semearSaldo({ produto: skuB, galpao: "SP", loc: "C-01-01", qty: 10 });
 
-    // Cluster cross: catálogo OEM + link manual A↔B (siso_cross_cluster_skus
-    // segue siso_produto_links). FK de links/verificadas → siso_produtos_catalogo.
-    await ctx.sb.from("siso_produtos_catalogo").upsert(
-      [
-        { sku: skuA, nome: "Original 60" },
-        { sku: skuB, nome: "Equivalente 60" },
-      ],
-      { onConflict: "sku" },
-    );
-    await ctx.sb.from("siso_produto_links").insert({ sku_a: skuA, sku_b: skuB });
-
-    // Curadoria: par verificado (sku_a < sku_b normalizado).
+    // Caderno do cross: par A↔B confirmado (sku_a < sku_b normalizado).
     const [a, b] = [skuA, skuB].sort();
     await ctx.sb
-      .from("siso_equivalencias_verificadas")
-      .upsert({ sku_a: a, sku_b: b, status: "verificado" }, { onConflict: "sku_a,sku_b" });
+      .from("siso_cross_equivalencias")
+      .upsert(
+        { sku_a: a, sku_b: b, status: "confirmado", fonte: "cenario" },
+        { onConflict: "sku_a,sku_b" },
+      );
 
     return { skuA, skuB };
   },

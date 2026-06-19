@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import { createServiceClient } from "@/lib/supabase-server";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
-import { equivalentesDaPeca } from "@/lib/cross/equivalencias";
+import { equivalentesDaPeca, ondeComprarDaPeca } from "@/lib/cross/equivalencias";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
 /**
@@ -22,7 +22,7 @@ export async function GET(
     const sb = createServiceClient();
     const { data: prod } = await sb
       .from("siso_produtos")
-      .select("sku, descricao, imagem_url, imagens, tier_qualidade")
+      .select("sku, descricao, imagem_url, imagens, tier_qualidade, oem")
       .eq("sku", sku)
       .maybeSingle();
     if (!prod) return NextResponse.json({ error: "produto não encontrado" }, { status: 404 });
@@ -30,8 +30,16 @@ export async function GET(
     const estoqueMap = await aggregateLiveStockBySku(sb, [sku]);
     const nossoEstoquePorGalpao = Object.fromEntries(estoqueMap.get(sku)?.entries() ?? []);
 
-    const eq = await equivalentesDaPeca(sku, { incluirBloqueado: true });
-    return NextResponse.json({ produto: prod, nossoEstoquePorGalpao, equivalentes: eq.equivalentes });
+    const [eq, ondeComprar] = await Promise.all([
+      equivalentesDaPeca(sku, { incluirBloqueado: true }),
+      ondeComprarDaPeca(sku),
+    ]);
+    return NextResponse.json({
+      produto: prod,
+      nossoEstoquePorGalpao,
+      equivalentes: eq.equivalentes,
+      ondeComprar,
+    });
   } catch (error) {
     return wmsErrorResponse({ source: "wms.cross.ficha", error, message: "erro montando ficha" });
   }

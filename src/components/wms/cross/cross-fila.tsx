@@ -19,6 +19,7 @@ interface FilaItem {
   fonte: string;
   a: ProdLado | null;
   b: ProdLado | null;
+  oem_compartilhado?: string[];
 }
 
 function imgs(p: ProdLado | null): string[] {
@@ -108,6 +109,15 @@ export function CrossFila() {
       <div style={{ marginBottom: 8, color: "var(--wms-c-muted)" }}>
         {i + 1} / {itens.length} · ligado por: {atual.fonte}
       </div>
+
+      {atual.oem_compartilhado && atual.oem_compartilhado.length > 0 && (
+        <div style={{ marginBottom: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "var(--wms-c-muted)" }}>compartilham OEM:</span>
+          {atual.oem_compartilhado.map((o) => (
+            <span key={o} className="wms-chip wms-mono">{o}</span>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12 }}>
         <Pane rotulo="Peça A" prod={atual.a} />

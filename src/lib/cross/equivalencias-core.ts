@@ -57,6 +57,71 @@ export function statusParaRegra(
   return null;
 }
 
+/** Normaliza um código OEM pra comparar (sem separadores, caixa alta). */
+export function normalizarOem(codigo: string): string {
+  return codigo.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
+/**
+ * Códigos OEM em comum entre duas peças (normalizados, dedup). Base da dica
+ * "compartilham OEM X" na fila e do match por OEM compartilhado.
+ */
+export function oemEmComum(
+  a: string[] | null | undefined,
+  b: string[] | null | undefined,
+): string[] {
+  if (!a || !b) return [];
+  const setB = new Set(b.map(normalizarOem).filter(Boolean));
+  const vistos = new Set<string>();
+  const out: string[] = [];
+  for (const codigo of a) {
+    const n = normalizarOem(codigo);
+    if (n && setB.has(n) && !vistos.has(n)) {
+      vistos.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+/** Uma opção de fornecedor já achatada pro pool "Onde comprar". */
+export interface FornecedorPoolEntrada {
+  fornecedorId: string | null;
+  nome: string;
+  codigo_fornecedor: string | null;
+  custo_unitario: number | null;
+  galpao_id: string | null;
+  galpao_nome: string | null;
+  preferencial: boolean;
+}
+
+export interface OndeComprarLinha extends FornecedorPoolEntrada {
+  /** De qual SKU do grupo vem esta opção. */
+  sku: string;
+  origem: "proprio" | "equivalente";
+}
+
+/**
+ * Pool "Onde comprar": junta os fornecedores do próprio SKU + dos equivalentes
+ * (já confirmados) numa lista só, mantendo a proveniência (de qual SKU vem).
+ * Ordem: próprio primeiro, depois cada equivalente na ordem de `grupoSkus`
+ * (cada bloco já vem preferencial-first do loader).
+ */
+export function montarOndeComprar(input: {
+  selfSku: string;
+  grupoSkus: string[];
+  fornecedoresPorSku: Record<string, FornecedorPoolEntrada[]>;
+}): OndeComprarLinha[] {
+  const out: OndeComprarLinha[] = [];
+  for (const sku of input.grupoSkus) {
+    const entradas = input.fornecedoresPorSku[sku] ?? [];
+    for (const e of entradas) {
+      out.push({ ...e, sku, origem: sku === input.selfSku ? "proprio" : "equivalente" });
+    }
+  }
+  return out;
+}
+
 /**
  * Monta a lista de equivalentes DIRETOS de `sku` (sem corrente transitiva),
  * juntando produto + estoque (ledger) + status do par.

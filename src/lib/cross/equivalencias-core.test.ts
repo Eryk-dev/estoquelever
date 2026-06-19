@@ -5,8 +5,12 @@ import {
   outroLado,
   statusParaRegra,
   montarEquivalentes,
+  normalizarOem,
+  oemEmComum,
+  montarOndeComprar,
   type CrossPar,
   type ProdutoMin,
+  type FornecedorPoolEntrada,
 } from "./equivalencias-core";
 
 describe("normalizarPar", () => {
@@ -77,5 +81,61 @@ describe("montarEquivalentes", () => {
   it("ignora pares sem produto carregado", () => {
     const r = montarEquivalentes({ sku: "A", pares, produtosPorSku: { A: produtos.A }, estoquePorSku: {}, incluirBloqueado: true });
     expect(r.equivalentes).toEqual([]);
+  });
+});
+
+describe("normalizarOem", () => {
+  it("tira separadores e caixa pra comparar códigos", () => {
+    expect(normalizarOem("4B0 260 403 R")).toBe("4B0260403R");
+    expect(normalizarOem("4b0.260-403/r")).toBe("4B0260403R");
+    expect(normalizarOem("  ri.700.821 ")).toBe("RI700821");
+    expect(normalizarOem("")).toBe("");
+  });
+});
+
+describe("oemEmComum", () => {
+  it("interseção normalizada (ignora separadores/caixa), dedup", () => {
+    expect(oemEmComum(["4B0 260 403 R", "X1"], ["4b0260403r"])).toEqual(["4B0260403R"]);
+    expect(oemEmComum(["A1"], ["B2"])).toEqual([]);
+    expect(oemEmComum(null, ["A1"])).toEqual([]);
+    expect(oemEmComum(["A1", "a 1"], ["A1"])).toEqual(["A1"]);
+  });
+});
+
+describe("montarOndeComprar", () => {
+  const f = (
+    nome: string,
+    codigo: string | null,
+    preferencial = false,
+  ): FornecedorPoolEntrada => ({
+    fornecedorId: nome,
+    nome,
+    codigo_fornecedor: codigo,
+    custo_unitario: null,
+    galpao_id: null,
+    galpao_nome: null,
+    preferencial,
+  });
+
+  it("pool com próprio primeiro, equivalentes depois, com proveniência", () => {
+    const linhas = montarOndeComprar({
+      selfSku: "003505",
+      grupoSkus: ["003505", "A143605"],
+      fornecedoresPorSku: {
+        "003505": [f("ACA", "003505", true)],
+        A143605: [f("Royce", "RI.700.821", true)],
+      },
+    });
+    expect(linhas.map((l) => [l.sku, l.nome, l.origem])).toEqual([
+      ["003505", "ACA", "proprio"],
+      ["A143605", "Royce", "equivalente"],
+    ]);
+    expect(linhas[1].codigo_fornecedor).toBe("RI.700.821");
+  });
+
+  it("SKU sem fornecedor cadastrado não quebra; lista vazia → []", () => {
+    expect(
+      montarOndeComprar({ selfSku: "X", grupoSkus: ["X"], fornecedoresPorSku: {} }),
+    ).toEqual([]);
   });
 });

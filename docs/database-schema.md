@@ -1573,6 +1573,10 @@ Integra o caderno de equivalência (`siso_cross_equivalencias`) ao fluxo operaci
 
 `text NULL CHECK IN ('original','primeira_linha','segunda_linha')` — escala única ordenada de qualidade (D5). NULL = sem classificação → toda troca envolvendo o produto exige aprovação. Backfill via SQL por padrão de SKU/fornecedor.
 
+### siso_produtos.oem (coluna nova — 2026-06-19, `20260619e_produtos_oem.sql`)
+
+`text[] NULL` + índice GIN `idx_produtos_oem`. Códigos OEM (originais) do produto, **manuais** (preenchidos pela ficha do cross / aba Cross do produto-drawer; sem importador). NÃO ressuscita o catálogo sujo dropado em `20260619d` — é coluna no catálogo limpo. Alimenta: (1) busca do cross (`/cross/search` casa OEM via `overlaps`), e (2) **palpites automáticos** — salvar OEM dispara `gerarPalpitesPorOem` que cria pares `sugestao` (fonte `oem_auto`) entre produtos que compartilham algum código (fila de validação; humano confirma; nunca auto-confirma; UNIQUE respeita par existente, não revive `bloqueado`).
+
 ### Curadoria de pares — `siso_cross_equivalencias` (o caderno)
 
 A curadoria humana de pares (D9) agora mora no caderno único do cross — ver `### siso_cross_equivalencias` na seção **Cross**. A troca lê via `buscarParVerificacao`: `status='confirmado'` → "verificado" (auto-troca SÓ acontece com par confirmado + mesmo tier), `bloqueado` → "nunca trocar", `sugestao` → null (palpite, não habilita troca). A antiga `siso_equivalencias_verificadas` foi DROPADA em `20260619d_cross_drop_legado.sql` (seus pares válidos foram migrados pro caderno em `20260619c`).

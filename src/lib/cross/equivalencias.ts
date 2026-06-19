@@ -2,13 +2,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceClient } from "@/lib/supabase-server";
 import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
 import type { LiveStockEntry } from "@/lib/wms/live-stock";
+import { listarFornecedoresPorSkus } from "@/lib/wms/fornecedores-sku";
 import {
   normalizarPar,
   montarEquivalentes,
+  montarOndeComprar,
+  oemEmComum,
   type CrossPar,
   type CrossStatus,
   type ProdutoMin,
   type EquivalentesDaPeca,
+  type FornecedorPoolEntrada,
+  type OndeComprarLinha,
 } from "./equivalencias-core";
 
 /** Pares do caderno que tocam `sku` (em qualquer dos lados). */
@@ -91,6 +96,8 @@ export interface FilaItem {
   criado_em: string;
   a: ProdutoMin | null;
   b: ProdutoMin | null;
+  /** OEM em comum entre as duas peças — dica de por que viraram palpite. */
+  oem_compartilhado: string[];
 }
 
 /** Fila de validação: palpites (sugestao) com dados das duas peças. */
@@ -103,6 +110,14 @@ export async function listarFila(sb: SupabaseClient): Promise<FilaItem[]> {
   if (!rows || rows.length === 0) return [];
   const skus = [...new Set(rows.flatMap((r) => [r.sku_a as string, r.sku_b as string]))];
   const prod = await carregarProdutos(sb, skus);
+
+  // OEM por sku, pra computar o que as duas peças compartilham.
+  const { data: oemRows } = await sb.from("siso_produtos").select("sku, oem").in("sku", skus);
+  const oemPorSku = new Map<string, string[] | null>();
+  for (const o of (oemRows ?? []) as Array<{ sku: string; oem: string[] | null }>) {
+    oemPorSku.set(o.sku, o.oem);
+  }
+
   return rows.map((r) => ({
     id: r.id as number,
     sku_a: r.sku_a as string,
@@ -111,6 +126,10 @@ export async function listarFila(sb: SupabaseClient): Promise<FilaItem[]> {
     criado_em: r.criado_em as string,
     a: prod[r.sku_a as string] ?? null,
     b: prod[r.sku_b as string] ?? null,
+    oem_compartilhado: oemEmComum(
+      oemPorSku.get(r.sku_a as string) ?? null,
+      oemPorSku.get(r.sku_b as string) ?? null,
+    ),
   }));
 }
 
@@ -165,4 +184,76 @@ export async function equivalentesDaPeca(
     estoquePorSku,
     incluirBloqueado: opts?.incluirBloqueado ?? true,
   });
+}
+
+/** SKUs dos equivalentes CONFIRMADOS de `sku` (pares diretos, sem corrente). */
+export async function skusEquivalentesConfirmados(
+  sb: SupabaseClient,
+  sku: string,
+): Promise<string[]> {
+  const pares = await paresDoSku(sb, sku);
+  const confirmados = pares
+    .filter((p) => p.status === "confirmado")
+    .map((p) => (p.sku_a === sku ? p.sku_b : p.sku_a));
+  return [...new Set(confirmados)];
+}
+
+/**
+ * Pool "Onde comprar": fornecedores do próprio SKU + dos equivalentes
+ * CONFIRMADOS, numa lista só com proveniência (de qual SKU vem). Reusa o
+ * loader de fornecedor (cadastro + fallback prefix). Palpite NÃO entra no pool.
+ */
+export async function ondeComprarDaPeca(sku: string): Promise<OndeComprarLinha[]> {
+  const sb = createServiceClient();
+  const confirmados = await skusEquivalentesConfirmados(sb, sku);
+  const grupoSkus = [sku, ...confirmados];
+
+  const fornMap = await listarFornecedoresPorSkus(grupoSkus);
+  const fornecedoresPorSku: Record<string, FornecedorPoolEntrada[]> = {};
+  for (const [s, v] of fornMap.entries()) {
+    fornecedoresPorSku[s] = v.opcoes.map((o) => ({
+      fornecedorId: o.fornecedorId,
+      nome: o.nome,
+      codigo_fornecedor: o.codigo_fornecedor,
+      custo_unitario: o.custo_unitario,
+      galpao_id: o.galpao_id,
+      galpao_nome: o.galpao_nome,
+      preferencial: o.preferencial,
+    }));
+  }
+  return montarOndeComprar({ selfSku: sku, grupoSkus, fornecedoresPorSku });
+}
+
+/**
+ * Cria palpites (sugestao, fonte `oem_auto`) entre `sku` e produtos que
+ * compartilham algum OEM. Idempotente e respeita par existente (a UNIQUE
+ * (sku_a,sku_b) faz o insert falhar → não revive bloqueado nem duplica).
+ * Nunca confirma. Best-effort (fire-and-forget no caller).
+ */
+export async function gerarPalpitesPorOem(
+  sku: string,
+  oem: string[],
+  criadoPor: string | null,
+): Promise<number> {
+  const codigos = [...new Set(oem.map((o) => o.trim()).filter(Boolean))];
+  if (codigos.length === 0) return 0;
+  const sb = createServiceClient();
+  const { data: candidatos } = await sb
+    .from("siso_produtos")
+    .select("sku, oem")
+    .overlaps("oem", codigos)
+    .neq("sku", sku)
+    .eq("ativo", true)
+    .limit(50);
+
+  let criados = 0;
+  for (const c of (candidatos ?? []) as Array<{ sku: string; oem: string[] | null }>) {
+    if (oemEmComum(codigos, c.oem).length === 0) continue;
+    const { sku_a, sku_b } = normalizarPar(sku, c.sku);
+    const { error } = await sb
+      .from("siso_cross_equivalencias")
+      .insert({ sku_a, sku_b, fonte: "oem_auto", criado_por: criadoPor });
+    if (!error) criados++; // unique_violation → par já existe, ignora
+  }
+  return criados;
 }

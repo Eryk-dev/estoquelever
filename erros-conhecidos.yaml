@@ -6464,3 +6464,34 @@ erros:
       - src/app/api/wms/separacao/checklist-items/route.ts
       - src/app/wms/separacao/checklist/page.tsx
     tags: [separacao, ui, localizacao]
+
+  - id: cross-busca-sem-codigo-fornecedor
+    date: "2026-06-19"
+    source: src/app/api/wms/cross/search/route.ts
+    category: business_logic
+    message: >
+      Buscar por código de fornecedor no Cross não achava o produto (ex.:
+      RI.700.821 deveria achar A143605/Royce) e a ficha do cross não mostrava
+      fornecedores nem OEM — sem integração entre item, equivalente e fornecedor.
+    cause: >
+      /cross/search só casava sku/descrição em siso_produtos. A ficha
+      (/cross/produtos/[sku]) só trazia equivalentes+estoque; o dado
+      codigo_fornecedor (já sincronizado do Tiny em siso_produto_fornecedores)
+      nunca era consultado. OEM não tinha coluna no catálogo limpo.
+    fix: >
+      Busca passa a casar codigo_fornecedor (ilike) + oem (overlaps) e devolve o
+      motivo do match. Ficha ganha pool "Onde comprar" (fornecedores do SKU +
+      dos equivalentes confirmados, com proveniência) + editor de OEM. Nova
+      coluna siso_produtos.oem (manual); salvar OEM gera palpites por OEM
+      compartilhado. Page do produto ganha bloco "Fornecedores de equivalentes".
+    files:
+      - src/app/api/wms/cross/search/route.ts
+      - src/app/api/wms/cross/produtos/[sku]/route.ts
+      - src/app/api/wms/cross/produtos/[sku]/oem/route.ts
+      - src/lib/cross/equivalencias.ts
+      - src/lib/cross/equivalencias-core.ts
+      - src/lib/wms/fornecedores-sku.ts
+      - src/app/wms/cross/[sku]/page.tsx
+      - src/components/wms/produto-drawer.tsx
+      - supabase/migrations/20260619e_produtos_oem.sql
+    tags: [cross, fornecedor, oem, busca, integracao]

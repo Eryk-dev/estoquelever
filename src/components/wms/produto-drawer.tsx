@@ -1079,6 +1079,53 @@ function Fornecedores({ produto }: { produto: Produto }) {
           />
         ))
       )}
+
+      <FornecedoresDeEquivalentes sku={produto.sku} />
+    </div>
+  );
+}
+
+interface OndeComprarLinhaDrawer {
+  sku: string;
+  origem: "proprio" | "equivalente";
+  nome: string;
+  codigo_fornecedor: string | null;
+  galpao_nome: string | null;
+  preferencial: boolean;
+}
+
+/**
+ * Bloco separado: fornecedores que atendem ESTE SKU por equivalência (peças
+ * cruzadas confirmadas no Cross). Não mistura com os fornecedores do próprio
+ * SKU — aqui é "dá pra comprar do equivalente, do fornecedor tal".
+ */
+function FornecedoresDeEquivalentes({ sku }: { sku: string }) {
+  const q = useQuery({
+    queryKey: ["wms-cross-onde-comprar", sku],
+    queryFn: () =>
+      wmsApi<{ ondeComprar: OndeComprarLinhaDrawer[] }>(
+        `/api/wms/cross/produtos/${encodeURIComponent(sku)}`,
+      ),
+  });
+  const linhas = (q.data?.ondeComprar ?? []).filter((l) => l.origem === "equivalente");
+  if (linhas.length === 0) return null;
+  return (
+    <div style={{ borderTop: "1px solid var(--wms-c-border)", paddingTop: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--wms-c-muted)", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
+        Fornecedores de equivalentes
+      </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {linhas.map((l, idx) => (
+          <div key={`${l.sku}-${l.nome}-${idx}`} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>{l.nome}</span>
+            {l.preferencial && <span className="wms-badge wms-badge-ok">preferencial</span>}
+            {l.codigo_fornecedor && <span className="wms-chip wms-mono">{l.codigo_fornecedor}</span>}
+            {l.galpao_nome && <span className="wms-chip">{l.galpao_nome}</span>}
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: "var(--wms-c-muted)" }}>via {l.sku}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

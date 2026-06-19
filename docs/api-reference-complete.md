@@ -4997,7 +4997,7 @@ Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (
 
 **File:** `src/app/api/wms/cross/search/route.ts`
 
-**Purpose:** Busca universal de produtos por SKU/descrição (REESCRITO — agora sobre `siso_produtos` + caderno, sem Tiny/catálogo).
+**Purpose:** Busca universal de produtos por SKU/descrição **+ código de fornecedor + OEM** (sobre `siso_produtos` + `siso_produto_fornecedores` + caderno, sem Tiny/catálogo).
 
 **Auth:** Sessão via `X-Session-Id`
 
@@ -5012,14 +5012,16 @@ Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (
       "sku": "string",
       "descricao": "string",
       "imagem_url": "string | null",
-      "status_cross": "confirmado" | "sugestao" | "sem_cross"
+      "status_cross": "confirmado" | "sugestao" | "sem_cross",
+      "match": { "tipo": "codigo_fornecedor" | "oem", "valor": "string", "fornecedor": "string | null" }
     }
   ]
 }
 ```
 
 **Business Logic:**
-- Busca em `siso_produtos` (sku/descrição)
+- Casa em `siso_produtos` (sku/descrição via `ilike`), em `siso_produto_fornecedores.codigo_fornecedor` (`ilike` — ex.: `RI.700.821` acha o SKU da Royce) e em `siso_produtos.oem` (`overlaps`, com variantes de caixa)
+- `match` só vem preenchido quando o motivo NÃO é óbvio (achado por código de fornecedor ou OEM); match direto por sku/descrição não traz `match`
 - `status_cross` por SKU vem do caderno `siso_cross_equivalencias` (`confirmado` se há par confirmado · `sugestao` se só palpite · `sem_cross` se nenhum par)
 - Persiste a busca em `siso_cross_logs` (fire-and-forget) para telemetria
 
@@ -5104,7 +5106,7 @@ Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (
 **Response (200):**
 ```json
 {
-  "produto": { "sku": "string", "descricao": "string", "imagem_url": "string | null", "...": "..." },
+  "produto": { "sku": "string", "descricao": "string", "imagem_url": "string | null", "oem": "string[] | null", "...": "..." },
   "nossoEstoquePorGalpao": {
     "<galpao_nome>": { "saldo": "number", "reservado": "number", "disponivel": "number" }
   },
@@ -5118,16 +5120,42 @@ Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (
         "<galpao_nome>": { "saldo": "number", "reservado": "number", "disponivel": "number" }
       }
     }
+  ],
+  "ondeComprar": [
+    {
+      "sku": "string", "origem": "proprio" | "equivalente",
+      "fornecedorId": "string | null", "nome": "string", "codigo_fornecedor": "string | null",
+      "custo_unitario": "number | null", "galpao_id": "string | null", "galpao_nome": "string | null", "preferencial": "boolean"
+    }
   ]
 }
 ```
 
 **Business Logic:**
-- Lê o produto em `siso_produtos` por `sku`
+- Lê o produto em `siso_produtos` por `sku` (inclui `oem`)
 - `nossoEstoquePorGalpao` + `estoquePorGalpao` dos equivalentes vêm do ledger via `aggregateLiveStockBySku` (NUNCA do Tiny)
 - `equivalentes` = pares do SKU no caderno `siso_cross_equivalencias` (com `status`)
+- `ondeComprar` = pool de fornecedores do próprio SKU **+ dos equivalentes CONFIRMADOS** (palpite não entra), via `listarFornecedoresPorSkus` (cadastro + fallback prefix), com proveniência (`origem`/`sku` = de qual SKU vem). Preferencial primeiro dentro de cada SKU; próprio antes dos equivalentes.
 
 **Side Effects:** None
+
+---
+
+### PATCH /api/wms/cross/produtos/[sku]/oem
+
+**File:** `src/app/api/wms/cross/produtos/[sku]/oem/route.ts`
+
+**Purpose:** Salva os códigos OEM (manuais) do produto e dispara palpites de cross por OEM compartilhado.
+
+**Auth:** `produtos.editar` · **Body:** `{ oem: string[] }`
+
+**Business Logic:**
+- Sanitiza (trim, remove vazios, dedup) e grava `siso_produtos.oem` pelo SKU (null se vazio). 404 se SKU fora do catálogo.
+- Fire-and-forget: `gerarPalpitesPorOem` cria pares `sugestao` (fonte `oem_auto`) entre este SKU e produtos que compartilham algum OEM (idempotente; UNIQUE respeita par existente — não revive `bloqueado` nem duplica; nunca confirma).
+
+**Response (200):** `{ ok: true, oem: string[] }`
+
+**Side Effects:** Update em `siso_produtos`; inserts em `siso_cross_equivalencias` (palpites).
 
 ---
 

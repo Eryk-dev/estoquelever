@@ -5,6 +5,8 @@ export interface FornecedorOpcao {
   /** id de siso_fornecedores; null quando vem do fallback do prefix map. */
   fornecedorId: string | null;
   nome: string;
+  /** Código deste produto no catálogo do fornecedor. null no fallback prefix. */
+  codigo_fornecedor: string | null;
   custo_unitario: number | null;
   lead_time_dias_medio: number | null;
   qty_minima_pedido: number;
@@ -25,6 +27,7 @@ export interface FornecedoresPorSku {
 type PfRow = {
   produto_id: string;
   fornecedor_id: string | null;
+  codigo_fornecedor: string | null;
   custo_unitario: number | null;
   lead_time_dias_medio: number | null;
   qty_minima_pedido: number | null;
@@ -112,6 +115,7 @@ export async function listarFornecedoresPorSkus(
       lista.push({
         fornecedorId: pf.fornecedor_id ?? null,
         nome: pf.fornecedor?.nome ?? "—",
+        codigo_fornecedor: pf.codigo_fornecedor ?? null,
         custo_unitario: pf.custo_unitario ?? null,
         lead_time_dias_medio: pf.lead_time_dias_medio ?? null,
         qty_minima_pedido: Number(pf.qty_minima_pedido ?? 1),
@@ -139,6 +143,7 @@ export async function listarFornecedoresPorSkus(
         {
           fornecedorId: null,
           nome: fornecedor,
+          codigo_fornecedor: null,
           custo_unitario: null,
           lead_time_dias_medio: null,
           qty_minima_pedido: 1,

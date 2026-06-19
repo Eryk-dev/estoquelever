@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cross — o cérebro de equivalência entre peças</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#2563eb;
+    --feliz:#16a34a; --feliz-bg:#dcfce7;
+    --borda:#d97706; --borda-bg:#fef3c7;
+    --erro:#dc2626;  --erro-bg:#fee2e2;
+    --div:#a21caf;   --div-bg:#fae8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);line-height:1.5;padding:48px 24px 96px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  header.top p{margin:0;color:var(--muted);font-size:15px}
+  .legenda{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:22px 0 40px;
+    padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    font-size:13px;color:var(--muted)}
+  .legenda b{color:var(--ink);font-weight:600;margin-right:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;border:1.5px solid}
+  .dot.feliz{background:var(--feliz-bg);border-color:var(--feliz)}
+  .dot.borda{background:var(--borda-bg);border-color:var(--borda)}
+  .dot.erro{background:var(--erro-bg);border-color:var(--erro)}
+  .dot.dec{background:#dbeafe;border-color:var(--accent)}
+  .dot.div{background:var(--div-bg);border-color:var(--div);border-style:dashed}
+  section.diag{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 18px;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  section.diag>h2{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 2px}
+  section.diag>.cap{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .mermaid{display:flex;justify-content:center;min-height:60px}
+  .mermaid svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Cross — o cérebro de equivalência entre peças</h1>
+    <p>Aprende qual peça substitui qual, juntando todos os fornecedores, e espalha isso pro sistema inteiro.</p>
+  </header>
+
+  <div class="legenda">
+    <b>Legenda:</b>
+    <span class="chip"><span class="dot feliz"></span> caminho feliz</span>
+    <span class="chip"><span class="dot borda"></span> borda (acontece, tratável)</span>
+    <span class="chip"><span class="dot erro"></span> erro (precisa de atenção)</span>
+    <span class="chip"><span class="dot dec"></span> decisão</span>
+    <span class="chip"><span class="dot div"></span> ⚠ divergência / gambiarra</span>
+  </div>
+
+  <!-- 1. MAPA DO FLUXO -->
+  <section class="diag">
+    <h2>Mapa do fluxo</h2>
+    <p class="cap">Hoje (núcleo): você liga à mão → fila → confirma → espalha. Caderno é um só (cross + troca). Importadores enchem a fila depois. Nada aprova sozinho.</p>
+    <pre class="mermaid">
+flowchart TD
+  LIGA["Você liga duas peças<br/>à mão"]:::feliz --> PAL["Vira PALPITE<br/>no caderno"]:::borda
+  IMP["depois: ACA · OEM ·<br/>outros fornecedores"]:::imp -.->|"enchem a fila"| PAL
+  PAL --> FILA["Fila de validação<br/>fotos lado a lado"]:::borda
+  FILA --> P{"Pessoa decide<br/>(permissão de troca)"}:::dec
+  P -->|"✓ é a mesma"| CONF["CONFIRMADO"]:::feliz
+  P -->|"✗ não / bloqueia"| BLOCK["Bloqueado 🚫<br/>nunca troca"]:::erro
+  CONF --> IRR["IRRADIA — caderno é um só"]:::feliz
+  IRR --> I1["Ficha do produto<br/>mostra o equivalente"]:::feliz
+  IRR --> I2["Troca destrava<br/>na hora"]:::feliz
+  IRR --> I3["depois: vira código de compra<br/>+ re-roteia pedido preso"]:::imp
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef imp fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#a1a1aa,stroke-dasharray:4 3;
+    </pre>
+  </section>
+
+  <!-- 2. EXEMPLO REAL -->
+  <section class="diag">
+    <h2>Exemplo real · eletroventilador</h2>
+    <p class="cap">Quando os importadores entrarem: três fontes no mesmo código = palpite forte no topo da fila. Uma pessoa confirma — nunca automático.</p>
+    <pre class="mermaid">
+flowchart LR
+  S1["ACA · 012744<br/>código 4B0260403R"]:::n --> M["3 fontes no mesmo código<br/>palpite forte → topo da fila"]:::borda
+  S2["Tiger · EW-5521<br/>código 4B0260403R"]:::n --> M
+  S3["Nosso · A143372<br/>código 4B0260403R"]:::n --> M
+  M --> C["Pessoa confirma ✓<br/>(nunca automático)"]:::dec
+  C --> R1["Ficha do A143372 mostra:<br/>equivale a ACA 012744<br/>e Tiger EW-5521"]:::feliz
+  C --> R2["Pedido #88231 sem estoque de A143372<br/>agora a troca destrava"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 3. ESTADOS -->
+  <section class="diag">
+    <h2>Estados de um cross</h2>
+    <p class="cap">Da descoberta até ativo — e o que sai do caminho.</p>
+    <pre class="mermaid">
+flowchart LR
+  s1["Candidato<br/>achado"]:::n --> s2["Na fila de<br/>validação"]:::borda --> s3["Aprovado"]:::feliz --> s4["Ativo<br/>irradiando"]:::feliz
+  s4 --> s5["Revogado<br/>reverte tudo"]:::erro
+  s2 --> s6["Bloqueado 🚫<br/>nunca troca"]:::erro
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 4. BORDA · fornecedores discordam -->
+  <section class="diag">
+    <h2>Borda · fornecedores discordam</h2>
+    <p class="cap">Quando duas fontes dizem coisas diferentes sobre a mesma peça.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Fornecedor ACA diz:<br/>peça = original 4B0260403R"]:::n --> K{"Fontes batem?"}:::dec
+  B["Fornecedor Delphi diz:<br/>mesmo código = OUTRA peça"]:::n --> K
+  K -->|"concordam"| OK["Reforça a peça mestre ✓"]:::feliz
+  K -->|"discordam"| CFL["Conflito ⚠<br/>vai pra pessoa decidir"]:::borda
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 5. BORDA · código fraco / lixo -->
+  <section class="diag">
+    <h2>Borda · código fraco não liga sozinho</h2>
+    <p class="cap">Palavra genérica não pode juntar peças diferentes.</p>
+    <pre class="mermaid">
+flowchart TD
+  J["Catálogo diz<br/>'original: ORIGINAL' ou '1000'"]:::borda --> V{"É código de<br/>verdade?"}:::dec
+  V -->|"genérico, aparece em mil peças"| NO["Confiança baixa<br/>NÃO liga sozinho"]:::borda
+  V -->|"específico, ex 4B0260403R"| YES["Vira candidato forte"]:::feliz
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 6. BORDA · peça sem par -->
+  <section class="diag">
+    <h2>Borda · peça sem equivalente</h2>
+    <p class="cap">Nenhum código bate — não some, espera curadoria.</p>
+    <pre class="mermaid">
+flowchart TD
+  P["Peça nova<br/>nenhum código bate"]:::borda --> ISO["Fica sozinha<br/>sem equivalente"]:::borda --> Q["Entra na fila<br/>pra ligar à mão"]:::borda
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 7. BORDA · cross revogado -->
+  <section class="diag">
+    <h2>Borda · desfazer um cross reverte tudo</h2>
+    <p class="cap">Tirou o cross, o sistema desmonta o que ele tinha espalhado.</p>
+    <pre class="mermaid">
+flowchart TD
+  RV["Pessoa revoga<br/>o cross #4471"]:::erro --> R1["Tira o código<br/>de compra"]:::borda
+  RV --> R2["Recalcula o que<br/>falta comprar"]:::borda
+  RV --> R3["Some da ficha<br/>do produto"]:::borda
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    </pre>
+  </section>
+
+  <!-- 8. BORDA · fornecedor novo entra -->
+  <section class="diag">
+    <h2>Borda · fornecedor novo fortalece o que já existe</h2>
+    <p class="cap">Cada fornecedor a mais valida, contesta ou amplia o cross.</p>
+    <pre class="mermaid">
+flowchart TD
+  N["Fornecedor novo<br/>1 encaixe só"]:::feliz --> NC["Catálogo entra"]:::n --> CHK{"Bate com o<br/>que já temos?"}:::dec
+  CHK -->|"concorda"| UP["Sobe a confiança<br/>do que já existia ✓"]:::feliz
+  CHK -->|"par novo"| CAND["Vira candidato<br/>na fila"]:::borda
+  CHK -->|"contradiz"| CFL["Conflito ⚠<br/>pra pessoa"]:::borda
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      fontSize:'16px', lineColor:'#a1a1aa',
+      primaryColor:'#f4f4f5', primaryBorderColor:'#a1a1aa', primaryTextColor:'#18181b'
+    },
+    flowchart:{ useMaxWidth:true, htmlLabels:true, curve:'basis', nodeSpacing:55, rankSpacing:55, padding:14 }
+  });
+</script>
+</body>
+</html>

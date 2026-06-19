@@ -1,79 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
-import { userCan } from "@/lib/permissions";
-import { logger } from "@/lib/logger";
-import { getProdutoDetalheCompleto } from "@/lib/cross/catalogo-queries";
-import { getEmpresaOrigemId } from "@/lib/cross/empresa-origem";
-import {
-  fetchAndPersistProduto,
-  TinyOfflineError,
-  ProdutoNaoEncontradoError,
-} from "@/lib/cross/produto-fetcher";
+import { createServiceClient } from "@/lib/supabase-server";
+import { aggregateLiveStockBySku } from "@/lib/wms/live-stock";
+import { equivalentesDaPeca } from "@/lib/cross/equivalencias";
+import { wmsErrorResponse } from "@/lib/wms/api-errors";
 
-interface RouteParams {
-  params: Promise<{ sku: string }>;
-}
-
-export async function GET(request: NextRequest, { params }: RouteParams) {
+/**
+ * GET /api/wms/cross/produtos/[sku]
+ * Ficha: a peça (com NOSSO estoque do ledger) + equivalentes diretos.
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ sku: string }> },
+) {
   const session = await getSessionUser(request);
-  if (!session) {
-    return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
-  }
-
+  if (!session) return NextResponse.json({ error: "Sessão inválida" }, { status: 401 });
   const { sku: skuRaw } = await params;
   const sku = decodeURIComponent(skuRaw).trim();
-  if (!sku) {
-    return NextResponse.json({ error: "SKU obrigatório" }, { status: 400 });
+
+  try {
+    const sb = createServiceClient();
+    const { data: prod } = await sb
+      .from("siso_produtos")
+      .select("sku, descricao, imagem_url, imagens, tier_qualidade")
+      .eq("sku", sku)
+      .maybeSingle();
+    if (!prod) return NextResponse.json({ error: "produto não encontrado" }, { status: 404 });
+
+    const estoqueMap = await aggregateLiveStockBySku(sb, [sku]);
+    const nossoEstoquePorGalpao = Object.fromEntries(estoqueMap.get(sku)?.entries() ?? []);
+
+    const eq = await equivalentesDaPeca(sku, { incluirBloqueado: true });
+    return NextResponse.json({ produto: prod, nossoEstoquePorGalpao, equivalentes: eq.equivalentes });
+  } catch (error) {
+    return wmsErrorResponse({ source: "wms.cross.ficha", error, message: "erro montando ficha" });
   }
-  // proxy admin-equivalent: só admin tem sistema.usuarios no seed.
-  // Mantém comportamento exato (admin vê pode_remover=true em qualquer linha;
-  // operador só nas próprias).
-  const isAdmin = userCan(session, "sistema.usuarios");
-
-  const empresaOrigemId = await getEmpresaOrigemId(session);
-  if (!empresaOrigemId) {
-    return NextResponse.json(
-      { error: "Nenhuma empresa Tiny configurada para o seu galpão" },
-      { status: 500 },
-    );
-  }
-
-  const supabase = createServiceClient();
-  const { data: existe } = await supabase
-    .from("siso_produtos_catalogo")
-    .select("sku")
-    .eq("sku", sku)
-    .maybeSingle();
-
-  // Lazy fetch se não existe
-  if (!existe) {
-    try {
-      await fetchAndPersistProduto(sku, empresaOrigemId);
-    } catch (err) {
-      if (err instanceof ProdutoNaoEncontradoError) {
-        return NextResponse.json({ error: err.message }, { status: 404 });
-      }
-      if (err instanceof TinyOfflineError) {
-        return NextResponse.json({ error: err.message }, { status: 503 });
-      }
-      logger.error("cross-produto-detalhe", "Erro inesperado no lazy fetch", {
-        sku,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return NextResponse.json({ error: "Erro interno" }, { status: 500 });
-    }
-  }
-
-  const detalhe = await getProdutoDetalheCompleto({
-    sku,
-    sessionUserId: session.id,
-    isAdmin,
-  });
-
-  if (!detalhe) {
-    return NextResponse.json({ error: "Produto não encontrado" }, { status: 404 });
-  }
-
-  return NextResponse.json(detalhe);
 }

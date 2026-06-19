@@ -223,17 +223,10 @@ export function ProdutoDrawer({
                 <div className="wms-pd-hd-actions">
                   <button
                     className="wms-btn wms-btn-sm wms-btn-ghost"
-                    onClick={() => openAction("receber")}
-                  >
-                    <Icon name="plus" size={11} />
-                    Entrada
-                  </button>
-                  <button
-                    className="wms-btn wms-btn-sm wms-btn-ghost"
                     onClick={() => openAction("ajuste")}
                   >
                     <Icon name="minus" size={11} />
-                    Saída/ajuste
+                    Ajuste de estoque
                   </button>
                   <button
                     className="wms-btn wms-btn-sm wms-btn-ghost"
@@ -706,7 +699,7 @@ function EstoquePorLocal({
                 <button
                   className="wms-btn-icon"
                   onClick={() => onAction("ajuste")}
-                  title="Saída/ajuste"
+                  title="Ajuste de estoque"
                 >
                   <Icon name="minus" size={11} />
                 </button>

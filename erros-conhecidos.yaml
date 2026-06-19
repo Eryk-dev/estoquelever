@@ -6377,3 +6377,31 @@ erros:
     notes: >
       O galpão do validar-oc-item ainda usa siso_empresas.galpao_id (deprecado) — fix
       pra separacao_galpao_id ficou como follow-up; o helper só fechou a race-safety.
+
+  - id: checklist-parcial-trava-linha-consolidada
+    date: "2026-06-19"
+    source: wms.separacao-checklist
+    category: business_logic
+    message: "Um item em separacao_parcial travava a linha consolidada inteira do wave (409 abortava o toggle)"
+    cause: >
+      O checklist consolida o mesmo SKU de N pedidos do wave numa linha só (item_ids[]).
+      Quando UM desses itens foi parcial via loc_zerou (separacao_parcial=true, já
+      marcado), o toggleMutation loopava TODOS os item_ids no marcar-item — que tem
+      guard cego retornando 409 pra qualquer separacao_parcial (marcar-item/route.ts:49).
+      O loop é sequencial com abort no 1º erro, então o parcial abortava a linha inteira:
+      os pedidos-irmãos normais nunca eram marcados e o pedido não atingia
+      all_marcado → concluir o jogava pra 'pendentes' e o wave não fechava. O caminho do
+      scanner (bipar-checklist) já pulava parcial com `continue`; só o checkbox explodia.
+    fix: >
+      toggleMutation (page.tsx:435) passou a pular os item_ids parciais e marcar só os
+      normais — espelha o skip do scanner. Linha 100% parcial (caso solo) ainda cai no
+      marcar-item pra surfaçar o 409 (a mensagem orienta cancelar/desfazer-parcial).
+      O 409 do marcar-item foi mantido de propósito. Coberto por
+      consolidado-parcial-skip.test.tsx.
+    files:
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/checklist/__tests__/consolidado-parcial-skip.test.tsx
+    tags: [wms, separacao, checklist, wave-picking, parcial, loc_zerou, consolidacao, toggle, marcar-item]
+    notes: >
+      Fix client-side (cirúrgico). O guard 409 do marcar-item continua como rede pro caso
+      legítimo de tentar togglar um parcial sozinho.

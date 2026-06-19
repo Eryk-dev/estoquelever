@@ -432,7 +432,21 @@ export default function WmsChecklistPage() {
       // o real no finally (refetch real, não rollback só visual).
       // P2-SEP-05: idempotency_key por item por clique — protege o ramo
       // sem-reserva do marcar-item contra double-pick concorrente (P072).
-      for (const id of produto.item_ids) {
+      //
+      // SEP-PARCIAL: itens com separacao_parcial=true (cascade loc_zerou, já
+      // settled + marcados) fazem marcar-item retornar 409. Como a linha
+      // consolidada (mesmo SKU em N pedidos) loopa SEQUENCIAL com abort no 1º
+      // erro, um único parcial abortava a linha inteira — os pedidos-irmãos
+      // normais nunca eram marcados e o wave não concluía. Espelha o skip do
+      // scanner (bipar-checklist): pula os parciais e marca só os normais.
+      // Se a linha for 100% parcial (caso solo, raro), deixa cair no marcar-item
+      // pra surfaçar o 409 — a mensagem orienta a usar cancelar/desfazer-parcial.
+      const idsParciais = new Set(
+        items.filter((it) => it.separacao_parcial).map((it) => String(it.id)),
+      );
+      const idsNormais = produto.item_ids.filter((id) => !idsParciais.has(id));
+      const idsParaMarcar = idsNormais.length > 0 ? idsNormais : produto.item_ids;
+      for (const id of idsParaMarcar) {
         const r = await sisoFetch("/api/wms/separacao/marcar-item", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -176,3 +176,63 @@ export function agruparCompra(sel: CompraSelecionada[]): CompraOcPreview[] {
   }
   return [...map.values()];
 }
+
+// ── Buckets de urgência (redesign 2026-06-19) ─────────────────────────────
+// A tela agrupa as peças por severidade em vez de uma ordenação plana:
+// esgotado (sem estoque) → crítico → atenção → sem pressa.
+
+export type UrgenciaBucket = "esgotado" | "critico" | "atencao" | "ok";
+
+export interface UrgenciaItemLike {
+  /** estoque livre GLOBAL do SKU; 0 = esgotado (ruptura). */
+  estoque_livre: number;
+  /** status da MV de cobertura. */
+  status_cobertura: "critico" | "atencao" | "ok" | "sem_giro" | "lead_time_risco";
+  aging_dias: number;
+}
+
+/** Bucket do item: esgotado vence o status; lead_time_risco→atenção; sem_giro→ok. */
+export function bucketDeUrgencia(it: UrgenciaItemLike): UrgenciaBucket {
+  if (it.estoque_livre <= 0) return "esgotado";
+  switch (it.status_cobertura) {
+    case "critico":
+      return "critico";
+    case "atencao":
+    case "lead_time_risco":
+      return "atencao";
+    default:
+      return "ok";
+  }
+}
+
+export interface BucketGrupo<L> {
+  bucket: UrgenciaBucket;
+  linhas: L[];
+}
+
+const ORDEM_BUCKET: UrgenciaBucket[] = ["esgotado", "critico", "atencao", "ok"];
+
+/**
+ * Agrupa as linhas nos 4 buckets de urgência (ordem fixa esgotado→ok), ordenando
+ * cada bucket por aging desc (mais antigo primeiro). Buckets vazios são omitidos.
+ * `extrair` projeta a linha pros campos de urgência (a lista é item-cêntrica, mas
+ * a urgência mora no item subjacente). Não muta a entrada.
+ */
+export function agruparPorUrgencia<L>(
+  linhas: L[],
+  extrair: (l: L) => UrgenciaItemLike,
+): BucketGrupo<L>[] {
+  const map = new Map<UrgenciaBucket, L[]>();
+  for (const l of linhas) {
+    const b = bucketDeUrgencia(extrair(l));
+    const arr = map.get(b);
+    if (arr) arr.push(l);
+    else map.set(b, [l]);
+  }
+  return ORDEM_BUCKET.filter((b) => (map.get(b)?.length ?? 0) > 0).map((b) => ({
+    bucket: b,
+    linhas: [...(map.get(b) ?? [])].sort(
+      (a, z) => extrair(z).aging_dias - extrair(a).aging_dias,
+    ),
+  }));
+}

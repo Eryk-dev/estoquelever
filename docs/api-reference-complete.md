@@ -3245,9 +3245,12 @@ OR
           "demanda_aberta": "number  // Σ(pedida − pega) dos pedidos em aguardando_compra + comprado",
           "estoque_livre": "number  // Σ siso_estoque.disponivel ao vivo do SKU",
           "em_transito": "number  // Σ max(0, solicitada − recebida) dos itens 'comprado'",
-          "giro_diario": "number  // giro 30d agregado (MV siso_cobertura_estoque)",
+          "giro_diario": "number  // vendas_30d / 30 (derivado das vendas por PEDIDO, não do ledger S)",
+          "vendas_7d": "number  // un PEDIDAS nos últimos 7 dias (siso_pedido_itens × siso_pedidos.criado_em, exclui cancelados)",
+          "vendas_30d": "number  // un pedidas nos últimos 30 dias — item esgotado/venda de marketplace não gera mov 'S', então a demanda real é o PEDIDO, não o ledger",
+          "vendas_60d": "number  // un pedidas nos últimos 60 dias",
           "dias_cobertura": "number | null  // estoque_livre / giro_diario (null se giro=0)",
-          "status_cobertura": "critico | lead_time_risco | atencao | ok | sem_giro  // pior status entre galpões",
+          "status_cobertura": "critico | lead_time_risco | atencao | ok | sem_giro  // derivado do giro por pedido + lead time",
           "lead_time_medio": "number | null  // maior lead time entre galpões (dias) ou null",
           "aging_dias": "number",
           "fornecedores": [
@@ -3263,7 +3266,7 @@ OR
               "galpao_nome": "string | null"
             }
           ],
-          "fornecedor_escolhido": "FornecedorOpcao | null  // pré-selecionado (preferencial, ou o 1º); a tela usa o galpão DESTA opção como destino fixo",
+          "fornecedor_escolhido": "FornecedorOpcao | null  // pré-selecionado (preferencial, ou o 1º); a tela usa o galpão DESTA opção como SUGESTÃO/default do destino (o comprador pode trocar por linha)",
           "pedidos": [
             {
               "pedido_id": "string",
@@ -3316,6 +3319,7 @@ OR
           "id": "string (uuid de siso_ordens_compra ou siso_compras_manuais)",
           "qty_pendente": "number",
           "skus_count": "number (SKUs distintos com pendência no documento)",
+          "skus_preview": "string  // prévia legível dos SKUs pendentes (até 3 + '+N'), ex.: 'FRM012, LIM017 +5'",
           "criado_em": "ISO datetime | null",
           "custo_total": "number | null (only for manual purchases)",
           "href": "string (link to rich receiving page: /wms/receber/oc/[id] or /wms/receber/manual/[id])",

@@ -8,7 +8,6 @@ import {
   getCompraQuantidadeRestante,
   getCompraQuantidadeSolicitada,
 } from "@/lib/compras-utils";
-import { piorStatusCobertura } from "@/lib/compras-necessidade";
 import { calcularNecessidadeSkuPorGalpao } from "@/lib/compras-sourcing";
 import {
   listarFornecedoresPorSkus,
@@ -51,6 +50,10 @@ interface ComprarSkuEntry {
   estoque_livre: number;
   em_transito: number;
   giro_diario: number;
+  /** Vendas REAIS (un) nas janelas de 7 / 30 / 60 dias — chip de velocidade. */
+  vendas_7d: number;
+  vendas_30d: number;
+  vendas_60d: number;
   dias_cobertura: number | null;
   status_cobertura: StatusCobertura;
   lead_time_medio: number | null;
@@ -250,6 +253,10 @@ interface ContextoSku {
    *  necessidade de SP. */
   porGalpao: Map<string, { demandaComprado: number; livre: number; transito: number }>;
   giroDiario: number;
+  /** Vendas REAIS por janela (un), somadas entre galpões — chip de velocidade. */
+  vendas7: number;
+  vendas30: number;
+  vendas60: number;
   statusCobertura: StatusCobertura;
   leadTimeMedio: number | null;
 }
@@ -274,6 +281,9 @@ async function carregarContextoNecessidade(
       estoqueLivreTotal: 0,
       porGalpao: new Map(),
       giroDiario: 0,
+      vendas7: 0,
+      vendas30: 0,
+      vendas60: 0,
       statusCobertura: "sem_giro",
       leadTimeMedio: null,
     });
@@ -342,11 +352,11 @@ async function carregarContextoNecessidade(
     }
   }
 
-  // 3) Giro/cobertura da MV (defasada, mas giro muda devagar — ok pra âncora).
+  // 3) Lead time (fornecedor preferencial) — da MV de cobertura.
   if (uuids.length > 0) {
     const { data: cob } = await supabase
       .from("siso_cobertura_estoque")
-      .select("produto_id, giro_diario, lead_time_medio, status_cobertura")
+      .select("produto_id, lead_time_medio")
       .in("produto_id", uuids);
 
     for (const r of cob ?? []) {
@@ -354,15 +364,54 @@ async function carregarContextoNecessidade(
       if (!sku) continue;
       const c = ctx.get(sku);
       if (!c) continue;
-      c.giroDiario += Number(r.giro_diario ?? 0);
-      c.statusCobertura = piorStatusCobertura(
-        c.statusCobertura,
-        (r.status_cobertura ?? "sem_giro") as StatusCobertura,
-      );
       if (r.lead_time_medio != null) {
         c.leadTimeMedio = Math.max(c.leadTimeMedio ?? 0, Number(r.lead_time_medio));
       }
     }
+  }
+
+  // 4) Vendas REAIS por janela (7/30/60d) = itens de PEDIDO, NÃO o ledger 'S'.
+  //    Item esgotado nunca gera saída 'S' (sem estoque pra separar) e venda de
+  //    marketplace não vira 'S' — então o ledger marca 0 mesmo havendo demanda.
+  //    A venda real é o pedido: conta unidades pedidas por data de criação do
+  //    pedido (exclui cancelados). O giro e o status de cobertura derivam disso.
+  const agora = Date.now();
+  const d7 = new Date(agora - 7 * 86_400_000).toISOString();
+  const d30 = new Date(agora - 30 * 86_400_000).toISOString();
+  const d60 = new Date(agora - 60 * 86_400_000).toISOString();
+  const { data: vendas } = await supabase
+    .from("siso_pedido_itens")
+    .select("sku, quantidade_pedida, siso_pedidos!inner(criado_em, status)")
+    .in("sku", skus)
+    .gte("siso_pedidos.criado_em", d60)
+    .neq("siso_pedidos.status", "cancelado");
+
+  for (const r of vendas ?? []) {
+    const c = ctx.get(r.sku as string);
+    if (!c) continue;
+    const ped = r.siso_pedidos as unknown as { criado_em: string | null } | null;
+    const dt = ped?.criado_em;
+    if (!dt) continue;
+    const q = Number(r.quantidade_pedida ?? 0);
+    c.vendas60 += q;
+    if (dt >= d30) c.vendas30 += q; // ISO UTC → comparação lexicográfica válida
+    if (dt >= d7) c.vendas7 += q;
+  }
+
+  // 5) Giro diário + status de cobertura derivados das vendas reais (pedidos).
+  for (const c of ctx.values()) {
+    c.giroDiario = c.vendas30 / 30;
+    const cob = c.giroDiario > 0 ? c.estoqueLivreTotal / c.giroDiario : null;
+    c.statusCobertura =
+      cob == null
+        ? "sem_giro"
+        : cob < 7
+          ? "critico"
+          : cob < 14
+            ? "atencao"
+            : c.leadTimeMedio != null && cob < c.leadTimeMedio
+              ? "lead_time_risco"
+              : "ok";
   }
 
   return ctx;
@@ -453,6 +502,9 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
           estoque_livre: 0,
           em_transito: 0,
           giro_diario: 0,
+          vendas_7d: 0,
+          vendas_30d: 0,
+          vendas_60d: 0,
           dias_cobertura: null,
           status_cobertura: "sem_giro",
           lead_time_medio: null,
@@ -510,6 +562,9 @@ async function fetchComprar(supabase: SupabaseClient): Promise<FornecedorComprar
       entry.estoque_livre = rows.reduce((soma, r) => soma + r.livre, 0);
       entry.em_transito = rows.reduce((soma, r) => soma + r.transito, 0);
       entry.giro_diario = c?.giroDiario ?? 0;
+      entry.vendas_7d = c?.vendas7 ?? 0;
+      entry.vendas_30d = c?.vendas30 ?? 0;
+      entry.vendas_60d = c?.vendas60 ?? 0;
       entry.dias_cobertura =
         c && c.giroDiario > 0
           ? Math.round(c.estoqueLivreTotal / c.giroDiario)
@@ -560,6 +615,14 @@ interface ReceberDocsResult {
   manualDocs: ManualDoc[];
   /** nº de SKUs com pendência por documento (id → count), pra UI identificar o doc. */
   skusByDoc: Map<string, number>;
+  /** prévia legível dos SKUs pendentes por documento (ex.: "FRM012, LIM017 +5"). */
+  skusPreviewByDoc: Map<string, string>;
+}
+
+/** Prévia de até 3 códigos de SKU + "+N" pro resto (subtítulo da aba Receber). */
+function previewSkus(skus: string[]): string {
+  const visiveis = skus.slice(0, 3).join(", ");
+  return skus.length > 3 ? `${visiveis} +${skus.length - 3}` : visiveis;
 }
 
 /**
@@ -579,6 +642,7 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
   const pendenteByOC = new Map<string, number>();
   const pedidosByOC = new Map<string, Map<string, string>>(); // ocId → pedido_id → numero
   const skusByDoc = new Map<string, number>();
+  const skusPreviewByDoc = new Map<string, string>();
   if (ocIds.length > 0) {
     // Só itens efetivamente comprados contam pendência: uma OC draft pode ter
     // itens ainda 'aguardando_compra' linkados (validar-oc-item) que não devem
@@ -610,7 +674,10 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
         skusPendentes.get(ocId)!.add(String(it.sku ?? ""));
       }
     }
-    for (const [ocId, skus] of skusPendentes) skusByDoc.set(ocId, skus.size);
+    for (const [ocId, skus] of skusPendentes) {
+      skusByDoc.set(ocId, skus.size);
+      skusPreviewByDoc.set(ocId, previewSkus([...skus]));
+    }
   }
 
   const ocDocs: OcDoc[] = (ocs ?? [])
@@ -647,10 +714,11 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
       (s, it) => s + it.qty_comprada * (it.custo_unitario ?? 0),
       0,
     );
-    skusByDoc.set(
-      m.id,
-      m.itens.filter((it) => it.qty_comprada - it.qty_recebida > 0).length,
-    );
+    const skusPendentesManual = m.itens
+      .filter((it) => it.qty_comprada - it.qty_recebida > 0)
+      .map((it) => it.sku);
+    skusByDoc.set(m.id, skusPendentesManual.length);
+    skusPreviewByDoc.set(m.id, previewSkus(skusPendentesManual));
     return {
       id: m.id,
       fornecedor: m.fornecedor?.nome ?? null,
@@ -661,10 +729,10 @@ async function fetchReceberDocs(supabase: SupabaseClient): Promise<ReceberDocsRe
     };
   });
 
-  return { ocDocs, manualDocs, skusByDoc };
+  return { ocDocs, manualDocs, skusByDoc, skusPreviewByDoc };
 }
 
-type ReceberDocOut = ReceberDoc & { skus_count: number };
+type ReceberDocOut = ReceberDoc & { skus_count: number; skus_preview: string };
 type ReceberGrupoOut = Omit<ReceberFornecedorGrupo, "documentos"> & {
   documentos: ReceberDocOut[];
 };
@@ -676,12 +744,14 @@ type ReceberGrupoOut = Omit<ReceberFornecedorGrupo, "documentos"> & {
  * `siso_pedido_itens`. Cada documento aponta pra sua page rica de recebimento.
  */
 async function fetchReceber(supabase: SupabaseClient): Promise<ReceberGrupoOut[]> {
-  const { ocDocs, manualDocs, skusByDoc } = await fetchReceberDocs(supabase);
+  const { ocDocs, manualDocs, skusByDoc, skusPreviewByDoc } =
+    await fetchReceberDocs(supabase);
   return mergeReceberDocs(ocDocs, manualDocs).map((g) => ({
     ...g,
     documentos: g.documentos.map((d) => ({
       ...d,
       skus_count: skusByDoc.get(d.id) ?? 0,
+      skus_preview: skusPreviewByDoc.get(d.id) ?? "",
     })),
   }));
 }

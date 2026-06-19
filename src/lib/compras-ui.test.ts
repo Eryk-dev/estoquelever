@@ -3,9 +3,12 @@ import {
   flattenItensPorSku,
   agruparCompra,
   filtrarOrdenarLinhas,
+  agruparPorUrgencia,
+  bucketDeUrgencia,
   type ComprarItemLike,
   type CompraSelecionada,
   type LinhaCompra,
+  type UrgenciaItemLike,
 } from "./compras-ui";
 
 function ped(over: Partial<ComprarItemLike["pedidos"][number]> = {}) {
@@ -160,5 +163,67 @@ describe("agruparCompra", () => {
   it("custo null não corrompe o total (fica null)", () => {
     const g = agruparCompra([{ ...base, custoUnitario: null }]);
     expect(g[0].custoTotal).toBeNull();
+  });
+});
+
+describe("bucketDeUrgencia", () => {
+  const u = (over: Partial<UrgenciaItemLike>): UrgenciaItemLike => ({
+    estoque_livre: 5,
+    status_cobertura: "ok",
+    aging_dias: 0,
+    ...over,
+  });
+
+  it("estoque 0 → esgotado, mesmo com status ok", () => {
+    expect(bucketDeUrgencia(u({ estoque_livre: 0, status_cobertura: "ok" }))).toBe("esgotado");
+  });
+  it("crítico com estoque → critico", () => {
+    expect(bucketDeUrgencia(u({ status_cobertura: "critico" }))).toBe("critico");
+  });
+  it("lead_time_risco → atencao", () => {
+    expect(bucketDeUrgencia(u({ status_cobertura: "lead_time_risco" }))).toBe("atencao");
+  });
+  it("sem_giro → ok", () => {
+    expect(bucketDeUrgencia(u({ status_cobertura: "sem_giro" }))).toBe("ok");
+  });
+});
+
+describe("agruparPorUrgencia", () => {
+  const it_ = (over: Partial<UrgenciaItemLike>): UrgenciaItemLike => ({
+    estoque_livre: 5,
+    status_cobertura: "ok",
+    aging_dias: 0,
+    ...over,
+  });
+
+  it("ordena buckets esgotado→critico→atencao→ok e omite vazios", () => {
+    const out = agruparPorUrgencia(
+      [
+        it_({ status_cobertura: "ok" }),
+        it_({ estoque_livre: 0 }),
+        it_({ status_cobertura: "critico" }),
+      ],
+      (l) => l,
+    );
+    expect(out.map((g) => g.bucket)).toEqual(["esgotado", "critico", "ok"]);
+  });
+
+  it("dentro do bucket ordena por aging desc (mais antigo primeiro)", () => {
+    const out = agruparPorUrgencia(
+      [
+        it_({ estoque_livre: 0, aging_dias: 1 }),
+        it_({ estoque_livre: 0, aging_dias: 9 }),
+        it_({ estoque_livre: 0, aging_dias: 3 }),
+      ],
+      (l) => l,
+    );
+    expect(out[0].linhas.map((l) => l.aging_dias)).toEqual([9, 3, 1]);
+  });
+
+  it("não muta a entrada", () => {
+    const linhas = [it_({ aging_dias: 1 }), it_({ aging_dias: 5 })];
+    const orig = [...linhas];
+    agruparPorUrgencia(linhas, (l) => l);
+    expect(linhas).toEqual(orig);
   });
 });

@@ -142,9 +142,6 @@ const STATUS_INFO: Record<FichaEquivalente["status"], { label: string; cls: stri
 };
 
 function CrossModal({ sku, onClose }: CrossModalProps) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const [ficha, setFicha] = useState<Ficha | null>(fichaCache.get(sku) ?? null);
   const [loading, setLoading] = useState(!fichaCache.has(sku));
 
@@ -178,7 +175,8 @@ function CrossModal({ sku, onClose }: CrossModalProps) {
     };
   }, [sku]);
 
-  if (!mounted) return null;
+  // SSR guard pro createPortal (o modal só abre client-side, mas garante).
+  if (typeof document === "undefined") return null;
 
   const equivalentes = ficha?.equivalentes ?? [];
 

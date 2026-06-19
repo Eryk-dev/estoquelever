@@ -23,6 +23,7 @@ import {
 } from "@/components/wms/ui/wms-ui";
 import { useWmsModals } from "@/components/wms/wms-shell";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
+import { CrossSecaoDrawer } from "@/components/wms/cross/cross-secao-drawer";
 import type { Produto, Movimentacao } from "@/lib/wms/types";
 import type { LinhaCobertura } from "@/lib/wms/cobertura";
 import type { UltimaContagemProduto } from "@/lib/wms/inventario";
@@ -34,7 +35,8 @@ type TabId =
   | "cobertura"
   | "fornec"
   | "kit"
-  | "fotos";
+  | "fotos"
+  | "cross";
 
 // 3D: saldo é por (produto, galpão, localização) — sem dimensão de empresa.
 // Custo médio é global por SKU (siso_custo_medio), recebido via endpoint
@@ -317,6 +319,7 @@ export function ProdutoDrawer({
                     { id: "movs", label: "Movimentações", count: movs.length },
                     { id: "cobertura", label: "Cobertura" },
                     { id: "fornec", label: "Fornecedores" },
+                    { id: "cross", label: "Cross" },
                     {
                       id: "kit",
                       label: produto.eh_kit ? "Composição" : "Kit",
@@ -373,6 +376,7 @@ export function ProdutoDrawer({
               )}
               {tab === "cobertura" && <Cobertura c={cobertura} />}
               {tab === "fornec" && <Fornecedores produto={produto} />}
+              {tab === "cross" && <CrossSecaoDrawer sku={produto.sku} />}
               {tab === "kit" && <KitTab produto={produto} />}
               {tab === "fotos" && (
                 <Fotos

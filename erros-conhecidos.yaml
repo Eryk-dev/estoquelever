@@ -6405,3 +6405,44 @@ erros:
     notes: >
       Fix client-side (cirúrgico). O guard 409 do marcar-item continua como rede pro caso
       legítimo de tentar togglar um parcial sozinho.
+
+  - id: cross-estoque-tiny
+    date: "2026-06-19"
+    source: src/lib/cross/catalogo-queries.ts
+    category: business_logic
+    message: "Cross mostrava estoque do Tiny (mentia zero quando Tiny caía)"
+    cause: >
+      loadEstoquePorGalpao chamava getEstoque/buscarProdutoPorSku; catch→continue→vazio.
+    fix: >
+      estoque do cross passa a vir do ledger via aggregateLiveStockBySku.
+    files:
+      - src/lib/cross/equivalencias.ts
+      - src/app/api/wms/cross/produtos/[sku]/route.ts
+    tags: [cross, estoque, ledger]
+
+  - id: cross-oem-overmerge
+    date: "2026-06-19"
+    source: src/lib/cross/oem-extractor.ts
+    category: business_logic
+    message: "OEM por regex aceitava 'ORIGINAL'/'1000' e fundia peças não-relacionadas"
+    cause: >
+      Estratégia 1 pulava looksLikeOemCode; insert append-only (ignoreDuplicates).
+    fix: >
+      equivalência agora é par humano-confirmado no caderno; oem-extractor removido.
+    files:
+      - src/lib/cross/equivalencias-core.ts
+    tags: [cross, oem]
+
+  - id: cross-cluster-transitivo
+    date: "2026-06-19"
+    source: supabase/migrations/20260610e_rpc_siso_cross_cluster_skus.sql
+    category: business_logic
+    message: "Equivalência por corrente cega (A=C via ponte) sem cap de profundidade"
+    cause: >
+      CTE recursiva siso_cross_cluster_skus sobre oem && oem.
+    fix: >
+      leitura passa a usar pares diretos do caderno; função dropada.
+    files:
+      - src/lib/cross/equivalencias.ts
+      - src/lib/wms/trocas-equivalencia.ts
+    tags: [cross, equivalencia]

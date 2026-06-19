@@ -898,7 +898,7 @@ Adicionados pela auditoria de performance 2026-05-31 (cobrem predicados de hot p
 | `idx_pedidos_status_sep_galpao_empresa` | `siso_pedidos` | `(status_separacao, separacao_galpao_id, empresa_origem_id)` | Varredura validação OC e filtros 3-way (o `idx_siso_pedidos_status_empresa` só cobria 2 das 3 colunas) — Perf Tier 1 |
 | `idx_mov_giro` | `siso_movimentacoes` | `(origem_tipo, criado_em) WHERE tipo = 'S' AND estorno_de IS NULL` | Agregação de giro 30d das MVs `siso_cobertura_estoque` (refresh 1min) e `siso_curva_abc` — Perf Tier 1 |
 
-> `pg_trgm` já estava habilitado (a tabela `siso_produtos_catalogo` do módulo Cross já usava trigram). Os 2 índices de `siso_movimentacoes` são latentes em staging (poucos movs) — valem na escala de produção.
+> `pg_trgm` já estava habilitado (a tabela `siso_produtos_catalogo` do módulo Cross já usava trigram — tabela dropada em 20260619d; índice trigram do cross aposentado). Os 2 índices de `siso_movimentacoes` são latentes em staging (poucos movs) — valem na escala de produção.
 
 ---
 
@@ -1487,113 +1487,51 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 
 ---
 
-## Cross (módulo de catálogo e equivalência)
+## Cross (módulo de equivalência)
 
-Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização automática via trigger. Permite busca universal por SKU/OEM/nome e descoberta de equivalências entre SKUs que compartilham OEMs.
+Camada de equivalência ÚNICA, em torno de UMA tabela — o "caderno" `siso_cross_equivalencias`, compartilhado por cross + troca. Pares de SKUs humano-confirmados (zero auto-merge, sem transitividade). Estoque exibido no cross vem SEMPRE do ledger (`aggregateLiveStockBySku`), nunca do Tiny. A curadoria do velho catálogo sujo (OEMs/veículos/links/cluster recursivo) foi DROPADA em 20260619d.
 
-### siso_produtos_catalogo
+### siso_cross_equivalencias
 
-**Purpose:** Cache desnormalizado de produtos do Tiny. Mirror local atualizado por lazy fetch ou refresh manual.
+**Purpose:** caderno único de equivalência (cross + troca). Cada linha é um par DIRETO de SKUs confirmado por humano. `status='confirmado'` + mesmo `tier_qualidade` = troca livre (auto); `bloqueado` = nunca trocar; `sugestao` = palpite aguardando validação. Sem transitividade — só pares diretos (sem cluster A=C via ponte B). A troca lê via `buscarParVerificacao` (`confirmado`→"verificado", `bloqueado`→"bloqueado", `sugestao`→null).
 
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
-| `id` | uuid | NO | (PK) | Row ID |
-| `sku` | text | NO | UNIQUE | SKU do produto (chave de negócio) |
-| `tiny_id` | bigint | YES | UNIQUE | ID do produto no Tiny ERP (nullable — produto pode existir no catálogo antes de ter sido sincronizado) |
-| `nome` | text | NO | | Nome do produto |
-| `descricao` | text | YES | | Descrição completa (fonte para extração de OEMs) |
-| `fornecedor` | text | YES | | Fornecedor (mapeado por prefixo de SKU) |
-| `marca` | text | YES | | Marca |
-| `imagem_url` | text | YES | | URL da imagem principal |
-| `gtin` | text | YES | | GTIN/EAN |
-| `oem` | text[] | NO | `{}` | Lista denormalizada de OEMs (recomputada via trigger a partir de `siso_produto_oems`) |
-| `compatibility_v2` | jsonb | NO | `'{}'::jsonb` | JSON denormalizado de compatibilidade veicular (recomputado via trigger a partir de `siso_produto_veiculos`) |
-| `sincronizado_em` | timestamptz | YES | | Última sincronização com o Tiny |
+| `id` | bigserial | NO | (PK) | Row ID |
+| `sku_a` | text | NO | | SKU do par (lado menor) — FK `siso_produtos(sku)` ON DELETE CASCADE |
+| `sku_b` | text | NO | | SKU do par (lado maior) — FK `siso_produtos(sku)` ON DELETE CASCADE |
+| `relacao` | text | NO | `'equivalente'` | Tipo de relação. `CHECK (relacao IN ('equivalente'))` |
+| `status` | text | NO | `'sugestao'` | `sugestao` (palpite) → `confirmado` (troca livre se mesmo tier) \| `bloqueado` (nunca trocar). `CHECK (status IN ('sugestao','confirmado','bloqueado'))` |
+| `fonte` | text | NO | `'manual'` | Origem do palpite/par (ex.: `manual`) |
+| `observacao` | text | YES | | Nota livre da curadoria |
+| `criado_por` | uuid | YES | FK | Usuário que criou o palpite — `siso_usuarios(id)` |
 | `criado_em` | timestamptz | NO | now() | Criação do registro |
+| `decidido_por` | uuid | YES | FK | Usuário que confirmou/bloqueou — `siso_usuarios(id)` |
+| `decidido_em` | timestamptz | YES | | Quando foi decidido |
 | `atualizado_em` | timestamptz | NO | now() | Última atualização |
 
 **Primary Key:** `id`
 
-**Unique Constraints:** `sku`, `tiny_id`
+**Foreign Keys:**
+- `sku_a` → `siso_produtos(sku)` ON DELETE CASCADE
+- `sku_b` → `siso_produtos(sku)` ON DELETE CASCADE
+- `criado_por` / `decidido_por` → `siso_usuarios(id)`
+
+**Unique Constraint:** `(sku_a, sku_b)`
+
+**Constraints:**
+- `CHECK (sku_a < sku_b)` — par normalizado (lado menor sempre em `sku_a`)
+- `CHECK (relacao IN ('equivalente'))`
+- `CHECK (status IN ('sugestao','confirmado','bloqueado'))`
 
 **Indexes:**
-- `idx_produtos_catalogo_oem_gin` GIN em `oem`
-- `idx_produtos_catalogo_nome_trgm` GIN trigram em `nome`
-- `idx_produtos_catalogo_sku_trgm` GIN trigram em `sku`
-- (busca por SKU exato usa o índice UNIQUE da própria coluna `sku`)
+- `idx_cross_eq_sku_a` em `sku_a`
+- `idx_cross_eq_sku_b` em `sku_b`
+- `idx_cross_eq_status` em `status`
 
 **Notes:**
-- `oem` e `compatibility_v2` são derivados — nunca escreva diretamente; insira em `siso_produto_oems` / `siso_produto_veiculos` e deixe os triggers atualizarem
-- Lazy fetch via `produto-fetcher.ts` quando o SKU é consultado pela primeira vez
-- Migração: `supabase/migrations/20260506_create_cross_module.sql`
-
----
-
-### siso_produto_oems
-
-**Purpose:** Fonte de verdade dos códigos OEM por produto, com origem (extração automática vs manual) e audit trail.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | bigserial | NO | (PK) | Row ID |
-| `produto_sku` | text | NO | FK | SKU do produto (CASCADE em delete) |
-| `oem_code` | text | NO | | Código OEM (uppercase, ex.: `90915-YZZE2`) |
-| `origem` | text | NO | | `extracao_tiny` ou `manual` |
-| `adicionado_por` | uuid | YES | FK | Usuário que cadastrou (NULL para `extracao_tiny`) |
-| `adicionado_em` | timestamptz | NO | now() | Quando foi cadastrado |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `produto_sku` → `siso_produtos_catalogo(sku)` ON DELETE CASCADE
-- `adicionado_por` → `siso_usuarios(id)`
-
-**Unique Constraint:** `(produto_sku, oem_code)`
-
-**Constraints:**
-- `CHECK (origem IN ('extracao_tiny', 'manual'))`
-
-**Triggers:**
-- `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.oem` (text[]) para o `produto_sku` afetado
-
-**Notes:**
-- Extração automática roda no `produto-fetcher.ts` ao buscar/atualizar do Tiny
-- Adições manuais ficam preservadas em refreshes (apenas novos OEMs extraídos são inseridos)
-
----
-
-### siso_produto_veiculos
-
-**Purpose:** Fonte de verdade da compatibilidade veicular por produto, com audit trail.
-
-| Column | Type | Nullable | Default | Description |
-|--------|------|----------|---------|-------------|
-| `id` | bigserial | NO | (PK) | Row ID |
-| `produto_sku` | text | NO | FK | SKU do produto (CASCADE em delete) |
-| `marca` | text | NO | | Marca do veículo |
-| `modelo` | text | NO | | Modelo |
-| `ano_inicio` | integer | YES | | Ano inicial (range 1900–2100 validado na API, não no banco) |
-| `ano_fim` | integer | YES | | Ano final (range 1900–2100 validado na API, não no banco) |
-| `variante` | text | YES | | Variante/motor (ex.: "1.0 8V Flex") |
-| `adicionado_por` | uuid | YES | FK | Usuário que cadastrou |
-| `adicionado_em` | timestamptz | NO | now() | Quando foi cadastrado |
-
-**Primary Key:** `id`
-
-**Foreign Keys:**
-- `produto_sku` → `siso_produtos_catalogo(sku)` ON DELETE CASCADE
-- `adicionado_por` → `siso_usuarios(id)`
-
-**Unique Constraint:** `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
-
-**Constraints:**
-- (Não há CHECK no banco para ano_inicio/ano_fim — a validação 1900–2100 é feita apenas na camada de API, em `POST /api/wms/cross/produtos/[sku]/veiculos`)
-
-**Triggers:**
-- `AFTER INSERT/UPDATE/DELETE`: recomputa `siso_produtos_catalogo.compatibility_v2` (jsonb) para o `produto_sku` afetado
-
-**Notes:**
-- Autocomplete de marca/modelo é feito por `GET /api/wms/cross/sugestoes/marcas` e `GET /api/wms/cross/sugestoes/modelos`
+- Fluxo de curadoria: operador liga 2 peças (palpite/`sugestao`) → curador valida na fila (`/wms/cross`, aba Fila) → confirma (`confirmado`) ou bloqueia (`bloqueado`)
+- Migração: `supabase/migrations/20260619b_cross_equivalencias.sql` (seed inicial de 9 pares em `20260619c_cross_seed_de_verificadas.sql`)
 
 ---
 
@@ -1623,29 +1561,21 @@ Cache desnormalizado de produtos do Tiny ERP, com OEMs e compatibilidade veicula
 
 **Notes:**
 - Inserção é fire-and-forget no endpoint de search — não bloqueia a resposta
-- Útil para identificar buscas frequentes sem resultado (oportunidade de cadastrar OEMs/equivalentes)
+- Útil para identificar buscas frequentes sem resultado (oportunidade de ligar equivalentes no caderno)
 
 ---
 
 ## Troca de Equivalência (2026-06-12)
 
-Integra o cluster cross ao fluxo operacional: pedido sem estoque do SKU vendido pode sair com peça EQUIVALENTE do estoque (mata compra inflada). Plano: `docs/superpowers/plans/2026-06-12-cross-troca-equivalencia.md`. Migrations: `20260612f_troca_equivalencia.sql` + `20260612g_troca_sugestao_enum.sql`.
+Integra o caderno de equivalência (`siso_cross_equivalencias`) ao fluxo operacional: pedido sem estoque do SKU vendido pode sair com peça EQUIVALENTE do estoque (mata compra inflada). Plano: `docs/superpowers/plans/2026-06-12-cross-troca-equivalencia.md`. Migrations: `20260612f_troca_equivalencia.sql` + `20260612g_troca_sugestao_enum.sql`.
 
 ### siso_produtos.tier_qualidade (coluna nova)
 
 `text NULL CHECK IN ('original','primeira_linha','segunda_linha')` — escala única ordenada de qualidade (D5). NULL = sem classificação → toda troca envolvendo o produto exige aprovação. Backfill via SQL por padrão de SKU/fornecedor.
 
-### siso_equivalencias_verificadas
+### Curadoria de pares — `siso_cross_equivalencias` (o caderno)
 
-**Purpose:** curadoria humana de pares (D9) — auto-troca SÓ acontece com par `verificado`; `bloqueado` = override "nunca trocar" mesmo que o cluster OEM diga equivalente.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `id` | bigserial PK | |
-| `sku_a` / `sku_b` | text FK → siso_produtos_catalogo(sku) CASCADE | par normalizado `CHECK (sku_a < sku_b)` + `UNIQUE(sku_a, sku_b)` |
-| `status` | text | `verificado` \| `bloqueado` |
-| `observacao` | text | |
-| `verificado_por` / `verificado_em` | uuid FK siso_usuarios / timestamptz | |
+A curadoria humana de pares (D9) agora mora no caderno único do cross — ver `### siso_cross_equivalencias` na seção **Cross**. A troca lê via `buscarParVerificacao`: `status='confirmado'` → "verificado" (auto-troca SÓ acontece com par confirmado + mesmo tier), `bloqueado` → "nunca trocar", `sugestao` → null (palpite, não habilita troca). A antiga `siso_equivalencias_verificadas` foi DROPADA em `20260619d_cross_drop_legado.sql` (seus pares válidos foram migrados pro caderno em `20260619c`).
 
 ### siso_trocas_equivalencia
 
@@ -1977,7 +1907,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-03-24 | `worker_heartbeat_cron.sql` | CRON job for worker monitoring |
 | 2026-03-24 | `compras_v2_missing_columns.sql` | Additional purchase columns (compra_quantidade_comprada, comprado_por_nome, prioridade) |
 | 2026-03-26 | `add_encaminhado_de.sql` | Forward tracking: origin galpão name when order manually transferred |
-| 2026-05-06 | `20260506_create_cross_module.sql` | Cross module: siso_produtos_catalogo, siso_produto_oems, siso_produto_veiculos, siso_cross_logs + triggers de denormalização |
+| 2026-05-06 | `20260506_create_cross_module.sql` | Cross module: siso_produtos_catalogo, siso_produto_oems, siso_produto_veiculos, siso_cross_logs + triggers de denormalização (catálogo/OEMs/veículos DROPADOS em 20260619d) |
 | 2026-05-08 | `20260508_wms_foundation.sql` | WMS Fase 0: siso_produtos, siso_localizacoes, siso_estoque (4D original), siso_movimentacoes (ledger) + RPC wms_inserir_movimentacao |
 | 2026-05-22 | `20260522_wms_roteamento.sql` | WMS Plano 3: siso_fornecedores, siso_produto_fornecedores, siso_emprestimo_regras (dropada em 2026-05-20), siso_localizacao_locks + RPC wms_reservar_atomico + wms_saldos_devedores (dropada em 2026-05-20) |
 | 2026-05-12 | `20260512_wms_receber_oc_atomico.sql` | **WMS Plano 3:** RPC `wms_receber_oc_atomico` — entrada + reserva atômicas no recebimento de OC. Delega a `wms_inserir_movimentacao` duas vezes na mesma transação (assinatura simplificada em 2026-05-20 com a remoção de dona). |
@@ -2036,7 +1966,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-10 | `20260610b_cron_tiny_polling_timeout.sql` | Re-agenda `wms_tiny_polling_fallback` com timeout 290s (1ª rodada de backlog levou 203s > 120s do pg_net; colado no `maxDuration=300` da rota). |
 | 2026-06-10 | `20260610c_tiny_connections_token_status.sql` | `siso_tiny_connections` +`token_status` (`ok`\|`erro`, CHECK), +`token_erro`, +`token_renovado_em`. Persistem o resultado da última renovação OAuth (gravado em `tiny-oauth.getValidToken`) — painel de conexões deixa de mostrar "Autorizado" pra refresh_token morto. |
 | 2026-06-10 | `20260610d_compra_preco_unitario.sql` | `siso_pedido_itens` +`compra_preco_unitario numeric(14,4)` — preço unitário declarado pelo comprador no modal de `/compras/comprar`; pré-preenche o custo no recebimento da OC. |
-| 2026-06-10 | `20260610e_rpc_siso_cross_cluster_skus.sql` | RPC `siso_cross_cluster_skus(p_sku text) RETURNS SETOF text` (SQL, STABLE) — expande recursivamente o cluster de SKUs equivalentes: arestas via OEM compartilhado (`siso_produtos_catalogo.oem && oem`, índice GIN) + links manuais (`siso_produto_links`, ambas direções). Usada pelo módulo cross (`catalogo-queries.ts`, `equivalentes-rapidos`, `has-cross`). Portada de prod — existia lá sem migration no repo; staging ficou sem e o cross quebrava. |
+| 2026-06-10 | `20260610e_rpc_siso_cross_cluster_skus.sql` | RPC `siso_cross_cluster_skus(p_sku text) RETURNS SETOF text` (SQL, STABLE) — expande recursivamente o cluster de SKUs equivalentes: arestas via OEM compartilhado (`siso_produtos_catalogo.oem && oem`, índice GIN) + links manuais (`siso_produto_links`, ambas direções). Usada pelo módulo cross (`catalogo-queries.ts`, `equivalentes-rapidos`, `has-cross`). Portada de prod — existia lá sem migration no repo; staging ficou sem e o cross quebrava. **(Função DROPADA em 20260619d — cross passou a pares diretos do caderno.)** |
 | 2026-06-11 | `20260611b_conferencia_embalagem.sql` | **Conferência de embalagem.** `siso_pedidos` +`etiqueta_barcodes text[]` (GIN parcial) +`embalado_real_por/em` +`conferido_por/em` +`divergencia_tipo` (CHECK 4 tipos) +`divergencia_obs` + índice `idx_pedidos_embalado_real`. Embalador bipa etiqueta ao embalar (registra QUEM embalou, sem mudar status); conferente bipa de novo → `status_separacao='conferido'`. |
 | 2026-06-11 | `20260611c_status_conferido_check.sql` | Recria `siso_pedidos_status_separacao_check` incluindo `conferido` (o CHECK enumerava os status e o claim embalado→conferido violava silenciosamente). |
 | 2026-06-11 | `20260611d_rpc_desmarcar_item_parcial.sql` | `wms_desmarcar_item_atomico` ganha `p_qty_link numeric` + `p_pedido_item_id bigint` (defaults NULL = comportamento antigo). Com `p_qty_link`: estorno PARCIAL da fração do item numa S consolidada de wave (E com `origem_detalhes.parcial=true` + `pedido_item_id` como chave de idempotência, interop com `qty_estornada`), R recriada clampada (semântica D4). Fix P0-01 da limpa. |
@@ -2056,6 +1986,9 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-18 | `20260618_wms_trocar_reserva_localizacao_atomico.sql` | **Troca de localização no pick.** RPC `wms_trocar_reserva_localizacao_atomico(p_reserva_id, p_destino_localizacao_id, p_pedido_id text, p_usuario_id, p_motivo)` move a R `reserva_pedido` de uma loc pra outra no mesmo galpão (L na antiga + R na destino, atômico; reserva INTEIRA; idempotência por `estorno_de`; destino-saldo via R-check do `wms_inserir_movimentacao` → rollback total se não cobre). Endpoint `POST /api/wms/separacao/trocar-localizacao`; UI no painel "Ver outras localizações" do checklist. NÃO pica. |
 | 2026-06-18 | `20260618c_fornecedor_galpao.sql` | **Compras item-cêntrico (review Eryk).** `siso_fornecedores` +`galpao_id uuid REFERENCES siso_galpoes(id)` (nullable) — galpão de recebimento FIXO por fornecedor (config da localização). A lista de compras deixa de pedir galpão por linha: vem do fornecedor escolhido (fallback no prefix map `sku-fornecedor.ts` filialOC quando null). Setável na tela `/wms/fornecedores`. |
 | 2026-06-18 | `20260618_oc_unique_aberta_empresa_null.sql` | **Compras item-cêntrico Fase 1 (G6).** `UNIQUE INDEX uq_oc_aberta_fornecedor_empresa (fornecedor, empresa_id) WHERE status='aguardando_compra' AND galpao_id IS NULL` — fecha o buraco do `uq_oc_aberta_fornecedor_galpao` (que só cobre `galpao_id IS NOT NULL`): OC aberta sem galpão ficava desprotegida contra duplicação concorrente. Base, junto do índice de 2026-06-11, do helper único `findOrCreateOcAberta` (`src/lib/compras-oc.ts`). |
+| 2026-06-19 | `20260619b_cross_equivalencias.sql` | **Redesign Cross** — cria `siso_cross_equivalencias`, o caderno único de equivalência (cross + troca): par direto humano-confirmado (`sku_a < sku_b` FK `siso_produtos(sku)` CASCADE, `UNIQUE(sku_a, sku_b)`), `relacao='equivalente'`, `status IN ('sugestao','confirmado','bloqueado')`, `fonte`, audit (`criado_por/em`, `decidido_por/em`, `atualizado_em`) + índices `idx_cross_eq_sku_a/sku_b/status`. Zero auto-merge, sem transitividade. |
+| 2026-06-19 | `20260619c_cross_seed_de_verificadas.sql` | **Redesign Cross** — seed do caderno a partir dos pares validados de `siso_equivalencias_verificadas` (só pares com ambos SKUs em `siso_produtos`; `verificado`→`confirmado`, `bloqueado`→`bloqueado`). 9 pares migrados (7 `confirmado` + 2 `bloqueado`). |
+| 2026-06-19 | `20260619d_cross_drop_legado.sql` | **Redesign Cross** — DROP de `siso_produtos_catalogo`, `siso_produto_oems`, `siso_produto_veiculos`, `siso_produto_links`, `siso_equivalencias_verificadas` + função `siso_cross_cluster_skus`. Cross agora é 100% caderno (`siso_cross_equivalencias`) + ledger (`aggregateLiveStockBySku`). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

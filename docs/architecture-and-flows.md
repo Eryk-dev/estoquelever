@@ -315,3 +315,18 @@ separado → [checklist bipa PRODUTOS, imprime etiquetas] → embalado
 - `conferido` está em `FORWARD_STATES` do cutover (embalado→conferido NÃO reverte estoque).
 - `voltar-etapa` pra ≤`embalado` limpa conferência+divergência; pra ≤`separado` limpa também `embalado_real_*`.
 - Métricas em `/wms/relatorios/conferencia`: taxa de acerto por embalador (breakdown por tipo), % conferido, volume por conferente.
+
+---
+
+## Cross & Troca de Equivalência (redesign 2026-06-19)
+
+Cross é a camada de equivalência **ÚNICA** — o caderno `siso_cross_equivalencias` (pares DIRETOS de SKU, `status` `sugestao`|`confirmado`|`bloqueado`, **zero auto-merge, sem transitividade** — nada de cluster A=C via ponte B). O velho catálogo sujo (OEMs/veículos/links + cluster recursivo, lidos do Tiny) foi removido (migrations `20260619b/c/d`).
+
+- **Estoque exibido no cross vem do ledger** (`aggregateLiveStockBySku`), **nunca do Tiny** — não mente "zero" quando o Tiny cai.
+- **A troca de equivalência lê o caderno via `buscarParVerificacao`** (antes lia `siso_equivalencias_verificadas`): `confirmado`→"verificado", `bloqueado`→"bloqueado", `sugestao`→null (palpite não habilita troca). Auto-troca só com par `confirmado` + mesmo `tier_qualidade`.
+
+### Fluxo de curadoria
+
+1. Operador liga 2 peças (`POST /cross/ligar`) → cria palpite (`status='sugestao'`).
+2. Curador valida na fila (`/wms/cross`, aba Fila — `GET /cross/fila`) → confirma ou bloqueia (`POST /cross/[id]/decidir`).
+3. Par `confirmado` passa a habilitar troca livre (sujeito à regra de tier); `bloqueado` = nunca trocar.

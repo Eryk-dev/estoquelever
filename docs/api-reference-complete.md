@@ -4991,58 +4991,105 @@ Erros são isolados por empresa e por item (uma falha não derruba a varredura).
 
 ## Cross — Busca de produtos e equivalência
 
-Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizado de produtos do Tiny em `siso_produtos_catalogo`, com OEMs e compatibilidade veicular como fontes de verdade em tabelas próprias e denormalização via trigger.
+Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (pares diretos humano-confirmados, `status` `sugestao`|`confirmado`|`bloqueado`, zero auto-merge, sem transitividade) compartilhado por cross + troca. Busca = `siso_produtos` + caderno; estoque = ledger (`aggregateLiveStockBySku`), nunca Tiny. **Redesign 2026-06-19** (migrations `20260619b/c/d`): o velho catálogo sujo (OEMs/veículos/links/cluster recursivo) foi removido — os endpoints abaixo marcados "REMOVIDO" sumiram junto.
 
 ### GET /api/wms/cross/search
 
 **File:** `src/app/api/wms/cross/search/route.ts`
 
-**Purpose:** Busca universal de produtos por SKU, código OEM, nome ou modo automático (heurística).
+**Purpose:** Busca universal de produtos por SKU/descrição (REESCRITO — agora sobre `siso_produtos` + caderno, sem Tiny/catálogo).
 
 **Auth:** Sessão via `X-Session-Id`
 
 **Query Params:**
-- `q` (required): texto de busca (mínimo 2 caracteres)
-- `tipo` (optional, default `auto`): `auto`, `sku`, `oem`, `nome`
+- `q` (required): texto de busca
 
 **Response (200):**
 ```json
 {
-  "query": "string",
-  "tipo_detectado": "sku" | "oem" | "nome",
-  "total": "number",
   "resultados": [
     {
       "sku": "string",
-      "nome": "string",
-      "fornecedor": "string | null",
-      "marca": "string | null",
+      "descricao": "string",
       "imagem_url": "string | null",
-      "oems": ["string"],
-      "estoque_total": "number",
-      "match": "sku_exato" | "sku_prefixo" | "oem" | "nome"
+      "status_cross": "confirmado" | "sugestao" | "sem_cross"
     }
   ]
 }
 ```
 
-**Response (400 - Validação):**
-```json
-{ "error": "q deve ter pelo menos 2 caracteres" }
-```
-
 **Business Logic:**
-- Valida `q` (mín 2 chars) e `tipo`
-- Modo `auto`: detecta SKU exato → OEM exato → fallback para busca por nome (trigram)
-- Modo `sku`: busca por SKU exato/prefixo via índice trigram
-- Modo `oem`: busca em `oem text[]` via índice GIN
-- Modo `nome`: busca trigram no campo `nome`
+- Busca em `siso_produtos` (sku/descrição)
+- `status_cross` por SKU vem do caderno `siso_cross_equivalencias` (`confirmado` se há par confirmado · `sugestao` se só palpite · `sem_cross` se nenhum par)
 - Persiste a busca em `siso_cross_logs` (fire-and-forget) para telemetria
 
 **Side Effects:**
-- Insere em `siso_cross_logs` (query_tipo, query_texto, resultado_count, usuario_id)
+- Insere em `siso_cross_logs`
 
 **Rate Limiting:** None
+
+---
+
+### POST /api/wms/cross/ligar
+
+**File:** `src/app/api/wms/cross/ligar/route.ts`
+
+**Purpose:** Liga 2 peças como equivalentes — cria um palpite (`status='sugestao'`) no caderno.
+
+**Auth:** `produtos.editar` · **Body:** `{ sku_a, sku_b }`
+
+**Response (201):** par criado · **Response (200):** par já existia (no-op)
+**Response (400):** `sku_a === sku_b` (self-link) · **Response (404):** SKU inexistente em `siso_produtos`
+
+**Business Logic:**
+- Normaliza o par (`sku_a < sku_b`) e faz upsert em `siso_cross_equivalencias` com `status='sugestao'`, `criado_por=user.id`
+
+**Side Effects:**
+- Insert em `siso_cross_equivalencias`
+
+---
+
+### GET /api/wms/cross/fila
+
+**File:** `src/app/api/wms/cross/fila/route.ts`
+
+**Purpose:** Fila de curadoria — palpites aguardando validação (`status='sugestao'`), com os dados das 2 peças.
+
+**Auth:** `vendas.aprovar_troca`
+
+**Response (200):** lista de pares `sugestao` com `{ id, sku_a, sku_b, ...dados das 2 peças (descricao, imagem_url) }`
+
+**Side Effects:** None
+
+---
+
+### POST /api/wms/cross/[id]/decidir
+
+**File:** `src/app/api/wms/cross/[id]/decidir/route.ts`
+
+**Purpose:** Decide um palpite — confirma, bloqueia ou desfaz (volta a `sugestao`).
+
+**Auth:** `vendas.aprovar_troca` · **Body:** `{ acao: 'confirmar' | 'bloquear' | 'desfazer', observacao? }`
+
+**Business Logic:**
+- `confirmar` → `status='confirmado'` · `bloquear` → `status='bloqueado'` · `desfazer` → volta a `status='sugestao'`
+- Carimba `decidido_por=user.id` + `decidido_em`
+
+**Side Effects:**
+- Update em `siso_cross_equivalencias`
+
+---
+
+### DELETE /api/wms/cross/[id]
+
+**File:** `src/app/api/wms/cross/[id]/route.ts`
+
+**Purpose:** Remove uma ligação do caderno.
+
+**Auth:** palpite próprio (`criado_por = user.id`) → `produtos.editar`; senão → `vendas.aprovar_troca`
+
+**Side Effects:**
+- Delete em `siso_cross_equivalencias`
 
 ---
 
@@ -5050,306 +5097,53 @@ Módulo de catálogo e equivalência de SKUs/OEMs/veículos. Cache desnormalizad
 
 **File:** `src/app/api/wms/cross/produtos/[sku]/route.ts`
 
-**Purpose:** Detalhe completo de um produto: nome, descrição, OEMs, veículos compatíveis, estoque por galpão e SKUs equivalentes.
+**Purpose:** Ficha da peça (REESCRITO — não usa mais Tiny/catálogo): produto + nosso estoque por galpão (ledger) + equivalentes do caderno.
 
 **Auth:** Sessão via `X-Session-Id`
 
 **Response (200):**
 ```json
 {
-  "sku": "string",
-  "nome": "string",
-  "descricao": "string | null",
-  "fornecedor": "string | null",
-  "marca": "string | null",
-  "imagem_url": "string | null",
-  "gtin": "string | null",
-  "sincronizado_em": "ISO datetime | null",
-  "oems": [
-    {
-      "id": "number",
-      "codigo": "string",
-      "origem": "extracao_tiny" | "manual",
-      "adicionado_por": "uuid | null",
-      "adicionado_por_nome": "string | null",
-      "adicionado_em": "ISO datetime",
-      "pode_remover": "boolean"
-    }
-  ],
-  "veiculos": [
-    {
-      "id": "number",
-      "marca": "string",
-      "modelo": "string",
-      "ano_inicio": "number | null",
-      "ano_fim": "number | null",
-      "variante": "string | null",
-      "adicionado_por": "uuid | null",
-      "adicionado_por_nome": "string | null",
-      "adicionado_em": "ISO datetime",
-      "pode_remover": "boolean"
-    }
-  ],
-  "estoque_por_galpao": {
-    "<galpao_nome>": {
-      "saldo": "number",
-      "reservado": "number",
-      "disponivel": "number",
-      "deposito_nome": "string | null",
-      "localizacao": "string | null"
-    }
+  "produto": { "sku": "string", "descricao": "string", "imagem_url": "string | null", "...": "..." },
+  "nossoEstoquePorGalpao": {
+    "<galpao_nome>": { "saldo": "number", "reservado": "number", "disponivel": "number" }
   },
   "equivalentes": [
     {
       "sku": "string",
-      "nome": "string",
+      "descricao": "string",
       "imagem_url": "string | null",
-      "oems_compartilhados": ["string"],
-      "estoque_por_galpao": {
+      "status": "confirmado" | "sugestao" | "bloqueado",
+      "estoquePorGalpao": {
         "<galpao_nome>": { "saldo": "number", "reservado": "number", "disponivel": "number" }
-      },
-      "estoque_total": "number"
+      }
     }
   ]
 }
 ```
 
-**Response (404):** `{ "error": "SKU \"<sku>\" não encontrado no Tiny" }` (lazy fetch) ou `{ "error": "Produto não encontrado" }` (já populado mas detalhe vazio)
-**Response (503):** `{ "error": "Tiny indisponível, tente em alguns minutos" }` quando o lazy fetch falha
-**Response (500):** `{ "error": "Nenhuma empresa Tiny configurada para o seu galpão" }` se o usuário não tem galpão/empresa associada
-
 **Business Logic:**
-- Lê `siso_produtos_catalogo` por `sku`
-- Se não existir: faz lazy fetch via `produto-fetcher.ts` → consulta Tiny por SKU, persiste no catálogo
-- Se Tiny não conhecer o SKU: 404
-- Se Tiny estiver offline: 503
-- Calcula equivalentes consultando outros SKUs com OEM em comum
-- Estoque é consultado **ao vivo no Tiny** a cada requisição (não há cache em DB) — agregado por galpão usando o depósito configurado em `siso_tiny_connections`
-- `pode_remover` em OEMs/veículos indica se o usuário corrente pode remover aquela entrada (admin sempre pode; demais cargos só removem o que adicionaram manualmente)
-
-**Side Effects:**
-- Possíveis upserts em `siso_produtos_catalogo`, `siso_produto_oems` (origem `extracao_tiny`)
-
-**Rate Limiting:** Per-empresa via Tiny API rate limiter (no lazy fetch)
-
----
-
-### POST /api/wms/cross/produtos/[sku]/refetch
-
-**File:** `src/app/api/wms/cross/produtos/[sku]/refetch/route.ts`
-
-**Purpose:** Força refresh bloqueante do cache do produto via Tiny.
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Request Body:** Empty
-
-**Response (200):**
-```json
-{ "ok": true, "sku": "string" }
-```
-
-**Response (404):** `{ "error": "SKU \"<sku>\" não encontrado no Tiny" }`
-**Response (503):** `{ "error": "Tiny indisponível, tente em alguns minutos" }`
-**Response (500):** `{ "error": "Nenhuma empresa Tiny configurada para o seu galpão" }`
-
-**Business Logic:**
-- Chama `produto-fetcher.ts` em modo bloqueante
-- Atualiza `siso_produtos_catalogo` (nome, descricao, marca, fornecedor, imagem_url, gtin, sincronizado_em)
-- Re-extrai OEMs da descrição via `oem-extractor.ts`; insere os novos como `origem='extracao_tiny'` (não duplica os manuais)
-- Triggers recomputam `oem text[]` e `compatibility_v2 jsonb` automaticamente
-- Não retorna o detalhe — o cliente deve chamar `GET /api/wms/cross/produtos/[sku]` em seguida
-
-**Side Effects:**
-- Update em `siso_produtos_catalogo`
-- Insert em `siso_produto_oems` (apenas novos OEMs extraídos)
-
-**Rate Limiting:** Per-empresa via Tiny API rate limiter
-
----
-
-### POST /api/wms/cross/produtos/[sku]/oems
-
-**File:** `src/app/api/wms/cross/produtos/[sku]/oems/route.ts`
-
-**Purpose:** Adiciona um código OEM manual ao produto. Avisa se o mesmo código já existe em outros SKUs (cruzamento).
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Request Body:**
-```json
-{ "codigo": "string" }
-```
-
-**Validation:**
-- `codigo` regex: `^[A-Z0-9.\-]{4,30}$` (uppercase, dígitos, ponto, hífen; 4–30 chars)
-
-**Response (200):**
-```json
-{
-  "ok": true,
-  "codigo": "string",
-  "cruzamentos": [
-    { "sku": "string", "nome": "string" }
-  ]
-}
-```
-
-**Response (400 - Validação):** `{ "error": "codigo_invalido" }`
-**Response (404 - Produto):** `{ "error": "produto_nao_encontrado" }`
-**Response (409 - Duplicado):** `{ "error": "oem_ja_cadastrado" }`
-
-**Business Logic:**
-- Insere em `siso_produto_oems` com `origem='manual'`, `adicionado_por=user.id`
-- Trigger AFTER INSERT recomputa `siso_produtos_catalogo.oem`
-- Após inserir, busca outros SKUs que tenham o mesmo `oem_code` para retornar no campo `cruzamentos` (sugestão de equivalência)
-
-**Side Effects:**
-- Insert em `siso_produto_oems`
-- Trigger atualiza `siso_produtos_catalogo.oem`
-
----
-
-### DELETE /api/wms/cross/produtos/[sku]/oems/[codigo]
-
-**File:** `src/app/api/wms/cross/produtos/[sku]/oems/[codigo]/route.ts`
-
-**Purpose:** Remove um código OEM do produto.
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Response (200):** `{ "ok": true }`
-
-**Response (403):** `{ "error": "sem_permissao" }`
-**Response (404):** `{ "error": "oem_nao_encontrado" }`
-
-**Business Logic:**
-- **admin:** pode remover qualquer OEM (manual ou extraído)
-- **outros cargos:** só podem remover OEMs com `origem='manual'` que eles mesmos cadastraram (`adicionado_por = user.id`)
-- Trigger AFTER DELETE recomputa `siso_produtos_catalogo.oem`
-
-**Side Effects:**
-- Delete em `siso_produto_oems`
-- Trigger atualiza `siso_produtos_catalogo.oem`
-
----
-
-### POST /api/wms/cross/produtos/[sku]/veiculos
-
-**File:** `src/app/api/wms/cross/produtos/[sku]/veiculos/route.ts`
-
-**Purpose:** Adiciona uma compatibilidade veicular ao produto.
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Request Body:**
-```json
-{
-  "marca": "string",
-  "modelo": "string",
-  "ano_inicio": "number | null",
-  "ano_fim": "number | null",
-  "variante": "string | null"
-}
-```
-
-**Validation:**
-- `marca` e `modelo` obrigatórios e não vazios
-- `ano_inicio` e `ano_fim` (se presentes) entre 1900 e 2100
-- Se ambos presentes, `ano_inicio <= ano_fim`
-
-**Response (200):**
-```json
-{ "ok": true, "id": "number" }
-```
-
-**Response (400 - Validação):** `{ "error": "..." }`
-**Response (404):** `{ "error": "produto_nao_encontrado" }`
-**Response (409 - Duplicado):** `{ "error": "veiculo_ja_cadastrado" }`
-
-**Business Logic:**
-- Insere em `siso_produto_veiculos` com `adicionado_por=user.id`
-- UNIQUE em `(produto_sku, marca, modelo, ano_inicio, ano_fim, variante)`
-- Trigger AFTER INSERT recomputa `siso_produtos_catalogo.compatibility_v2`
-
-**Side Effects:**
-- Insert em `siso_produto_veiculos`
-- Trigger atualiza `siso_produtos_catalogo.compatibility_v2`
-
----
-
-### DELETE /api/wms/cross/produtos/[sku]/veiculos/[id]
-
-**File:** `src/app/api/wms/cross/produtos/[sku]/veiculos/[id]/route.ts`
-
-**Purpose:** Remove uma compatibilidade veicular do produto.
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Response (200):** `{ "ok": true }`
-
-**Response (403):** `{ "error": "sem_permissao" }`
-**Response (404):** `{ "error": "veiculo_nao_encontrado" }`
-
-**Business Logic:**
-- **admin:** pode remover qualquer veículo
-- **outros cargos:** só podem remover veículos que eles mesmos cadastraram (`adicionado_por = user.id`)
-- Trigger AFTER DELETE recomputa `siso_produtos_catalogo.compatibility_v2`
-
-**Side Effects:**
-- Delete em `siso_produto_veiculos`
-- Trigger atualiza `siso_produtos_catalogo.compatibility_v2`
-
----
-
-### GET /api/wms/cross/sugestoes/marcas
-
-**File:** `src/app/api/wms/cross/sugestoes/marcas/route.ts`
-
-**Purpose:** Autocomplete de marcas de veículos cadastradas no catálogo.
-
-**Auth:** Sessão via `X-Session-Id`
-
-**Query Params:**
-- `q`: prefixo (opcional)
-
-**Response (200):**
-```json
-{ "marcas": ["string"] }
-```
-
-**Business Logic:**
-- Lista DISTINCT de `marca` em `siso_produto_veiculos` filtrando por prefixo `q` (ILIKE)
-- Ordenado alfabeticamente; limitado a 20 resultados
+- Lê o produto em `siso_produtos` por `sku`
+- `nossoEstoquePorGalpao` + `estoquePorGalpao` dos equivalentes vêm do ledger via `aggregateLiveStockBySku` (NUNCA do Tiny)
+- `equivalentes` = pares do SKU no caderno `siso_cross_equivalencias` (com `status`)
 
 **Side Effects:** None
 
 ---
 
-### GET /api/wms/cross/sugestoes/modelos
+### POST /api/wms/cross/produtos/[sku]/tier
 
-**File:** `src/app/api/wms/cross/sugestoes/modelos/route.ts`
+**File:** `src/app/api/wms/cross/produtos/[sku]/tier/route.ts`
 
-**Purpose:** Autocomplete de modelos para uma marca específica.
+**Purpose:** Define o tier de qualidade do produto (escreve `siso_produtos.tier_qualidade`).
 
-**Auth:** Sessão via `X-Session-Id`
+**Auth:** `produtos.editar` · **Body:** `{ tier: 'original'|'primeira_linha'|'segunda_linha'|null }`
 
-**Query Params:**
-- `marca` (required): marca exata
-- `q` (optional): prefixo do modelo
+Atualiza `siso_produtos.tier_qualidade` pelo SKU (404 se SKU fora do catálogo WMS).
 
-**Response (200):**
-```json
-{ "modelos": ["string"] }
-```
+---
 
-**Response (400):** `{ "error": "marca_obrigatoria" }`
-
-**Business Logic:**
-- Lista DISTINCT de `modelo` em `siso_produto_veiculos` filtrando por `marca` exata e prefixo `q` opcional (ILIKE)
-- Ordenado alfabeticamente; limitado a 20 resultados
-
-**Side Effects:** None
+> **Endpoints REMOVIDOS no redesign do cross (2026-06-19):** `GET /api/wms/cross/produtos/[sku]/equivalentes-rapidos` · `.../has-cross` · `POST .../cross-ref` · `GET .../estoque` · `POST/DELETE .../oems` (+`/[codigo]`) · `POST/DELETE .../veiculos` (+`/[id]`) · `POST .../links` (+`DELETE /[skuAlvo]`) · `POST .../refetch` · `POST .../verificacao` (+`DELETE /[skuAlvo]`) · `GET /api/wms/cross/sugestoes/marcas` · `GET /api/wms/cross/sugestoes/modelos`. Toda a curadoria de OEMs/veículos/links e o catálogo Tiny foram aposentados — a equivalência agora é par direto no caderno (ver `POST /cross/ligar` + `POST /cross/[id]/decidir`).
 
 ---
 
@@ -5399,27 +5193,15 @@ Troca o substituto sugerido de uma troca PENDENTE por outro equivalente (operado
 
 **Query:** `sku`, `galpao_id`
 
-Equivalentes do cluster cross presentes em `siso_produtos`, com `tier_qualidade`, `par_verificacao` e `disponivel_galpao` (live, locs vendáveis). Alimenta as superfícies (separação/compras/painel).
+Equivalentes do SKU presentes em `siso_produtos`, com `tier_qualidade`, `par_verificacao` (do caderno `siso_cross_equivalencias` via `buscarParVerificacao`) e `disponivel_galpao` (live, locs vendáveis). Alimenta as superfícies (separação/compras/painel).
 
-### POST /api/wms/cross/produtos/[sku]/verificacao · DELETE .../verificacao/[skuAlvo]
+> ~~**POST /api/wms/cross/produtos/[sku]/verificacao · DELETE .../verificacao/[skuAlvo]**~~ — removido 2026-06-19 (redesign cross). Curadoria de par agora via `POST /cross/ligar` + `POST /cross/[id]/decidir` no caderno `siso_cross_equivalencias`.
 
-**Auth:** `produtos.editar` · **Body POST:** `{ sku_alvo, status: 'verificado'|'bloqueado', observacao? }`
+> ~~**POST /api/wms/cross/produtos/[sku]/cross-ref**~~ — removido 2026-06-19 (redesign cross). Não há mais `siso_produto_links` nem catálogo Tiny; ligar 2 SKUs = `POST /cross/ligar` (cria palpite) e confirmar = `POST /cross/[id]/decidir`.
 
-Curadoria do par (normalizado `sku_a < sku_b`) em `siso_equivalencias_verificadas`. DELETE volta o par a "não curado".
+> **Tier de qualidade:** `POST /api/wms/cross/produtos/[sku]/tier` é documentado na seção **Cross** acima (escreve `siso_produtos.tier_qualidade`).
 
-### POST /api/wms/cross/produtos/[sku]/cross-ref
-
-**Auth:** `produtos.editar` · **Body:** `{ sku_alvo }`
-
-Adiciona manualmente um SKU como cross-reference e JÁ aprova o par, numa chamada (evita estado parcial link-sem-curadoria): sinca o `sku_alvo` no catálogo cross se faltar (lazy fetch Tiny, 404/503 se indisponível) → cria link manual em `siso_produto_links` (tolera 23505 se já linkado) → upsert do par como `verificado` em `siso_equivalencias_verificadas`. Só curadoria — não mexe na regra de tier da troca (`regraTroca` segue exigindo tiers iguais pra auto-troca).
-
-### POST /api/wms/cross/produtos/[sku]/tier
-
-**Auth:** `produtos.editar` · **Body:** `{ tier: 'original'|'primeira_linha'|'segunda_linha'|null }`
-
-Atualiza `siso_produtos.tier_qualidade` pelo SKU (404 se SKU fora do catálogo WMS).
-
-> **Roteamento (webhook):** quando o galpão-casa não cobre com o SKU original, `planejarTrocaRoteamento` tenta substitutos — todos auto (mesmo nível + verificado) → pedido `propria` com troca auto-aplicada; algum exigindo aprovação → pedido `pendente` com `sugestao='troca_equivalente'` + trocas pendentes com R forte. `GET equivalentes-rapidos` do cross também retorna `verificacao` + `tier_qualidade` por equivalente.
+> **Roteamento (webhook):** quando o galpão-casa não cobre com o SKU original, `planejarTrocaRoteamento` tenta substitutos — todos auto (mesmo nível + par `confirmado` no caderno) → pedido `propria` com troca auto-aplicada; algum exigindo aprovação → pedido `pendente` com `sugestao='troca_equivalente'` + trocas pendentes com R forte. A leitura do par usa `buscarParVerificacao` sobre `siso_cross_equivalencias`.
 
 ---
 
@@ -6727,9 +6509,7 @@ Most list endpoints return up to 200 rows by default. Larger datasets are pagina
 - `siso_logs` - Application logs
 - `siso_erros` - Error tracking
 - `siso_configuracoes` - Key-value config store
-- `siso_produtos_catalogo` - Cross module: cached product catalog (Tiny mirror)
-- `siso_produto_oems` - Cross module: OEM codes per product (audit trail)
-- `siso_produto_veiculos` - Cross module: vehicle compatibility per product (audit trail)
+- `siso_cross_equivalencias` - Cross module: caderno único de equivalência (pares diretos humano-confirmados; cross + troca)
 - `siso_cross_logs` - Cross module: search telemetry
 
 ---

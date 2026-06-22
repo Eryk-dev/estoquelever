@@ -131,7 +131,9 @@ function WmsEmbalagemPage() {
     queryKey: pedidosQueryKey,
     queryFn: async () => {
       const statusList =
-        modo === "embalagem-oc" ? "aguardando_compra,separado" : "separado";
+        modo === "embalagem-oc"
+          ? "aguardando_compra,separado,embalado"
+          : "separado,embalado";
       const r = await sisoFetch(
         `/api/wms/separacao?status_separacao=${statusList}`,
       );
@@ -313,7 +315,14 @@ function WmsEmbalagemPage() {
         // operador vê na hora o que ainda falta pra completar (e, quando
         // concluído, o card abre já mostrando o botão Reimprimir).
         setLastScan({ pedidoId: data.pedido_id, sku });
-        setExpanded((prev) => new Set(prev).add(data.pedido_id));
+        setExpanded((prev) => {
+          const next = new Set(prev);
+          // Completo: o card-foco já abre expandido (prop hardcoded). Tira do
+          // set pra que, ao descer pra "Embalados" no próximo bip, fique fechado.
+          if (data.pedido_completo) next.delete(data.pedido_id);
+          else next.add(data.pedido_id);
+          return next;
+        });
         setHighlightId(data.pedido_id);
         queryClient.invalidateQueries({ queryKey: pedidosQueryKey });
         queryClient.invalidateQueries({ queryKey: itemsQueryKey });
@@ -799,6 +808,9 @@ function PedidoCardWms({
       className="wms-pcard"
       style={{
         marginBottom: 10,
+        ...(completed && {
+          borderLeft: "3px solid var(--wms-c-ok)",
+        }),
         ...(highlighted && {
           boxShadow: "0 0 0 2px var(--wms-c-info)",
         }),
@@ -853,7 +865,7 @@ function PedidoCardWms({
                 onReimprimir();
               }}
             >
-              <Icon name="download" size={11} />
+              <Icon name="printer" size={11} />
               {reimprimindo ? "…" : "Reimprimir"}
             </button>
           )}

@@ -6495,3 +6495,27 @@ erros:
       - src/components/wms/produto-drawer.tsx
       - supabase/migrations/20260619e_produtos_oem.sql
     tags: [cross, fornecedor, oem, busca, integracao]
+
+  - id: embalagem-card-foco-some-ao-completar
+    date: "2026-06-22"
+    source: src/app/wms/separacao/embalagem/page.tsx
+    category: business_logic
+    message: >
+      No checklist de embalagem, ao bipar e completar o pedido (ex.: pedido de
+      1 item, completa no 1º bipe) o card-foco subia ao topo e logo sumia da
+      lista, sem permanecer aberto nem permitir reimprimir a etiqueta.
+    cause: >
+      O card-foco e a seção "Embalados" derivam de pedidosOrdenados, que vem da
+      query /api/wms/separacao?status_separacao=separado. Ao completar, o pedido
+      vira "embalado" no banco; a query refaz e dropa o pedido, então focoPedido
+      fica undefined e some. O completedIdsRef (que deveria manter visível)
+      filtrava de pedidosOrdenados — dado que já tinha saído.
+    fix: >
+      Query passa a incluir "embalado" (separado,embalado; OC +",embalado") — o
+      endpoint já aceita lista por vírgula. Bip que completa não entra no Set
+      expanded (o card-foco abre via prop hardcoded; ao descer pra "Embalados"
+      no próximo bipe fica fechado). Card concluído ganha borda-esquerda verde;
+      botão Reimprimir troca ícone download→printer.
+    files:
+      - src/app/wms/separacao/embalagem/page.tsx
+    tags: [separacao, embalagem, ui, realtime]

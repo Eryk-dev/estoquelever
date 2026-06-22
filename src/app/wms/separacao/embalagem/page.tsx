@@ -240,6 +240,18 @@ function WmsEmbalagemPage() {
     });
   }, []);
 
+  // Double-clique na seta de um card → expande/recolhe TODOS de uma vez.
+  // Os 2 cliques do duplo-clique togglam o card-alvo número par (net zero);
+  // o dblclick que vem em seguida decide tudo expandido → recolhe, senão expande.
+  const toggleAllExpand = useCallback(() => {
+    const allIds = pedidosOrdenados.map((p) => p.id);
+    setExpanded((prev) => {
+      const allExpanded =
+        allIds.length > 0 && allIds.every((id) => prev.has(id));
+      return allExpanded ? new Set() : new Set(allIds);
+    });
+  }, [pedidosOrdenados]);
+
   // ─── Mutations ─────────────────────────────────────────────
 
   const biparMut = useMutation<
@@ -712,6 +724,7 @@ function WmsEmbalagemPage() {
             highlighted={highlightId === focoPedido.id}
             qtyPegaPorItem={qtyPegaPorItem}
             onToggle={() => toggleExpand(focoPedido.id)}
+            onToggleAll={toggleAllExpand}
             onConfirm={(item, delta) => confirmarMut.mutate({ item, delta })}
             onFecharComoParcial={fecharComoParcial}
             onReimprimir={() => reimprimirMut.mutate(focoPedido.id)}
@@ -736,6 +749,7 @@ function WmsEmbalagemPage() {
               expanded={expanded.has(p.id)}
               qtyPegaPorItem={qtyPegaPorItem}
               onToggle={() => toggleExpand(p.id)}
+              onToggleAll={toggleAllExpand}
               onConfirm={(item, delta) =>
                 confirmarMut.mutate({ item, delta })
               }
@@ -765,6 +779,7 @@ function WmsEmbalagemPage() {
               expanded={expanded.has(p.id)}
               qtyPegaPorItem={qtyPegaPorItem}
               onToggle={() => toggleExpand(p.id)}
+              onToggleAll={toggleAllExpand}
               onConfirm={(item, delta) =>
                 confirmarMut.mutate({ item, delta })
               }
@@ -805,6 +820,7 @@ function PedidoCardWms({
   highlighted,
   qtyPegaPorItem,
   onToggle,
+  onToggleAll,
   onConfirm,
   onFecharComoParcial,
   onReimprimir,
@@ -818,6 +834,7 @@ function PedidoCardWms({
   highlighted?: boolean;
   qtyPegaPorItem: Map<string, number>;
   onToggle: () => void;
+  onToggleAll: () => void;
   onConfirm: (item: PedidoItem, delta: number) => void;
   onFecharComoParcial: (item: PedidoItem, qtyPegaTotal: number) => void;
   onReimprimir: () => void;
@@ -846,7 +863,8 @@ function PedidoCardWms({
       <div
         className="wms-pcard-h"
         onClick={onToggle}
-        style={{ cursor: "pointer" }}
+        onDoubleClick={onToggleAll}
+        style={{ cursor: "pointer", userSelect: "none" }}
       >
         <div className="wms-pcard-h-left">
           <span className="wms-pcard-num">

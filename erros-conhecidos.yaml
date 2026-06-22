@@ -6546,3 +6546,38 @@ erros:
     files:
       - src/app/wms/separacao/embalagem/page.tsx
     tags: [separacao, embalagem, paginacao, postgrest, regressao]
+
+  - id: aprovar-transferencia-orfa-da-propria-reserva
+    date: "2026-06-22"
+    source: src/app/api/wms/pedidos/aprovar/route.ts
+    category: business_logic
+    message: >
+      Pedidos de transferência ficavam na fila de separação do galpão CASA (ex.
+      SP, NetParts) com "saldo 0, sem loc", impossíveis de avançar: marcar-item
+      dava "sem_saldo_para_baixa", parcial e zerar-loc davam "Posição reservada
+      por outro pedido — saldo 0, disponível 0". A reserva e o estoque estavam
+      no OUTRO galpão (CWB). Operador não entendia por que não estavam em
+      validação OC.
+    cause: >
+      No intake (webhook) a transferência cria a R `reserva_pedido` no galpão de
+      cobertura (CWB) e zera o `disponivel` dele; grava separacao_galpao_id=CWB;
+      pedido fica pendente. Na aprovação humana, /pedidos/aprovar RE-RODAVA
+      rotearPedidoDoBanco contra siso_estoque.disponivel LIVE — que já está zero
+      no CWB por causa da PRÓPRIA reserva do pedido. roteamento exige
+      disponivel>=qty (roteamento.ts:139) → rota=oc/sem-cobertura → caía no
+      else "fallback origem" que setava separacao_galpao_id =
+      empresaOrigem.galpaoId (casa=SP). criarReservasPedido é idempotente (vê a
+      R já em CWB, não cria nova, sem 409). Resultado: decisao_final=
+      transferencia, separacao_galpao_id=SP, reserva órfã em CWB. Warning
+      "Roteamento sem cobertura — fallback origem" disparava dezenas de vezes/dia.
+    fix: >
+      Quando o pedido já tem R `reserva_pedido` viva, o galpão DELA é o plano
+      comprometido — vence o re-roteamento (que é furado pela própria reserva).
+      Só re-roteia quando não há reserva viva. Decisão isolada em função pura
+      escolherGalpaoSeparacaoTransferencia (aprovar-roteamento.ts, com testes).
+      Data fix dos órfãos: UPDATE separacao_galpao_id pro galpão da reserva.
+    files:
+      - src/app/api/wms/pedidos/aprovar/route.ts
+      - src/lib/wms/aprovar-roteamento.ts
+      - src/lib/wms/aprovar-roteamento.test.ts
+    tags: [aprovar, transferencia, roteamento, reserva, separacao, estado-fantasma]

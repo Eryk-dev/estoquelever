@@ -11,6 +11,7 @@ import {
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 import { rotearPedidoDoBanco, TIPOS_LOC_VENDAVEIS } from "@/lib/wms/roteamento";
+import { escolherGalpaoSeparacaoTransferencia } from "@/lib/wms/aprovar-roteamento";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 
@@ -254,65 +255,103 @@ export async function POST(request: NextRequest) {
     // Substitui o getEmpresasDoGrupo legacy que ignorava saldo e escolhia
     // empresa-suporte só pelo grupo+galpão, sem checar cobertura real.
 
-    // Carrega itens pra alimentar roteamento (precisa quantidade + SKU pro
-    // fallback). Resolve cada item → uuid WMS (SKU-first: substituto → tiny →
-    // SKU). Item id=0 que casa por SKU passa a alimentar o roteamento; antes era
-    // pulado → rota sem cobertura → fallback origem → reserva falhava.
-    const { data: itensParaRotear } = await supabase
-      .from("siso_pedido_itens")
-      .select("produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
-      .eq("pedido_id", pedidoId);
-
-    const itens: Array<{ produto_id: string; qty: number }> = [];
-    for (const it of itensParaRotear ?? []) {
-      try {
-        const produtoWms = await resolverProdutoEfetivoDoItem(
-          pedido.empresa_origem_id,
-          it,
-        );
-        itens.push({
-          produto_id: produtoWms,
-          qty: Number(it.quantidade_pedida ?? 0),
-        });
-      } catch {
-        // item não resolvível → pulado; roteamento decide com o resto
-      }
+    // FIX órfão (2026-06-22): se o pedido JÁ tem R `reserva_pedido` viva (criada
+    // no intake do webhook), ela É o plano comprometido — o galpão dela manda.
+    // Re-rotear aqui é furado: a PRÓPRIA reserva já zerou o `disponivel` do
+    // galpão de cobertura → rota viria 'sem cobertura' → o fallback jogava a
+    // separação pra casa, ÓRFÃ da reserva (que ficou no galpão real). Só
+    // re-roteia quando NÃO há reserva viva. (ver aprovar-roteamento.ts)
+    const { data: rsVivas } = await supabase
+      .from("siso_movimentacoes")
+      .select("id, galpao_id")
+      .eq("origem_id", pedidoId)
+      .eq("origem_tipo", "reserva_pedido")
+      .eq("tipo", "R");
+    let galpaoReservaViva: string | null = null;
+    if (rsVivas && rsVivas.length > 0) {
+      const ids = rsVivas.map((r) => r.id as string);
+      const { data: liberadas } = await supabase
+        .from("siso_movimentacoes")
+        .select("estorno_de")
+        .in("estorno_de", ids)
+        .eq("tipo", "L");
+      const liberadasSet = new Set(
+        (liberadas ?? []).map((l) => l.estorno_de as string),
+      );
+      const galpoesVivos = new Set(
+        rsVivas
+          .filter((r) => !liberadasSet.has(r.id as string))
+          .map((r) => r.galpao_id as string),
+      );
+      // Só confia quando há um único galpão de reserva (transferência é
+      // single-galpão; múltiplos = caso anômalo → re-roteia por segurança).
+      if (galpoesVivos.size === 1) galpaoReservaViva = [...galpoesVivos][0];
     }
 
-    const rota = await rotearPedidoDoBanco(pedido.empresa_origem_id, itens);
+    let rotaDecisao: "propria" | "transferencia" | "oc" = "oc";
+    let rotaGalpao: string | null = null;
+    if (!galpaoReservaViva) {
+      // Sem reserva viva: re-roteia. Resolve cada item → uuid WMS (SKU-first:
+      // substituto → tiny → SKU) pra alimentar o roteamento.
+      const { data: itensParaRotear } = await supabase
+        .from("siso_pedido_itens")
+        .select("produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
+        .eq("pedido_id", pedidoId);
 
-    if (rota.decisao === "transferencia" && rota.galpao_id) {
-      // Encontra galpão escolhido
-      const { data: galpaoEsc } = await supabase
-        .from("siso_galpoes")
-        .select("id, nome")
-        .eq("id", rota.galpao_id)
-        .single();
-      // Encontra empresa que tem este galpão como preferred (pra tag de tier
-      // e fila legada). Em 3D não há "empresa dona" física — usamos qualquer
-      // empresa com este galpão como preferred só pra identificar a fila.
-      const { data: empresaSuporte } = await supabase
-        .from("siso_empresa_galpoes_preferenciais")
-        .select("empresa_id")
-        .eq("galpao_id", rota.galpao_id)
-        .limit(1)
-        .maybeSingle();
+      const itens: Array<{ produto_id: string; qty: number }> = [];
+      for (const it of itensParaRotear ?? []) {
+        try {
+          const produtoWms = await resolverProdutoEfetivoDoItem(
+            pedido.empresa_origem_id,
+            it,
+          );
+          itens.push({
+            produto_id: produtoWms,
+            qty: Number(it.quantidade_pedida ?? 0),
+          });
+        } catch {
+          // item não resolvível → pulado; roteamento decide com o resto
+        }
+      }
 
-      empresaExecucaoId =
-        (empresaSuporte?.empresa_id as string | null) ?? pedido.empresa_origem_id;
-      filialExecucao = galpaoEsc?.nome ?? filialOrigem;
-      separacaoGalpaoId = rota.galpao_id;
-    } else {
-      // Sem cobertura: fallback origem (degrada pra reserva-orphan ou falha
-      // em criarReservasPedido). O front-end já deveria estar bloqueando
-      // este caso via decisaoIsAvailable.
-      empresaExecucaoId = pedido.empresa_origem_id;
-      filialExecucao = filialOrigem;
-      separacaoGalpaoId = empresaOrigem.galpaoId;
+      const rota = await rotearPedidoDoBanco(pedido.empresa_origem_id, itens);
+      rotaDecisao = rota.decisao;
+      rotaGalpao = rota.decisao !== "oc" ? rota.galpao_id : null;
+    }
+
+    const escolha = escolherGalpaoSeparacaoTransferencia({
+      galpaoReservaViva,
+      rotaDecisao,
+      rotaGalpao,
+      galpaoCasa: empresaOrigem.galpaoId,
+    });
+
+    // Empresa que tem este galpão como preferred (pra tag de tier e fila
+    // legada). Em 3D não há "empresa dona" física — usamos qualquer empresa
+    // com este galpão como preferred só pra identificar a fila.
+    const { data: galpaoEsc } = await supabase
+      .from("siso_galpoes")
+      .select("id, nome")
+      .eq("id", escolha.galpao)
+      .maybeSingle();
+    const { data: empresaSuporte } = await supabase
+      .from("siso_empresa_galpoes_preferenciais")
+      .select("empresa_id")
+      .eq("galpao_id", escolha.galpao)
+      .limit(1)
+      .maybeSingle();
+    empresaExecucaoId =
+      (empresaSuporte?.empresa_id as string | null) ?? pedido.empresa_origem_id;
+    filialExecucao = galpaoEsc?.nome ?? filialOrigem;
+    separacaoGalpaoId = escolha.galpao;
+
+    if (!escolha.cobertura) {
+      // Sem cobertura E sem reserva viva: fallback origem (degrada pra
+      // reserva-orphan ou falha em criarReservasPedido). O front-end já deveria
+      // estar bloqueando este caso via decisaoIsAvailable.
       logger.warn("aprovar", "Roteamento sem cobertura — fallback origem", {
         pedidoId,
-        rota_decisao: rota.decisao,
-        rota_motivo: (rota as { motivo?: string }).motivo,
+        rota_decisao: rotaDecisao,
       });
     }
   }

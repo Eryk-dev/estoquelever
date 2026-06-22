@@ -6511,11 +6511,38 @@ erros:
       fica undefined e some. O completedIdsRef (que deveria manter visível)
       filtrava de pedidosOrdenados — dado que já tinha saído.
     fix: >
-      Query passa a incluir "embalado" (separado,embalado; OC +",embalado") — o
-      endpoint já aceita lista por vírgula. Bip que completa não entra no Set
-      expanded (o card-foco abre via prop hardcoded; ao descer pra "Embalados"
-      no próximo bipe fica fechado). Card concluído ganha borda-esquerda verde;
-      botão Reimprimir troca ícone download→printer.
+      Snapshot client-side por id (pedidosVistosRef): captura todo pedido visto
+      na query e, ao completar, carimba "embalado"; pedidosOrdenados usa o
+      snapshot quando o GET (status=separado) para de retornar o pedido. NÃO
+      alargar a query pra incluir embalado — 1ª tentativa fez isso e quebrou a
+      tela (ver embalagem-incluir-embalado-estoura-limite). Bip que completa não
+      entra no Set expanded (card-foco abre via prop; desce fechado no próximo
+      bipe). Card concluído: borda-esquerda verde; botão Reimprimir: ícone
+      download→printer.
     files:
       - src/app/wms/separacao/embalagem/page.tsx
     tags: [separacao, embalagem, ui, realtime]
+
+  - id: embalagem-incluir-embalado-estoura-limite
+    date: "2026-06-22"
+    source: src/app/wms/separacao/embalagem/page.tsx
+    category: business_logic
+    message: >
+      Tela de embalagem mostrava "19 pedido(s)" no subtítulo mas "Nada por aqui"
+      no corpo — nenhum dos pedidos separado selecionados aparecia pra embalar.
+    cause: >
+      Tentativa de manter o card-foco visível incluiu "embalado" no filtro da
+      query (status_separacao=separado,embalado). Em /api/wms/separacao, quando
+      o filtro inclui embalado/conferido a ordenação vira embalagem_concluida_em
+      DESC com NULLs por último (route.ts:254). Os pedidos separado têm esse
+      campo NULL → caem pro fim, atrás dos ~1379 embalados. O limite default de
+      1000 linhas do PostgREST corta a página antes dos separado → o filtro
+      client-side pedidoIds.includes(p.id) não acha nenhum.
+    fix: >
+      Reverter o filtro pra "separado" (OC: "aguardando_compra,separado") e
+      reter os concluídos via snapshot client-side (ver
+      embalagem-card-foco-some-ao-completar). Nunca puxar todos os embalados só
+      pra manter alguns visíveis.
+    files:
+      - src/app/wms/separacao/embalagem/page.tsx
+    tags: [separacao, embalagem, paginacao, postgrest, regressao]

@@ -113,6 +113,12 @@ function WmsEmbalagemPage() {
   // Pedidos concluídos durante esta sessão (mantém visíveis mesmo
   // após o GET parar de retorná-los, pra permitir reimprimir).
   const completedIdsRef = useRef<Set<string>>(new Set());
+  // Snapshot por id de todo pedido já visto na query. A query lista só
+  // status_separacao=separado; ao completar, o pedido vira "embalado" e some
+  // do GET. Guardamos o objeto aqui (carimbado embalado) pra continuar
+  // renderizando o card-foco e a seção "Embalados" sem precisar puxar TODOS
+  // os embalados na query (o que estourava o limite de 1000 linhas).
+  const pedidosVistosRef = useRef<Map<string, SeparacaoPedido>>(new Map());
   // Pedido do último bip — sobe pro topo, expandido e destacado, pra o
   // operador ver na hora o que ainda falta bipar pra completar.
   const [lastScan, setLastScan] = useState<{
@@ -131,9 +137,7 @@ function WmsEmbalagemPage() {
     queryKey: pedidosQueryKey,
     queryFn: async () => {
       const statusList =
-        modo === "embalagem-oc"
-          ? "aguardando_compra,separado,embalado"
-          : "separado,embalado";
+        modo === "embalagem-oc" ? "aguardando_compra,separado" : "separado";
       const r = await sisoFetch(
         `/api/wms/separacao?status_separacao=${statusList}`,
       );
@@ -170,11 +174,25 @@ function WmsEmbalagemPage() {
   const pedidos = pedidosQuery.data ?? [];
   const items = itemsQuery.data?.items ?? [];
 
-  // Manter ordem original dos pedidoIds da URL (não da query).
+  // Captura snapshot dos pedidos vivos — assim os que completam (viram
+  // "embalado" e somem do GET status=separado) continuam renderizáveis.
+  useEffect(() => {
+    for (const p of pedidos) {
+      pedidosVistosRef.current.set(
+        p.id,
+        completedIdsRef.current.has(p.id)
+          ? { ...p, status_separacao: "embalado" }
+          : p,
+      );
+    }
+  }, [pedidos]);
+
+  // Manter ordem original dos pedidoIds da URL (não da query). Pedidos que já
+  // completaram e saíram do GET vêm do snapshot (pedidosVistosRef).
   const pedidosOrdenados = useMemo(() => {
-    const map = new Map(pedidos.map((p) => [p.id, p]));
+    const live = new Map(pedidos.map((p) => [p.id, p]));
     return pedidoIds
-      .map((id) => map.get(id))
+      .map((id) => live.get(id) ?? pedidosVistosRef.current.get(id))
       .filter((p): p is SeparacaoPedido => p !== undefined);
   }, [pedidos, pedidoIds]);
 
@@ -279,6 +297,15 @@ function WmsEmbalagemPage() {
       onSuccess: (data, sku) => {
         if (data.pedido_completo) {
           completedIdsRef.current.add(data.pedido_id);
+          // Carimba o snapshot como embalado — o GET (status=separado) vai
+          // parar de retornar este pedido, mas ele segue visível pelo snapshot.
+          const snap = pedidosVistosRef.current.get(data.pedido_id);
+          if (snap) {
+            pedidosVistosRef.current.set(data.pedido_id, {
+              ...snap,
+              status_separacao: "embalado",
+            });
+          }
           const etiq = data.etiqueta_status;
           if (etiq === "falhou") {
             setScanFeedback({

@@ -101,6 +101,7 @@ interface SeparacaoPedido {
   status_separacao: StatusServer;
   marcadores: string[];
   total_itens: number;
+  total_pecas: number;
   itens_marcados: number;
   itens_bipados: number;
   galpao_id: string | null;
@@ -1423,7 +1424,7 @@ export default function WmsSeparacaoPage() {
                 <th>Status</th>
                 <th>Idade</th>
                 <th>Data envio</th>
-                <th className="wms-tar">Itens</th>
+                <th className="wms-tar">Peças</th>
                 <th>Tags</th>
                 <th style={{ width: 36 }}></th>
               </tr>
@@ -1634,7 +1635,7 @@ export default function WmsSeparacaoPage() {
                       })()}
                     </td>
                     <td className="wms-tar wms-mono">
-                      {fmtNum(p.total_itens)}
+                      {fmtNum(p.total_pecas)}
                     </td>
                     <td>
                       {p.separacao_tags.length > 0 ? (

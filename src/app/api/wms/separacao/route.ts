@@ -384,7 +384,7 @@ export async function GET(request: NextRequest) {
     const pedidoIds = (pedidos ?? []).map((p) => p.id);
     const itemStats: Record<
       string,
-      { total: number; marcados: number; bipados: number }
+      { total: number; pecas: number; marcados: number; bipados: number }
     > = {};
     // Compra stats per pedido (for aguardando_compra tab)
     const compraStats: Record<
@@ -419,9 +419,10 @@ export async function GET(request: NextRequest) {
         if (item.compra_status === "cancelado" || item.compra_status === "indisponivel") continue;
 
         if (!itemStats[item.pedido_id]) {
-          itemStats[item.pedido_id] = { total: 0, marcados: 0, bipados: 0 };
+          itemStats[item.pedido_id] = { total: 0, pecas: 0, marcados: 0, bipados: 0 };
         }
         itemStats[item.pedido_id].total++;
+        itemStats[item.pedido_id].pecas += Number(item.quantidade_pedida ?? 0);
         if (item.separacao_marcado) itemStats[item.pedido_id].marcados++;
         if (item.bipado_completo) itemStats[item.pedido_id].bipados++;
 
@@ -467,7 +468,7 @@ export async function GET(request: NextRequest) {
     // Shape response
     const result = (pedidos ?? []).map((p) => {
       const empresa = p.siso_empresas as unknown as { nome: string } | null;
-      const stats = itemStats[p.id] ?? { total: 0, marcados: 0, bipados: 0 };
+      const stats = itemStats[p.id] ?? { total: 0, pecas: 0, marcados: 0, bipados: 0 };
       const cs = compraStats[p.id] ?? null;
       return {
         id: p.id,
@@ -490,6 +491,7 @@ export async function GET(request: NextRequest) {
         marcadores: p.marcadores ?? [],
         separacao_tags: p.separacao_tags ?? [],
         total_itens: stats.total,
+        total_pecas: stats.pecas,
         itens_marcados: stats.marcados,
         itens_bipados: stats.bipados,
         compra_stats: cs,

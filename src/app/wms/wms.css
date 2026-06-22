@@ -3948,3 +3948,54 @@
 .wms-cmp-hist-day { padding: 7px 16px; background: var(--wms-c-faint); font-size: 11px; font-weight: 600; color: var(--wms-c-mute); font-family: var(--wms-font-mono); border-bottom: 1px solid var(--wms-c-border); }
 .wms-cmp-hist-row { display: grid; grid-template-columns: 130px minmax(0,1.1fr) 110px minmax(0,2fr) 70px; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--wms-c-border); font-size: 13px; }
 .wms-cmp-hist-row:hover { background: var(--wms-c-panel-2); }
+
+/* ============================================================
+   Cross — fila de validação (cockpit de comparação)
+   Cabe na viewport: imagens limitadas por vh, ações sempre visíveis
+   (sticky no rodapé). Sem esse cap as 2 fotos quadradas empurravam
+   os botões pra fora da tela no zoom 100%.
+   ============================================================ */
+.wms-cross-fila { display: flex; flex-direction: column; gap: 14px; }
+
+/* barra de progresso + contexto */
+.wms-cf-top { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; font-size: 13px; color: var(--wms-c-mute); }
+.wms-cf-count { font-family: var(--wms-font-mono); font-variant-numeric: tabular-nums; font-weight: 600; color: var(--wms-c-fg); }
+.wms-cf-progress { flex: 1; min-width: 80px; height: 4px; border-radius: 999px; background: var(--wms-c-faint); overflow: hidden; }
+.wms-cf-progress > i { display: block; height: 100%; width: 0; background: var(--wms-c-brand-cyan); border-radius: inherit; transition: width .2s ease; }
+.wms-cf-fonte strong { color: var(--wms-c-fg-2); font-weight: 600; }
+
+/* evidência: OEM compartilhado */
+.wms-cf-oem { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; background: var(--wms-c-brand-cyan-faint); border: 1px solid var(--wms-c-brand-cyan); border-radius: var(--wms-r-3); }
+.wms-cf-oem-lb { font-size: 12px; color: var(--wms-c-fg-2); font-weight: 600; }
+
+/* comparação lado a lado */
+.wms-cf-compare { display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 14px; }
+.wms-cf-vs { align-self: center; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--wms-c-mute-2); }
+.wms-cf-pane { display: flex; flex-direction: column; min-width: 0; }
+.wms-cf-rotulo { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--wms-c-mute); margin-bottom: 6px; }
+
+.wms-cf-stage { position: relative; height: clamp(220px, 46vh, 540px); background: var(--wms-c-faint); border: 1px solid var(--wms-c-border); border-radius: var(--wms-r-3); overflow: hidden; display: grid; place-items: center; cursor: zoom-in; }
+.wms-cf-stage img { width: 100%; height: 100%; object-fit: contain; }
+.wms-cf-stage-empty { color: var(--wms-c-mute-2); font-size: 13px; }
+.wms-cf-zoom-hint { position: absolute; right: 8px; bottom: 8px; background: rgba(12,10,9,.62); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 999px; opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.wms-cf-stage:hover .wms-cf-zoom-hint { opacity: 1; }
+
+.wms-cf-thumbs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.wms-cf-thumb { width: 44px; height: 44px; padding: 0; border: 1px solid var(--wms-c-border); border-radius: var(--wms-r-2); overflow: hidden; background: var(--wms-c-faint); cursor: pointer; }
+.wms-cf-thumb.is-active { border-color: var(--wms-c-brand-cyan); box-shadow: 0 0 0 1px var(--wms-c-brand-cyan); }
+.wms-cf-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.wms-cf-sku { margin-top: 10px; font-size: 14px; }
+.wms-cf-desc { margin-top: 2px; font-size: 12.5px; color: var(--wms-c-mute); line-height: 1.35; }
+
+/* barra de ação — sempre visível (sticky no rodapé do scroll) */
+.wms-cf-actions { position: sticky; bottom: 0; z-index: var(--wms-z-sticky); display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; padding: 12px; background: color-mix(in srgb, var(--wms-c-bg) 88%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--wms-c-border); border-radius: var(--wms-r-3) var(--wms-r-3) 0 0; }
+.wms-cf-actions .wms-btn { min-width: 140px; }
+.wms-cf-actions kbd { margin-left: 6px; font-family: var(--wms-font-mono); font-size: 11px; padding: 1px 6px; border-radius: var(--wms-r-1); background: rgba(0,0,0,.08); border: 1px solid rgba(0,0,0,.12); }
+
+@media (max-width: 680px) {
+  .wms-cf-compare { grid-template-columns: 1fr; }
+  .wms-cf-vs { justify-self: center; }
+  .wms-cf-stage { height: clamp(180px, 38vh, 360px); }
+  .wms-cf-actions .wms-btn { min-width: 0; flex: 1; }
+}

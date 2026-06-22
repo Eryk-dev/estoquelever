@@ -28,18 +28,38 @@ function imgs(p: ProdLado | null): string[] {
   return p.imagem_url ? [p.imagem_url] : [];
 }
 
-function Pane({ rotulo, prod }: { rotulo: string; prod: ProdLado | null }) {
+/** Painel de uma peça: foto (cabe na viewport) + miniaturas pra trocar a
+ *  foto inline + SKU/descrição. Clicar na foto abre o comparador full-screen. */
+function Pane({ rotulo, prod, onZoom }: { rotulo: string; prod: ProdLado | null; onZoom: () => void }) {
   const fotos = imgs(prod);
+  // idx volta a 0 quando a fila anda: o Pane é remontado via `key={sku}`.
+  const [idx, setIdx] = useState(0);
+  const atual = fotos[Math.min(idx, Math.max(fotos.length - 1, 0))];
+
   return (
-    <div className="wms-card" style={{ padding: 12, flex: 1, minWidth: 0 }}>
-      <div style={{ fontSize: 11, color: "var(--wms-c-muted)", marginBottom: 6 }}>{rotulo}</div>
-      {fotos[0] ? (
-        <img src={fotos[0]} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "contain", borderRadius: 6, background: "var(--wms-c-faint)" }} />
-      ) : (
-        <div style={{ width: "100%", aspectRatio: "1", borderRadius: 6, background: "var(--wms-c-faint)" }} />
+    <div className="wms-cf-pane">
+      <div className="wms-cf-rotulo">{rotulo}</div>
+      <div className="wms-cf-stage" onClick={onZoom} role="button" tabIndex={-1} aria-label="Ampliar fotos">
+        {atual ? <img src={atual} alt="" /> : <span className="wms-cf-stage-empty">sem foto</span>}
+        {fotos.length > 0 && <span className="wms-cf-zoom-hint">ampliar ⤢</span>}
+      </div>
+      {fotos.length > 1 && (
+        <div className="wms-cf-thumbs">
+          {fotos.map((src, n) => (
+            <button
+              key={src + n}
+              type="button"
+              className={`wms-cf-thumb ${n === idx ? "is-active" : ""}`}
+              onClick={(e) => { e.stopPropagation(); setIdx(n); }}
+              aria-label={`Foto ${n + 1}`}
+            >
+              <img src={src} alt="" loading="lazy" />
+            </button>
+          ))}
+        </div>
       )}
-      <div className="wms-mono" style={{ marginTop: 8 }}>{prod?.sku ?? "—"}</div>
-      <div style={{ fontSize: 12, color: "var(--wms-c-muted)" }}>{prod?.descricao ?? ""}</div>
+      <div className="wms-cf-sku wms-mono">{prod?.sku ?? "—"}</div>
+      <div className="wms-cf-desc">{prod?.descricao ?? ""}</div>
     </div>
   );
 }
@@ -103,32 +123,40 @@ export function CrossFila() {
 
   const esquerda: LadoComparacao = { rotulo: "Peça A", sku: atual.sku_a, descricao: atual.a?.descricao ?? "", imagens: imgs(atual.a) };
   const direita: LadoComparacao = { rotulo: "Peça B", sku: atual.sku_b, descricao: atual.b?.descricao ?? "", imagens: imgs(atual.b) };
+  const pct = Math.round(((i + 1) / itens.length) * 100);
 
   return (
     <div className="wms-cross-fila">
-      <div style={{ marginBottom: 8, color: "var(--wms-c-muted)" }}>
-        {i + 1} / {itens.length} · ligado por: {atual.fonte}
+      <div className="wms-cf-top">
+        <span className="wms-cf-count">{i + 1} / {itens.length}</span>
+        <div className="wms-cf-progress"><i style={{ width: `${pct}%` }} /></div>
+        <span className="wms-cf-fonte">ligado por: <strong>{atual.fonte}</strong></span>
       </div>
 
       {atual.oem_compartilhado && atual.oem_compartilhado.length > 0 && (
-        <div style={{ marginBottom: 8, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: "var(--wms-c-muted)" }}>compartilham OEM:</span>
+        <div className="wms-cf-oem">
+          <span className="wms-cf-oem-lb">compartilham OEM:</span>
           {atual.oem_compartilhado.map((o) => (
             <span key={o} className="wms-chip wms-mono">{o}</span>
           ))}
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 12 }}>
-        <Pane rotulo="Peça A" prod={atual.a} />
-        <Pane rotulo="Peça B" prod={atual.b} />
+      <div className="wms-cf-compare">
+        <Pane key={`a-${atual.a?.sku ?? atual.id}`} rotulo="Peça A" prod={atual.a} onZoom={() => setAmpliar(true)} />
+        <div className="wms-cf-vs">VS</div>
+        <Pane key={`b-${atual.b?.sku ?? atual.id}`} rotulo="Peça B" prod={atual.b} onZoom={() => setAmpliar(true)} />
       </div>
 
-      <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-        <button className="wms-btn wms-btn-danger" disabled={decidir.isPending} onClick={() => decidir.mutate("bloquear")}>✗ Não (←)</button>
+      <div className="wms-cf-actions">
+        <button className="wms-btn wms-btn-danger" disabled={decidir.isPending} onClick={() => decidir.mutate("bloquear")}>
+          ✗ Não é a mesma <kbd>←</kbd>
+        </button>
         <button className="wms-btn wms-btn-ghost" onClick={() => setAmpliar(true)}>Ampliar fotos</button>
-        <button className="wms-btn wms-btn-ghost" onClick={pular}>Pular (espaço)</button>
-        <button className="wms-btn wms-btn-primary" disabled={decidir.isPending} onClick={() => decidir.mutate("confirmar")}>✓ É a mesma (→)</button>
+        <button className="wms-btn wms-btn-ghost" onClick={pular}>Pular <kbd>espaço</kbd></button>
+        <button className="wms-btn wms-btn-primary" disabled={decidir.isPending} onClick={() => decidir.mutate("confirmar")}>
+          ✓ É a mesma <kbd>→</kbd>
+        </button>
       </div>
 
       {ampliar && (

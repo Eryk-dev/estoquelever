@@ -3975,7 +3975,8 @@
 .wms-cf-pane { display: flex; flex-direction: column; min-width: 0; }
 .wms-cf-rotulo { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--wms-c-mute); margin-bottom: 6px; }
 
-.wms-cf-stage { position: relative; height: clamp(220px, 46vh, 540px); background: var(--wms-c-faint); border: 1px solid var(--wms-c-border); border-radius: var(--wms-r-3); overflow: hidden; display: grid; place-items: center; cursor: zoom-in; }
+.wms-cf-stage { position: relative; height: clamp(240px, 50vh, 580px); padding: 14px; background: var(--wms-c-faint); border: 1px solid var(--wms-c-border); border-radius: var(--wms-r-3); overflow: hidden; display: grid; place-items: center; cursor: zoom-in; }
+/* contain + padding = peça inteira SEMPRE, com respiro; nunca encosta na borda */
 .wms-cf-stage img { width: 100%; height: 100%; object-fit: contain; }
 .wms-cf-stage-empty { color: var(--wms-c-mute-2); font-size: 13px; }
 .wms-cf-zoom-hint { position: absolute; right: 8px; bottom: 8px; background: rgba(12,10,9,.62); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 999px; opacity: 0; transition: opacity .15s ease; pointer-events: none; }
@@ -3997,6 +3998,6 @@
 @media (max-width: 680px) {
   .wms-cf-compare { grid-template-columns: 1fr; }
   .wms-cf-vs { justify-self: center; }
-  .wms-cf-stage { height: clamp(180px, 38vh, 360px); }
+  .wms-cf-stage { height: clamp(200px, 42vh, 380px); }
   .wms-cf-actions .wms-btn { min-width: 0; flex: 1; }
 }

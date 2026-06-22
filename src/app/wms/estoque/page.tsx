@@ -145,22 +145,23 @@ export default function EstoquePage() {
         rows: Produto[];
         total: number;
         kits_por_componente?: number;
+        equivalentes_cross?: number;
       }>(
-        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=20&offset=0&incluir_kits_por_componente=true`,
+        `/api/wms/produtos?q=${encodeURIComponent(q)}&limit=20&offset=0&incluir_kits_por_componente=true&incluir_equivalentes_cross=true`,
       ),
     enabled: q.trim().length >= 2,
     // Cada caractere digitado muda a queryKey — sem placeholder os resultados
     // somem/piscam a cada tecla. Mantém os anteriores enquanto busca.
     placeholderData: keepPreviousData,
   });
-  // `rows` da API vem com matches diretos primeiro e kits-por-componente
-  // anexados ao final. `kits_por_componente` indica quantos linhas no fim
-  // são "via componente".
+  // `rows` da API: matches diretos primeiro, depois kits-por-componente,
+  // depois equivalentes-cross. Os counts no fim indicam quantas linhas são de
+  // cada bloco — fatiamos de trás pra frente.
   const matchesDiretos = useMemo<Produto[]>(() => {
     const d = buscaQuery.data;
     if (!d) return [];
-    const n = d.kits_por_componente ?? 0;
-    return d.rows.slice(0, d.rows.length - n);
+    const extras = (d.kits_por_componente ?? 0) + (d.equivalentes_cross ?? 0);
+    return d.rows.slice(0, d.rows.length - extras);
   }, [buscaQuery.data]);
   const kitsDiretos = useMemo<Produto[]>(
     () => matchesDiretos.filter((p) => p.eh_kit),
@@ -168,9 +169,16 @@ export default function EstoquePage() {
   );
   const kitsViaComponente = useMemo<Produto[]>(() => {
     const d = buscaQuery.data;
-    const n = d?.kits_por_componente ?? 0;
-    if (!d || n === 0) return [];
-    return d.rows.slice(d.rows.length - n);
+    const k = d?.kits_por_componente ?? 0;
+    if (!d || k === 0) return [];
+    const e = d.equivalentes_cross ?? 0;
+    return d.rows.slice(d.rows.length - e - k, d.rows.length - e);
+  }, [buscaQuery.data]);
+  const equivalentesCross = useMemo<Produto[]>(() => {
+    const d = buscaQuery.data;
+    const e = d?.equivalentes_cross ?? 0;
+    if (!d || e === 0) return [];
+    return d.rows.slice(d.rows.length - e);
   }, [buscaQuery.data]);
 
   // Map cobertura por produto. Quando filtra por galpão, considera só
@@ -189,6 +197,31 @@ export default function EstoquePage() {
     }
     return m;
   }, [coberturaQuery.data, filterGalpao]);
+
+  // Estoque agregado por produtoId (chave). Usado pelas linhas de equivalente,
+  // que não estão em `rows` (SKU != busca) mas têm estoque no cache global.
+  const estoqueAggMap = useMemo(() => {
+    const m = new Map<string, EstoqueAgregado>();
+    for (const r of estoqueQuery.data?.rows ?? []) m.set(r.chave, r);
+    return m;
+  }, [estoqueQuery.data]);
+
+  const stockForProduto = useCallback(
+    (produtoId: string) => {
+      const agg = estoqueAggMap.get(produtoId);
+      if (!agg) return null;
+      const itens =
+        filterGalpao === "all"
+          ? agg.itens
+          : agg.itens.filter((i) => i.galpao.id === filterGalpao);
+      if (itens.length === 0) return null;
+      const saldo = itens.reduce((s, i) => s + Number(i.saldo), 0);
+      const reservado = itens.reduce((s, i) => s + Number(i.reservado), 0);
+      const disponivel = itens.reduce((s, i) => s + Number(i.disponivel), 0);
+      return { saldo, reservado, disponivel, locais: itens.length };
+    },
+    [estoqueAggMap, filterGalpao],
+  );
 
   const rows = useMemo(() => {
     let result = (estoqueQuery.data?.rows ?? []).map((r) => {
@@ -300,6 +333,7 @@ export default function EstoquePage() {
   const buscaTemExtras =
     kitsDiretos.length > 0 ||
     kitsViaComponente.length > 0 ||
+    equivalentesCross.length > 0 ||
     produtosSemEstoque.length > 0;
 
   const totalRows = rows.length;
@@ -517,6 +551,22 @@ export default function EstoquePage() {
                 />
               );
             })}
+            {equivalentesCross.length > 0 && currentPage === 1 && (
+              <>
+                <SectionHeaderRow>
+                  Equivalentes (cross) de “{q}”
+                </SectionHeaderRow>
+                {equivalentesCross.map((eq) => (
+                  <EquivalenteRow
+                    key={`equiv-${eq.id}`}
+                    produto={eq}
+                    stock={stockForProduto(eq.id)}
+                    onOpenDrawer={openDrawer}
+                    onHover={prefetchProduto}
+                  />
+                ))}
+              </>
+            )}
             {produtosSemEstoque.length > 0 && currentPage === 1 && (
               <>
                 <SectionHeaderRow>
@@ -973,6 +1023,85 @@ function SemEstoqueRow({
       <td className="wms-tar wms-td-mute">0</td>
       <td>
         <span className="wms-badge wms-badge-warn">Sem estoque</span>
+      </td>
+      <td className="wms-tar wms-td-mute">—</td>
+      <td className="wms-td-actions">
+        <button
+          className="wms-btn-icon"
+          title="Abrir produto"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenDrawer(produto.id);
+          }}
+        >
+          <Icon name="chevron-r" size={11} />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function EquivalenteRow({
+  produto,
+  stock,
+  onOpenDrawer,
+  onHover,
+}: {
+  produto: Produto;
+  stock: {
+    saldo: number;
+    reservado: number;
+    disponivel: number;
+    locais: number;
+  } | null;
+  onOpenDrawer: (id: string) => void;
+  onHover?: (id: string) => void;
+}) {
+  const semEstoque = !stock || stock.saldo === 0;
+  return (
+    <tr
+      className="wms-tr-clickable"
+      onClick={() => onOpenDrawer(produto.id)}
+      onMouseEnter={() => onHover?.(produto.id)}
+    >
+      <td></td>
+      <td>
+        {produto.imagem_url && (
+          <img
+            src={produto.imagem_url}
+            alt=""
+            loading="lazy"
+            className="wms-thumb wms-thumb-sm"
+          />
+        )}
+      </td>
+      <td className="wms-mono">
+        <a className="wms-link-row">{produto.sku}</a>
+      </td>
+      <td className="wms-td-desc">
+        <span className="wms-badge wms-badge-cross" style={{ marginRight: 6 }}>
+          Equivalente
+        </span>
+        <a className="wms-link-row">{produto.descricao}</a>
+      </td>
+      <td className="wms-tar wms-mono">{stock ? fmtNum(stock.saldo) : "0"}</td>
+      <td
+        className={`wms-tar wms-mono ${
+          stock && stock.reservado > 0 ? "wms-td-warn" : "wms-td-mute"
+        }`}
+      >
+        {stock ? fmtNum(stock.reservado) : "0"}
+      </td>
+      <td className="wms-tar wms-mono wms-td-strong">
+        {stock ? fmtNum(stock.disponivel) : "0"}
+      </td>
+      <td className="wms-tar wms-td-mute">{stock ? stock.locais : 0}</td>
+      <td>
+        {semEstoque ? (
+          <span className="wms-badge wms-badge-warn">Sem estoque</span>
+        ) : (
+          <span className="wms-td-mute">—</span>
+        )}
       </td>
       <td className="wms-tar wms-td-mute">—</td>
       <td className="wms-td-actions">

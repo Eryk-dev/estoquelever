@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const ativoParam = sp.get("ativo");
     const incluirKits = sp.get("incluir_kits_por_componente");
+    const incluirEquiv = sp.get("incluir_equivalentes_cross");
     const ehKitParam = sp.get("eh_kit");
     const ordemParam = sp.get("ordem");
     const ordem: ProdutoOrdem | undefined =
@@ -30,6 +31,8 @@ export async function GET(req: NextRequest) {
       offset: sp.get("offset") ? Number(sp.get("offset")) : 0,
       incluir_kits_por_componente:
         incluirKits === "true" || incluirKits === "1",
+      incluir_equivalentes_cross:
+        incluirEquiv === "true" || incluirEquiv === "1",
       eh_kit:
         ehKitParam === "true"
           ? true

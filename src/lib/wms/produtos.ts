@@ -16,12 +16,20 @@ export async function listarProdutos(
     /** Quando true, anexa ao final da lista kits cujos componentes
      *  casam com `q` mas que não apareceram nos resultados diretos. */
     incluir_kits_por_componente?: boolean;
+    /** Quando true, anexa ao final os equivalentes CONFIRMADOS do cross
+     *  dos produtos que casaram com `q` (substitutos da peça buscada). */
+    incluir_equivalentes_cross?: boolean;
     /** Filtra por kit (true), produto simples (false) ou ambos (undefined). */
     eh_kit?: boolean;
     /** Ordenação. Default: sku_asc. */
     ordem?: ProdutoOrdem;
   } = {},
-): Promise<{ rows: Produto[]; total: number; kits_por_componente?: number }> {
+): Promise<{
+  rows: Produto[];
+  total: number;
+  kits_por_componente?: number;
+  equivalentes_cross?: number;
+}> {
   const sb = createServiceClient();
   const limit = filtros.limit ?? 50;
   const offset = filtros.offset ?? 0;
@@ -88,26 +96,99 @@ export async function listarProdutos(
   if (error) throw error;
   const rows = (data ?? []) as Produto[];
 
-  if (
-    filtros.incluir_kits_por_componente &&
-    filtros.q &&
-    filtros.q.trim().length > 0 &&
-    offset === 0
-  ) {
-    const kits = await buscarKitsContendoQuery(filtros.q, {
-      excludeProdutoIds: rows.map((r) => r.id),
-      limit: 20,
-    });
-    if (kits.length > 0) {
+  // Extras anexados ao FINAL (kits-por-componente, depois equivalentes-cross).
+  // O cliente fatia de trás pra frente usando os counts devolvidos.
+  const temQ = !!(filtros.q && filtros.q.trim().length > 0);
+  if (temQ && offset === 0) {
+    const extras: Produto[] = [];
+    let kitsCount = 0;
+    let equivCount = 0;
+
+    if (filtros.incluir_kits_por_componente) {
+      const kits = await buscarKitsContendoQuery(filtros.q!, {
+        excludeProdutoIds: rows.map((r) => r.id),
+        limit: 20,
+      });
+      extras.push(...kits);
+      kitsCount = kits.length;
+    }
+
+    if (filtros.incluir_equivalentes_cross) {
+      const equivs = await buscarEquivalentesCrossQuery(
+        sb,
+        rows.map((r) => r.sku),
+        {
+          excludeProdutoIds: [...rows, ...extras].map((r) => r.id),
+          limit: 20,
+        },
+      );
+      extras.push(...equivs);
+      equivCount = equivs.length;
+    }
+
+    if (extras.length > 0) {
       return {
-        rows: [...rows, ...kits],
-        total: (count ?? 0) + kits.length,
-        kits_por_componente: kits.length,
+        rows: [...rows, ...extras],
+        total: (count ?? 0) + extras.length,
+        ...(kitsCount > 0 ? { kits_por_componente: kitsCount } : {}),
+        ...(equivCount > 0 ? { equivalentes_cross: equivCount } : {}),
       };
     }
   }
 
   return { rows, total: count ?? 0 };
+}
+
+/**
+ * Equivalentes CONFIRMADOS do cross dos `anchorSkus` (peças buscadas).
+ * Lê pares confirmados em `siso_cross_equivalencias` que tocam algum anchor,
+ * pega o SKU do outro lado e carrega esses produtos (ativos), excluindo os
+ * que já estão na lista. Sem corrente transitiva — só vizinhos diretos.
+ */
+async function buscarEquivalentesCrossQuery(
+  sb: ReturnType<typeof createServiceClient>,
+  anchorSkus: string[],
+  opts: { excludeProdutoIds: string[]; limit: number },
+): Promise<Produto[]> {
+  const anchors = [...new Set(anchorSkus.filter(Boolean))];
+  if (anchors.length === 0) return [];
+  const anchorSet = new Set(anchors);
+
+  // Dois selects (sku_a IN / sku_b IN) em vez de .or() pra não injetar SKUs
+  // com caractere especial no parser de filtro.
+  const [{ data: porA }, { data: porB }] = await Promise.all([
+    sb
+      .from("siso_cross_equivalencias")
+      .select("sku_a, sku_b")
+      .eq("status", "confirmado")
+      .in("sku_a", anchors),
+    sb
+      .from("siso_cross_equivalencias")
+      .select("sku_a, sku_b")
+      .eq("status", "confirmado")
+      .in("sku_b", anchors),
+  ]);
+
+  const outros = new Set<string>();
+  for (const p of [...(porA ?? []), ...(porB ?? [])] as Array<{
+    sku_a: string;
+    sku_b: string;
+  }>) {
+    const outro = anchorSet.has(p.sku_a) ? p.sku_b : p.sku_a;
+    if (!anchorSet.has(outro)) outros.add(outro);
+  }
+  if (outros.size === 0) return [];
+
+  const { data } = await sb
+    .from("siso_produtos")
+    .select("*")
+    .in("sku", [...outros])
+    .eq("ativo", true)
+    .order("sku", { ascending: true })
+    .limit(opts.limit);
+
+  const exclude = new Set(opts.excludeProdutoIds);
+  return ((data ?? []) as Produto[]).filter((r) => !exclude.has(r.id));
 }
 
 export async function getProduto(id: string): Promise<Produto | null> {

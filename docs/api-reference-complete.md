@@ -5244,13 +5244,17 @@ Lista produtos do catálogo unificado.
 **Auth:** Session.
 
 **Query params:**
-- `q` (opcional) — busca em sku, descricao, gtin
+- `q` (opcional) — busca em sku, descricao, gtin (+ cód. fornecedor e cód. localização via cross-table)
 - `ativo` — `true|false`
+- `eh_kit` — `true|false` (filtra kit / produto simples)
+- `ordem` — `sku_asc` (default) | `sincronizado_desc` | `sincronizado_asc`
 - `limit` (default 50), `offset` (default 0)
+- `incluir_kits_por_componente` — `true|1`: anexa ao FIM kits cujos componentes casam com `q` (só com `q` e `offset=0`); count em `kits_por_componente`
+- `incluir_equivalentes_cross` — `true|1`: anexa ao FIM os equivalentes CONFIRMADOS do cross dos produtos que casaram com `q` (só com `q` e `offset=0`); count em `equivalentes_cross`. Ordem dos extras: kits, depois equivalentes — o cliente fatia de trás pra frente pelos counts.
 
 **Response 200:**
 ```json
-{ "rows": [{"id":"...","sku":"...","descricao":"...","gtin":null,"ncm":null,"sincronizado_em":null,"ativo":true,...}], "total": 123 }
+{ "rows": [{"id":"...","sku":"...","descricao":"...","gtin":null,"ncm":null,"sincronizado_em":null,"ativo":true,...}], "total": 123, "kits_por_componente": 2, "equivalentes_cross": 3 }
 ```
 
 ### POST /api/wms/produtos

@@ -85,6 +85,7 @@ export default function ProdutosPage() {
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String((page - 1) * PAGE_SIZE));
       params.set("incluir_kits_por_componente", q ? "true" : "false");
+      params.set("incluir_equivalentes_cross", q ? "true" : "false");
       if (tipoFiltro === "kit") params.set("eh_kit", "true");
       else if (tipoFiltro === "simples") params.set("eh_kit", "false");
       if (ordem !== "sku_asc") params.set("ordem", ordem);
@@ -92,6 +93,7 @@ export default function ProdutosPage() {
         rows: Produto[];
         total: number;
         kits_por_componente?: number;
+        equivalentes_cross?: number;
       }>(`/api/wms/produtos?${params.toString()}`);
     },
   });
@@ -139,7 +141,11 @@ export default function ProdutosPage() {
 
   const rows = data?.rows ?? [];
   const kitsExtras = data?.kits_por_componente ?? 0;
-  const dividerAt = kitsExtras > 0 ? rows.length - kitsExtras : -1;
+  const equivExtras = data?.equivalentes_cross ?? 0;
+  // Ordem na lista: diretos · kits-componente · equivalentes-cross.
+  const kitsDividerAt =
+    kitsExtras > 0 ? rows.length - equivExtras - kitsExtras : -1;
+  const equivDividerAt = equivExtras > 0 ? rows.length - equivExtras : -1;
 
   return (
     <>
@@ -241,22 +247,15 @@ export default function ProdutosPage() {
             <tbody>
               {rows.map((p, idx) => (
                 <Fragment key={p.id}>
-                {idx === dividerAt && (
-                  <tr>
-                    <td colSpan={7} style={{
-                      padding: "8px 12px",
-                      background: "var(--wms-c-panel-2)",
-                      fontSize: 11.5,
-                      textTransform: "uppercase",
-                      letterSpacing: ".06em",
-                      color: "var(--wms-c-mute)",
-                      fontWeight: 600,
-                      borderTop: "1px solid var(--wms-c-border)",
-                      borderBottom: "1px solid var(--wms-c-border)",
-                    }}>
-                      Kits que contêm “{q}” como componente
-                    </td>
-                  </tr>
+                {idx === kitsDividerAt && (
+                  <CatalogoDivider>
+                    Kits que contêm “{q}” como componente
+                  </CatalogoDivider>
+                )}
+                {idx === equivDividerAt && (
+                  <CatalogoDivider>
+                    Equivalentes (cross) de “{q}”
+                  </CatalogoDivider>
                 )}
                 <tr className="wms-tr-clickable">
                   <td>
@@ -395,5 +394,29 @@ export default function ProdutosPage() {
         </Modal>
       )}
     </>
+  );
+}
+
+/** Linha-divisor de seção dentro da tabela do catálogo (kits, equivalentes). */
+function CatalogoDivider({ children }: { children: React.ReactNode }) {
+  return (
+    <tr>
+      <td
+        colSpan={7}
+        style={{
+          padding: "8px 12px",
+          background: "var(--wms-c-panel-2)",
+          fontSize: 11.5,
+          textTransform: "uppercase",
+          letterSpacing: ".06em",
+          color: "var(--wms-c-mute)",
+          fontWeight: 600,
+          borderTop: "1px solid var(--wms-c-border)",
+          borderBottom: "1px solid var(--wms-c-border)",
+        }}
+      >
+        {children}
+      </td>
+    </tr>
   );
 }

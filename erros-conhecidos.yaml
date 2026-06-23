@@ -6833,3 +6833,31 @@ erros:
       - src/app/api/wms/trocas/[id]/desfazer/route.ts
       - src/lib/wms/desfazer-troca.test.ts
     tags: [troca-equivalencia, desfazer, beco-sem-saida, substituto, reabertura, BUG-A]
+
+  - id: troca-bloqueada-status-concluido-separacao
+    date: "2026-06-23"
+    source: trocas-equivalencia
+    category: business_logic
+    message: >
+      "Usar equivalente" no checklist de separação falhava com toast
+      "pedido em status 'concluido' não aceita troca". O guard de solicitarTroca
+      só aceitava pedido.status em ['pendente','executando'], mas 'concluido' é o
+      estado NORMAL de um pedido em separação.
+    cause: >
+      O job lancar_estoque (marcadores/NF — inclusive OC via
+      executarMarcadoresOnly) flipa pedido.status executando→concluido ANTES da
+      separação física (worker loop em execution-worker.ts:240-252). A separação
+      é rastreada por status_separacao, ORTOGONAL a status. Logo, quando o
+      operador chega no checklist, status já é 'concluido' (ex.: item OC em
+      validacao_oc/aguardando_compra, ou item própria em aguardando_separacao).
+      O guard checava a dimensão errada (status do pedido em vez do estágio de
+      separação), bloqueando praticamente toda troca feita do checklist.
+    fix: >
+      Inverter o guard pra denylist: rejeitar só status 'cancelado'/'erro'. O
+      estágio de pick já é gateado logo abaixo por status_separacao (bloqueia
+      separado/embalado/conferido/expedido) + qtyResidual (item já separado =
+      nada a trocar), que são as dimensões corretas. Nenhuma mudança em RPC —
+      aprovarTroca/wms_aprovar_troca_atomico não olham pedido.status.
+    files:
+      - src/lib/wms/trocas-equivalencia.ts
+    tags: [troca-equivalencia, separacao, status-pedido, concluido, oc, checklist, guard]

@@ -235,7 +235,12 @@ export async function solicitarTroca(
   if (!pedido) {
     throw new TrocaError("PEDIDO_NAO_ENCONTRADO", `pedido ${item.pedido_id} não encontrado`);
   }
-  if (!["pendente", "executando"].includes(pedido.status as string)) {
+  // status='concluido' é estado NORMAL de pedido em separação: o job
+  // lancar_estoque (marcadores/NF, inclusive OC via executarMarcadoresOnly)
+  // flipa executando→concluido ANTES da separação física. O estágio de pick
+  // é gateado por status_separacao (abaixo) + qtyResidual — não pelo status
+  // de pedido. Só cancelado/erro impedem troca.
+  if (["cancelado", "erro"].includes(pedido.status as string)) {
     throw new TrocaError(
       "PEDIDO_ESTADO_INVALIDO",
       `pedido em status '${pedido.status}' não aceita troca`,

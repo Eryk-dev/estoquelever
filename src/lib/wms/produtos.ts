@@ -140,6 +140,36 @@ export async function listarProdutos(
 }
 
 /**
+ * Resolve UM produto por código EXATO — SKU ou GTIN, sem busca por nome.
+ * Usado pelo bipe/digitação do inventário: casar pelo `descricao` aproximado
+ * (ou pelo código da localização) faria o operador somar estoque no produto
+ * errado. SKU é case-insensitive (scanner/digitação variam o caixa); GTIN exato.
+ * `.eq`/`.ilike` em queries separadas em vez de `.or()` pra não injetar
+ * caractere especial no parser de filtro do PostgREST.
+ */
+export async function resolverProdutoPorCodigo(
+  codigo: string,
+): Promise<Produto | null> {
+  const sb = createServiceClient();
+  const term = codigo.trim();
+  if (!term) return null;
+  const bySku = await sb
+    .from("siso_produtos")
+    .select("*")
+    .ilike("sku", term)
+    .limit(1)
+    .maybeSingle();
+  if (bySku.data) return bySku.data as Produto;
+  const byGtin = await sb
+    .from("siso_produtos")
+    .select("*")
+    .eq("gtin", term)
+    .limit(1)
+    .maybeSingle();
+  return (byGtin.data as Produto | null) ?? null;
+}
+
+/**
  * Equivalentes CONFIRMADOS do cross dos `anchorSkus` (peças buscadas).
  * Lê pares confirmados em `siso_cross_equivalencias` que tocam algum anchor,
  * pega o SKU do outro lado e carrega esses produtos (ativos), excluindo os

@@ -6891,3 +6891,33 @@ erros:
       - src/lib/wms/conferencia.ts
       - src/lib/wms/conferencia.test.ts
     tags: [conferencia, bip, qr, mercado-livre, etiqueta-barcodes, abnt2, postgrest, overlap]
+
+  - id: inventario-bipe-loc-2x-soma-no-primeiro-produto
+    date: "2026-06-23"
+    source: wms.inventario.contar
+    category: business_logic
+    message: >
+      no bipe do inventário, bipar a etiqueta da localização 2x somava estoque
+      no "primeiro produto"; e o campo de bipar/digitar resolvia produto por
+      nome aproximado.
+    cause: >
+      registrarContagemPorSku (contar/page.tsx) resolvia o SKU não-esperado via
+      GET /api/wms/produtos?q=<v>&limit=1. listarProdutos faz busca FUZZY:
+      descricao.ilike.%term% (nome aproximado) + pré-resolve localizacao.codigo
+      ilike pra IDs de produto com saldo naquela loc. Ao bipar o código da loc
+      (depois de já confirmada, em etapa 'counting'), o `q` casava produtos com
+      saldo naquela loc/nome parecido e com limit=1 retornava o 1º (sku_asc),
+      somando +1 nele. Mesma busca fuzzy fazia o campo "puxar pelo nome".
+    fix: >
+      (1) Novo resolverProdutoPorCodigo(codigo) em produtos.ts: match EXATO por
+      SKU (ilike sem wildcard = case-insensitive) e fallback GTIN exato, sem
+      descricao/loc. Rota GET /api/wms/produtos ganhou branch ?codigo= que usa
+      esse resolver; a busca fuzzy ?q= das outras telas ficou intocada. O
+      fallback do bipe passou a chamar ?codigo=<v>. (2) Guard em handleScan: na
+      etapa 'counting', se o valor bipado == locAtual.codigo (re-bipe da
+      etiqueta da loc), ignora com toast em vez de tratar como produto.
+    files:
+      - src/lib/wms/produtos.ts
+      - src/app/api/wms/produtos/route.ts
+      - src/app/wms/inventario/[id]/contar/page.tsx
+    tags: [inventario, bip, contagem, sku, gtin, localizacao, fuzzy, produtos, double-bip]

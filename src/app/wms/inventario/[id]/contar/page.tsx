@@ -301,6 +301,16 @@ export default function ContarPage({
     }
 
     if (etapa === "counting") {
+      // Re-bipe da etiqueta da loc (operador bipou a localização 2x sem querer):
+      // ignora, senão o código da loc cairia no resolver e somaria no produto
+      // errado. A loc já está confirmada — nada a fazer.
+      if (
+        locAtual?.codigo &&
+        v.toLowerCase() === locAtual.codigo.toLowerCase()
+      ) {
+        toast("Localização já confirmada — bipe os produtos");
+        return;
+      }
       await registrarBipe(v);
     }
   }
@@ -338,18 +348,20 @@ export default function ContarPage({
         imagens: esperadoMatch.imagens,
       };
     } else {
-      // Fallback: produto não está nos esperados — busca no servidor
+      // Fallback: produto não está nos esperados — resolve por SKU/GTIN EXATO
+      // no servidor (sem busca por nome aproximado, que casaria no produto
+      // errado — ex.: bipar o código da localização).
       let lookup: ProdutoMin | undefined;
       try {
         const r = await wmsApi<{ rows?: ProdutoMin[] }>(
-          `/api/wms/produtos?q=${encodeURIComponent(v)}&limit=1`,
+          `/api/wms/produtos?codigo=${encodeURIComponent(v)}`,
         );
         lookup = r.rows?.[0];
       } catch {
         // ignora — produto fica undefined
       }
       if (!lookup) {
-        toast.error(`SKU não encontrado: ${v}`);
+        toast.error(`SKU/GTIN não encontrado: ${v}`);
         return;
       }
       produto = lookup;

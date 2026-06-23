@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   listarProdutos,
   criarProduto,
+  resolverProdutoPorCodigo,
   type ProdutoOrdem,
 } from "@/lib/wms/produtos";
 import { requireAuth, requireAdmin } from "@/lib/wms/auth";
@@ -13,6 +14,14 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams;
   try {
+    // Resolução exata por SKU/GTIN (bipe/digitação do inventário) — sem busca
+    // por nome aproximado, que casaria no produto errado.
+    const codigo = sp.get("codigo");
+    if (codigo !== null) {
+      const produto = await resolverProdutoPorCodigo(codigo);
+      return NextResponse.json({ rows: produto ? [produto] : [] });
+    }
+
     const ativoParam = sp.get("ativo");
     const incluirKits = sp.get("incluir_kits_por_componente");
     const incluirEquiv = sp.get("incluir_equivalentes_cross");

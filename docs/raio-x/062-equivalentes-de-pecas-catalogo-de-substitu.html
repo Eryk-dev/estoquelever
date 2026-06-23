@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Equivalentes de Peças (Catálogo de Substituições) — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Peças equivalentes e cross-dock</p>
+<h1>Equivalentes de Peças (Catálogo de Substituições)</h1><p class="lead">É o catálogo que mostra, para cada peça, quais outras peças podem ser usadas como substituto. Hoje é só informação (operador vê quais equivalentes existem); em breve, vai permitir trocar peça durante a separação se a que pediu tiver falta.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">3</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Adicionar equivalente válido (código com 4+ caracteres, letras e números)</span></li><li><span class="dot">✓</span><span>Remover equivalente que veio do catálogo (Tiny)</span></li><li><span class="dot">✓</span><span>Buscar equivalentes por código (ex: busca 'ABC-1234' encontra qual peça usa ela)</span></li><li><span class="dot">✓</span><span>Equivalente trazido automaticamente do Tiny e guardado no sistema</span></li></ul></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D180</span>Quando um operador cola um código de fornecedor com barra invertida ou caractere estranho (tipo ABC\-1234), o sistema deve aceitar ou rejeitar?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cadastros (produtos, prateleiras, fornecedores)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um operador cola um código de fornecedor que tem uma barra invertida na frente do traço. O sistema tem uma regra que valida letras, números, ponto e traço — mas não deixa claro se aceita escape de caracteres.</p><p class="ln"><b>Hoje o sistema:</b> O sistema tira espaços, maiúscula, e valida com uma regra que verifica: letras (A-Z), números (0-9), ponto e traço. A barra invertida? Não confirmamos se o navegador/sistema é que escapa, ou se o operador tá colando mesmo assim.</p><p class="ln why"><b>Por que importa:</b> Se você não define isso, fica na dúvida: operador cola ABC\-1234, o sistema aceita como ABC-1234 (interpretado), ou rejeita por ter caractere fora da lista? Dependendo da escolha, você padroniza como a pessoa digita no Tiny.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Aceitar literal — o sistema normaliza e transforma barra-invertida-traço em traço normal.</b> — Operador digita qualquer coisa estranha, o sistema limpa e funciona. Mais flexível, menos erro de rejeição.</span></li><li class=""><span class="ck"></span><span><b>Rejeitar — se achar barra invertida ou escape, avisa o operador 'código inválido'.</b> — Operador sabe imediatamente que aquele copiar-colar tá errado. Mais rígido, força operador a copiar certo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Recomendo ACEITAR LITERAL. O sistema limpa automaticamente e o operador nunca fica travado por um caractere estranho. Código de fornecedor é vindo do Tiny — você pode assumir que dados do Tiny são meio bagunçados mesmo.</p></div><p class="refp">route.ts:10, route.ts:22</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D281</span>Se um operador tiver permissão pra adicionar um código de fornecedor, e depois você remove a permissão dele, ele consegue deletar o código que tinha adicionado antes?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador A adiciona código OEM-100. Depois você remove a permissão de 'editar produtos' do Operador A. A tenta deletar OEM-100.</p><p class="ln"><b>Hoje o sistema:</b> O sistema checa: 'Operador A criou OEM-100?' Sim? Deixa deletar. Não checa se ele ainda tem permissão de editar. O motivo é: o código foi criado por ele, é propriedade dele, então ele pode desfazer.</p><p class="ln why"><b>Por que importa:</b> Você precisa decidir: permissão é tipo 'diploma' (se tirar, perde tudo) ou 'contrato' (o que você fez no passado fica seu)? Um operador que adicionou 100 códigos e perdeu permissão consegue limpar depois ou fica tudo preso?</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar deletar mesmo sem permissão — se criou, pode remover.</b> — Operador que perdeu acesso consegue desfazer o trabalho antigo. Menos bagunça abandonada, mas pode parecer que a permissão não tá sendo respeitada.</span></li><li class=""><span class="ck"></span><span><b>Exigir permissão ativa — nem quem criou consegue deletar se não tiver permissão no momento.</b> — Permissão é lei mesmo. Operador perde acesso, perde tudo — nem o que criou consegue tocar. Mais rigoroso, evita surprise de operador removendo coisa importante.</span></li></ul><p class="recnote"><b>Recomendo:</b> Recomendo DEIXAR DELETAR. Um operador que criou um código deve conseguir corrigir ou remover o que criou, mesmo que tenha perdido permissão depois. É tipo: você criou um lembrete no seu notebook — se perder cargo, seu notebook é seu mesmo assim. Evita bagunça de código órfão.</p></div><p class="refp">oems/[codigo]/route.ts:37-45, specs:272</p></div><h2>Ainda a conferir · 3</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Quando você clica 'Atualizar agora' na página do código de fornecedor, o sistema pega novas informações do Tiny — mas não deleta códigos que foram removidos de lá. Precisa confirmar se tá certo deixar edições manuais intactas ou se deveria sincronizar tudo (inclusive deleções).</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Quando um código tem equivalentes em cadeia (código A é igual a B, que é igual a C), o sistema mostra C como equivalente de A? Precisa confirmar se a propagação pelo grafo de equivalentes tá funcionando mesmo, e se links manuais entre códigos estão entrando na conta.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>O sistema tenta extrair códigos de fornecedor da descrição do Tiny automaticamente — mas a regex pode não cobrir todos os padrões reais (tipo códigos com underscore ou caracteres diferentes). Se o sistema não conseguir extrair, o operador adiciona manualmente. Precisa validar se essa cobertura é mesmo suficiente pra sua operação.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

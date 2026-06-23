@@ -1,0 +1,1667 @@
+{
+  "P001": {
+    "id": "P001",
+    "title": "Pedido com zero unidades entra no sistema",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Validar quando entra um pedido (recusar pedido inteiro se qualquer item tiver qty=0)",
+    "nota": "OPCAO 1 VALIDAR"
+  },
+  "P002": {
+    "id": "P002",
+    "title": "Uma peça do kit não tem código cadastrado no Tiny dessa empresa",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "NAO rejeitar item por falta de id no Tiny da empresa. Sempre mostrar TODOS os itens do kit/pedido. Preferir baixa manual a deixar de enviar. ESTRATEGIA TECNICA: id interno (uuid WMS do produto) + flag sem_cadastro_tiny; NAO tornar a chave nullable."
+  },
+  "P003": {
+    "id": "P003",
+    "title": "Dois cliques admin no reprocessamento criam duas reservas idênticas",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Adicionar trava antes de processar: somente um processamento por vez por pedido",
+    "nota": "RESOLVIDO: dedup idempotente — antes de reservar, checar mov R viva por (pedido,produto) e pular. SEM advisory lock (infra nova descartada)."
+  },
+  "P004": {
+    "id": "P004",
+    "title": "Mercadoria do pedido muda enquanto o sistema está aprovando",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 3,
+    "opcao_label": "Deixar como está e contar com a rotina de acerto de saldo pra limpar isso depois.",
+    "nota": "mercadoria do pedido não vai mudar — deixar como está"
+  },
+  "P005": {
+    "id": "P005",
+    "title": "Pedido aprovado fica preso quando a tarefa de soltar o estoque não entra na fila",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "A tarefa é repetida automaticamente se falhar, e o sistema é tolerante a duplicatas.",
+    "nota": "repetir automaticamente se falhar + sistema tolerante a duplicatas"
+  },
+  "P006": {
+    "id": "P006",
+    "title": "Quando a separação trava no meio, ninguém descobre pelo histórico",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Registrar automaticamente todos os erros de separação no histórico (qual prateleira não existe, qual quantidade está faltando, etc.)",
+    "nota": "registrar automaticamente todos os erros de separação no histórico"
+  },
+  "P007": {
+    "id": "P007",
+    "title": "Cancelamento de pedido que está sendo separado: alguns itens já foram picados, outros não",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Cancelar só o que não foi pego: liberar estoque do item 2 e devolver item 1 de forma manual (operador refaz a entrada)",
+    "nota": "cancelar só o que não foi pego; devolver item pego manualmente"
+  },
+  "P008": {
+    "id": "P008",
+    "title": "Cancelamento gera duplicação de estoque quando há tarefas do sistema enfileiradas",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Cancelar a tarefa na fila quando o pedido é cancelado",
+    "nota": "cancelar a tarefa na fila quando o pedido é cancelado"
+  },
+  "P009": {
+    "id": "P009",
+    "title": "[CONFERIR — pode não ser bug] Estorno do pedido: o estoque volta e o pedido vira cancelado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta / so conferir se sobra marca interna apos estorno (raio-x: provavelmente nao e bug)"
+  },
+  "P010": {
+    "id": "P010",
+    "title": "Um item é marcado por 2 operadores ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "NÃO FAZER NADA"
+  },
+  "P011": {
+    "id": "P011",
+    "title": "Item com quantidade zero bloqueia o pedido na separação",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "não é possível acontecer; não se preocupar com pedido de item 0 unidades"
+  },
+  "P012": {
+    "id": "P012",
+    "title": "Confirmação falha após pedido já estar marcado como em separação",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Fazer a consolidação ANTES de marcar como 'em separação': se falhar, nada de estado muda",
+    "nota": "fazer a consolidação ANTES de marcar como em separação"
+  },
+  "P013": {
+    "id": "P013",
+    "title": "Operador marca item, rede cai, e item fica travado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Quando a rede voltar, o sistema recarrega a tela e mostra o estado real (marcado ou não)",
+    "nota": "recarregar tela e mostrar estado real quando a rede voltar"
+  },
+  "P014": {
+    "id": "P014",
+    "title": "Operador tenta desmarcar um item e o sistema trava",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Envolver todo o desfazimento em uma operação tudo-ou-nada (ou tudo desfaz, ou nada desfaz)",
+    "nota": "desfazimento tudo-ou-nada"
+  },
+  "P015": {
+    "id": "P015",
+    "title": "Tentativa de desmarcar item de separação antiga falha por mudanças de estoque no meio-tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Guardar o número exato de estoque do dia em que marcou, e usar esse número pra calcular a volta",
+    "nota": "guardar o número exato de estoque do dia da marcação"
+  },
+  "P016": {
+    "id": "P016",
+    "title": "Pedido sem empresa ou galpão definido — operador não consegue marcar nada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "não mexer; nunca aconteceu e o sistema antigo não tinha essa trava"
+  },
+  "P017": {
+    "id": "P017",
+    "title": "Operador digita zero na quantidade e o sistema passa",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Permitir zero somente quando o operador marca que a prateleira está vazia (checagem especial)",
+    "nota": "permitir zero só com confirmação de prateleira vazia"
+  },
+  "P018": {
+    "id": "P018",
+    "title": "Operador clica duas vezes no mesmo botão por acaso",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "DESCARTADO: fica so a transacao P019. Backend do parcial ja tem claim atomico (Pass A) que previne dobro-contagem; debounce de UI dispensavel."
+  },
+  "P019": {
+    "id": "P019",
+    "title": "Operador marca item, internet cai no meio, estoque some mas item não marcado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Usar transação (tudo-ou-nada): se internet cair, o estoque volta automaticamente",
+    "nota": "op1"
+  },
+  "P020": {
+    "id": "P020",
+    "title": "Quantidade errada quando cancela o mesmo item escaneado duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "não fazer nada"
+  },
+  "P021": {
+    "id": "P021",
+    "title": "Dois cliques rápido no botão Desfazer fazem quantidade ficar errada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Desfazer sempre diminui exatamente 1, nao importa quanto foi lido antes",
+    "nota": "op2"
+  },
+  "P022": {
+    "id": "P022",
+    "title": "Item desaparece quando dois operadores mexem ao mesmo tempo (cancelamento concorrente)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "não fazer nada"
+  },
+  "P023": {
+    "id": "P023",
+    "title": "Servidor cai no meio da reversão de estoque, fica inconsistente",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Fazer tudo de uma vez em uma transação tudo-ou-nada. Se cai no meio, volta pro estado anterior.",
+    "nota": "opção 1"
+  },
+  "P024": {
+    "id": "P024",
+    "title": "Dados corruptos impedem devolução do estoque",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como está"
+  },
+  "P025": {
+    "id": "P025",
+    "title": "Sistema aceita quantidade zero no formulário de embalagem",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como está"
+  },
+  "P026": {
+    "id": "P026",
+    "title": "Dois cliques no mesmo instante expedem o pedido duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como está"
+  },
+  "P027": {
+    "id": "P027",
+    "title": "Admin não consegue voltar um pedido já enviado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como está"
+  },
+  "P028": {
+    "id": "P028",
+    "title": "A entrada de mercadoria não grava completa no histórico do estoque",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Tudo-ou-nada (trancado): se o histórico falhar, a entrada toda volta atrás — operador tenta novamente. Seguro, mas operador precisa ficar de olho.",
+    "nota": "tudo-ou-nada trancado + tela listando entradas com problema"
+  },
+  "P029": {
+    "id": "P029",
+    "title": "Operador digita a prateleira errada ao confirmar que encontrou a mercadoria",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Operador escaneia TANTO o código da prateleira QUANTO o código de barras do produto antes de confirmar",
+    "nota": "op1 + botão de confirmação manual (igual inventário: entrada em loc sem etiqueta)"
+  },
+  "P030": {
+    "id": "P030",
+    "title": "Dois operadores clicam 'encontrei' no mesmo produto ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como está"
+  },
+  "P031": {
+    "id": "P031",
+    "title": "OC de outro galpão — decisão final está errada quando há mistura",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear: Se tem itens de galpões diferentes, mostra aviso vermelho 'Este pedido tem compras de 2 galpões. Não pode concluir assim.' e o operador separa manualmente.",
+    "nota": "op1"
+  },
+  "P032": {
+    "id": "P032",
+    "title": "Recebimento fica preso quando produto não está cadastrado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "não fazer nada; recebimento pressupõe produto cadastrado; sistema já barra endereço inválido"
+  },
+  "P033": {
+    "id": "P033",
+    "title": "Recebimento com brinde fica errado: operador confere 12 mas sistema registra só 10",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 3,
+    "opcao_label": "Deixar receber qualquer quantidade e registrar o excesso como 'ganho de inventário' automaticamente",
+    "nota": "op3"
+  },
+  "P034": {
+    "id": "P034",
+    "title": "Operador cancela a compra do fornecedor, mas o estoque apartado nunca é devolvido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Devolver automático: quando cancela, libera a reserva na mesma hora",
+    "nota": "op1"
+  },
+  "P035": {
+    "id": "P035",
+    "title": "Pedido fica 'dormindo' para sempre depois que a compra é cancelada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Voltar pedido para 'pendente' (começo da fila)",
+    "nota": "op1"
+  },
+  "P036": {
+    "id": "P036",
+    "title": "Trocar SKU após marcar comprado (já na compra)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Impedir a troca automaticamente",
+    "nota": "bloquear a troca quando tem compra ativa"
+  },
+  "P037": {
+    "id": "P037",
+    "title": "Mudança de SKU é registrada mas histórico falha e fica sem anotação",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "REBAIXADO a no-op: codigo atual ja registra evento fire-and-forget safe (nao quebra). Sintoma da ficha nao existe. Fix real da rota = P036."
+  },
+  "P038": {
+    "id": "P038",
+    "title": "Pedido cancelado não libera o estoque apartado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "A. Corrigir o código pra liberar automaticamente no ato do cancelamento",
+    "nota": "op1"
+  },
+  "P039": {
+    "id": "P039",
+    "title": "Item de compra cancelado, mas estoque ainda fica bloqueado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Liberar estoque automaticamente quando confirma cancelamento",
+    "nota": "op2"
+  },
+  "P040": {
+    "id": "P040",
+    "title": "Item que já foi separado (encostado na prateleira) não pode ser cancelado direito",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Bloquear cancelamento se há quantidade separada, avisando que precisa desfazer a separação antes",
+    "nota": "op2"
+  },
+  "P041": {
+    "id": "P041",
+    "title": "Compra parcial recebida, item cancelado, depois chega o resto — estoque fica invisível",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Apagar a ligação com a compra (como está agora)",
+    "nota": "op1"
+  },
+  "P042": {
+    "id": "P042",
+    "title": "Tenta cancelar item que já chegou 100% — sistema deixa cancelar de novo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Permitir cancelamento de tudo, sem validação",
+    "nota": "permite cancelamento"
+  },
+  "P043": {
+    "id": "P043",
+    "title": "Devolvendo duas vezes: o segundo clique não faz nada, mas parece OK",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Marcar cada devolução com um ID único no servidor, descartar cópias idênticas",
+    "nota": "op2"
+  },
+  "P044": {
+    "id": "P044",
+    "title": "Devolvendo item de um pedido que já saiu: estoque fica bloqueado pra nada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "isso não vai acontecer; deixar como está"
+  },
+  "P045": {
+    "id": "P045",
+    "title": "Devolve 1 item de 3, compra fica em status estranho",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Status volta pra 'em compra' se nenhum item chegou; fica 'parcialmente_recebido' se alguns chegaram",
+    "nota": "op2"
+  },
+  "P046": {
+    "id": "P046",
+    "title": "Estorno perdido: item que foi separado não volta ao estoque quando devolvido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Gravar um novo movimento (entrada) que desfaz a saída anterior, automático",
+    "nota": "Gravar entrada que desfaz a saida — MAS so quando pedido NAO esta lancado. Se lancado, ganha o bloqueio do P047 (ordem do guard: P047 primeiro)."
+  },
+  "P047": {
+    "id": "P047",
+    "title": "Pedido bloqueado com item solto: sistema acha que está pronto, mas não está",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Impedir devolução se pedido já foi lançado (estoque já saiu)",
+    "nota": "Impedir devolucao se ja lancado + instrucao clara. PRECEDENCIA sobre o estorno do P046 na mesma rota."
+  },
+  "P048": {
+    "id": "P048",
+    "title": "Compra não atualiza se o servidor se recusa a processar",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Tentar 3 vezes automaticamente antes de desistir",
+    "nota": "op1+op2: 3 tentativas automaticas E, se todas falharem, mostrar erro ao operador (nada silencioso)"
+  },
+  "P049": {
+    "id": "P049",
+    "title": "Classificação de devolução incompleta (alguns passos podem não rodar)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Tratar os 3 passos como um bloco único (ou roda tudo, ou nada)",
+    "nota": "3 passos como bloco unico tudo-ou-nada"
+  },
+  "P050": {
+    "id": "P050",
+    "title": "Saldo entra mas o pedido fica preso",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Usar um 'guarda-chuva' que protege tudo junto (tudo-ou-nada)",
+    "nota": "tudo-ou-nada: movimentacao + etapa juntas, previne dobro-contagem"
+  },
+  "P051": {
+    "id": "P051",
+    "title": "Item avariado suma do galpão sem deixar rastro",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear: se não tiver quarentena, rejeitar a operação (aviso vermelho ao operador)",
+    "nota": "bloquear se quarentena nao existe; validar antes de tirar da prateleira"
+  },
+  "P052": {
+    "id": "P052",
+    "title": "Duplicação via duplo clique",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear duplas comunicações na rota (verificar a etapa do pedido antes de processar)",
+    "nota": "verificar status aguardando_classificacao antes de processar; rejeita 2a chamada"
+  },
+  "P053": {
+    "id": "P053",
+    "title": "Devolução antiga (antes de maio) não devolve o estoque pro monte quando cancela",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Corrigir a lógica de busca: procurar devoluções antigas por data da transação + tipo, não só por ID",
+    "nota": "corrigir busca de devolucoes antigas por data+tipo (nao so ID)"
+  },
+  "P054": {
+    "id": "P054",
+    "title": "Estoque fica negativo quando dois operadores mexem na mesma prateleira ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Implementar trava/lock: quando começa a marcar como danificado, tranca a prateleira. Outros operadores esperam terminar.",
+    "nota": "lock pessimista na prateleira; operacoes nao se cruzam, saldo sempre positivo"
+  },
+  "P055": {
+    "id": "P055",
+    "title": "Duplo clique em Criar Sessão — pedido duplicado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Marcar na prateleira (banco de dados) que sessão já existe pra este galpão + data, rejeita 2ª tentativa",
+    "nota": "banco rejeita sessao duplicada por galpao+data"
+  },
+  "P056": {
+    "id": "P056",
+    "title": "Estorno de contagem com 100 movimentos falha no meio",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Desfazer todos de uma vez — se qualquer um falhar, nenhum é desfeito",
+    "nota": "tudo-ou-nada no desfazer contagem: se uma reversao falha, nada e desfeito + aviso do produto que ficaria negativo. Vale tambem pro P061 (mesmo codigo)."
+  },
+  "P057": {
+    "id": "P057",
+    "title": "Contagem não gruda com o saldo quando tudo falha",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Juntar contagem + saldo numa transação única (tudo-ou-nada)",
+    "nota": "contagem + saldo numa transacao unica (tudo-ou-nada)"
+  },
+  "P058": {
+    "id": "P058",
+    "title": "Operador consegue digitar em uma contagem que já foi finalizada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear entrada se a contagem já saiu da fase em andamento",
+    "nota": "bloquear entrada se a contagem saiu de em_andamento; supervisor cria nova se precisa corrigir"
+  },
+  "P059": {
+    "id": "P059",
+    "title": "Compra chega fora da hora da contagem e some do relatório",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "O sistema lê o histórico de estoque desde o início do dia e recalcula tudo",
+    "nota": "recalcular pelo historico do dia (ledger desde inicio do dia)"
+  },
+  "P060": {
+    "id": "P060",
+    "title": "Contagem parada no meio do caminho quando estoque muda",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Se falhar no meio, descartar tudo e voltar ao estado anterior",
+    "nota": "se falhar no meio ao aplicar contagem, descartar tudo e voltar ao estado anterior (tudo-ou-nada)"
+  },
+  "P061": {
+    "id": "P061",
+    "title": "Uma movimentação de ajuste falha no meio da execução",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Desfaz o que consegue e mostra exatamente qual item falhou",
+    "nota": "ALINHADO A P056: tudo-ou-nada tambem no desfazer ajuste (compartilham estornarSessaoInventario). Vira o mesmo PR do P056; op2 anterior (desfaz-o-que-da) superseded."
+  },
+  "P062": {
+    "id": "P062",
+    "title": "Dois operadores tentam receber a mesma transferência ao mesmo tempo — um fica com estoque perdido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Só quem está recebendo consegue cancelar a transferência",
+    "nota": "so quem esta recebendo cancela; + timeout automatico 30min libera lock se a tela cair"
+  },
+  "P063": {
+    "id": "P063",
+    "title": "Cancelamento de transferência falha no meio — fica meia desfeita e prende o operador seguinte",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "RAIZ: nao permitir excluir localizacao que contem itens. Deletar loc deve obrigar transferir os itens para outra loc antes. Isso evita o erro de desguardar caixa em prateleira deletada."
+  },
+  "P064": {
+    "id": "P064",
+    "title": "Transferência perde um item no meio da operação de recebimento",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — caso de borda raro demais (registro digital sumindo durante recebimento)"
+  },
+  "P065": {
+    "id": "P065",
+    "title": "Desfazer recebimento semanas depois quebra o saldo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Antes de desfazer, checar: 'essa transferência pode ser devolvida inteira?' Se não: dizer 'você só pode devolver 40 de 50 unidades — o resto já foi vendido. Cheque com separação.'",
+    "nota": "validar e avisar antes de desfazer (quanto da pra devolver sem negativar); nao bloqueia, da transparencia"
+  },
+  "P066": {
+    "id": "P066",
+    "title": "Dois operadores conseguem receber e cancelar a mesma transferência ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Sistema bloqueia cancelamento: se alguém começou recebimento, botão 'Cancelar' fica cinzento com aviso 'outro operador está recebendo'. Só desbloqueado quando recebimento termina.",
+    "nota": "bloquear cancelamento enquanto recebimento ativo (mesma linha do P062)"
+  },
+  "P067": {
+    "id": "P067",
+    "title": "Desfazer recebimento pode deixar os dados desorganizados",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Desfazer completo: se qualquer etapa falha, voltar tudo como era (nenhuma mercadoria é devolvida).",
+    "nota": "desfazer recebimento completo ou nada (tudo-ou-nada)"
+  },
+  "P068": {
+    "id": "P068",
+    "title": "Dois operadores mexem no mesmo instante: um cancela, outro recebe",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Travar a transferência enquanto está sendo cancelada (ninguém consegue receber enquanto o cancelamento está acontecendo)",
+    "nota": "travar transferencia durante cancelamento (familia P062/P066)"
+  },
+  "P069": {
+    "id": "P069",
+    "title": "Pessoa consegue forçar ajuste de estoque sem estar autorizada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Adicionar validação no sistema por trás",
+    "nota": "validar permissao operacoes.ajuste_manual no backend, nao so na tela (falha de seguranca)"
+  },
+  "P070": {
+    "id": "P070",
+    "title": "Desfazer um ajuste que já foi vendido causa saldo negativo e trava o sistema",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Rejeitar o desfazer e avisar: 'Não dá pra desfazer este ajuste — já foi usado em 15 saídas (separação de pedido). Se quer corrigir o saldo, faça outro ajuste.'",
+    "nota": "rejeitar desfazer com aviso claro quando ja houve saidas; pra corrigir, fazer outro ajuste"
+  },
+  "P071": {
+    "id": "P071",
+    "title": "Dois pedidos criados quando vendedor clica rápido duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Gerar o código único uma vez ao abrir o formulário (em vez de gerar a cada clique)",
+    "nota": "gerar idempotency key ao abrir o formulario; reusar em todo clique; backend reconhece e retorna pedido ja criado"
+  },
+  "P072": {
+    "id": "P072",
+    "title": "Operador marca item: pode contar duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Usar um identificador único (como um ID de transação) e guardar qual foi a última processada",
+    "nota": "ID unico (idempotency) por marcacao; recusa reprocessar a mesma; clicar 100x conta 1"
+  },
+  "P073": {
+    "id": "P073",
+    "title": "Operador clica em Concluir e a tela demora: clica de novo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Segunda tentativa retorna o mesmo resultado da primeira: 'ok, 2 concluídos, 1 pendente'",
+    "nota": "concluir idempotente: 2o clique retorna a mesma resposta do 1o (ok, X concluidos, Y pendentes)"
+  },
+  "P074": {
+    "id": "P074",
+    "title": "Nota fiscal sumiu ou está inválida, mas pedido já marcado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Se a nota fiscal falhar E o pedido não precisa dela (ex: ajuste de posição), ignora e continua",
+    "nota": "exigir NF so quando a operacao precisa dela; ignorar/continuar quando nao precisa (ex ajuste de posicao)"
+  },
+  "P075": {
+    "id": "P075",
+    "title": "Estorno de venda manual sai pela metade",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Trancar a prateleira inteira enquanto desfaz",
+    "nota": "venda manual baixa_direta: trancar prateleira durante o estorno de limpeza; tudo-ou-nada nas 3 saidas; trava auto-libera apos queda"
+  },
+  "P076": {
+    "id": "P076",
+    "title": "Atribuição a vendedor que saiu da empresa",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Modo 2: Não deixar vendedor inativo aparecer na lista",
+    "nota": "vendedor inativo nem aparece no dropdown"
+  },
+  "P077": {
+    "id": "P077",
+    "title": "Cancelamento interrompido deixa estoque errado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Agrupar as 3 devoluções em uma operação indivisível — só marca como cancelado se conseguir devolver as 3 ao mesmo tempo",
+    "nota": "as 3 devolucoes como bloco indivisivel; so cancela se devolver as 3 juntas"
+  },
+  "P078": {
+    "id": "P078",
+    "title": "Não consegue desfazer uma realocação quando já foi parcialmente desfeita",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Permitir reverter só a parte que sobrou (as 2 caixas de 5)",
+    "nota": "permitir reverter so a parte que sobrou apos estorno parcial"
+  },
+  "P079": {
+    "id": "P079",
+    "title": "Fornecedor importante não tem tempo de entrega configurado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Usar padrão automático: se tempo de entrega não foi preenchido, o sistema assume 7 dias por padrão.",
+    "nota": "assumir 7 dias por padrao quando tempo de entrega vazio (NAO forcar preenchimento)"
+  },
+  "P080": {
+    "id": "P080",
+    "title": "Mesmo pedido é separado duas vezes quando o sistema detecta a entrega",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Parar antes de separar e avisar que o pedido já foi processado nessa rota",
+    "nota": "cross-dock idempotente: anotar que ja rodou pro pedido e ignorar repeticao"
+  },
+  "P081": {
+    "id": "P081",
+    "title": "Dois comandos tentam mudar a mesma prateleira/pedido ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Antes de mudar, o sistema verifica 'status é realmente em_separacao?'. Se não for, para e avisa.",
+    "nota": "conferir status atual antes de mudar (nao atropelar separacao manual em_separacao)"
+  },
+  "P082": {
+    "id": "P082",
+    "title": "Mudança de etapa do pedido trava sem aviso",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "2. Tentar novamente automaticamente 3x (30s, 5min, 1h depois)",
+    "nota": "retentar 3x em 30s, 5min, 10min (NAO 1h) + alerta visivel se falhar"
+  },
+  "P083": {
+    "id": "P083",
+    "title": "Pedido pronto pro envio mas estoque não foi descontado do sistema",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta / nao priorizar — com baixa no pique nao deve acontecer (so manter alerta atual)"
+  },
+  "P084": {
+    "id": "P084",
+    "title": "Pedido pronto mas estoque apartado pro pedido ainda não foi devolvido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Confirmar que o pedido saiu e liberar aquelas 20 do apartado (converter em saída final)",
+    "nota": "ao detectar pedido embalado com reserva R viva sem saida: gerente confere NF, converte R->S se saiu ou devolve a prateleira se cancelado"
+  },
+  "P085": {
+    "id": "P085",
+    "title": "Pedido aprovado parcialmente: item 1 apartou certo, item 2 falhou e ninguém viu",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Rejeitar TODA a aprovação se qualquer item falhar",
+    "nota": "rejeitar toda a aprovacao se qualquer item falhar ao apartar; loja retenta"
+  },
+  "P086": {
+    "id": "P086",
+    "title": "Correção de estoque não fica registrada no sistema",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Registrar com estorno reverso (cada ajuste gera dois registros: saída e entrada)",
+    "nota": "CORRECAO DO USER: Tiny e legado, NAO escrever ajuste no Tiny. Registrar a correcao no ledger proprio do WMS com trilha completa (saldo ant/post, autor, motivo), auditavel e reversivel"
+  },
+  "P087": {
+    "id": "P087",
+    "title": "Clique duplo no enter pode corrigir o estoque duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Validar no sistema com ID único",
+    "nota": "idempotency key no backend + desabilitar botao na tela; aplica uma so vez"
+  },
+  "P088": {
+    "id": "P088",
+    "title": "Corrigir estoque depois que o pedido já foi aprovado/começou a separação",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Deixar corrigir em qualquer etapa (como hoje)",
+    "nota": "deixar corrigir em qualquer etapa, MAS a UI deve deixar claro se o operador esta preenchendo o saldo antes ou depois da separacao da qty necessaria do picking"
+  },
+  "P089": {
+    "id": "P089",
+    "title": "Correção é salva no Tiny mas internet cai na volta — fica desincronizado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "gravar SO no ledger, atomicamente (sem Tiny) — dissolve o desync; alinhado ao P086 (Tiny legado)"
+  },
+  "P090": {
+    "id": "P090",
+    "title": "Corrigir saldo sem considerar se produto tem reserva de outro pedido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "operador corrige pelo FISICO (verdade). Aceitar o saldo fisico e ALERTAR reservas a descoberto (ex: pedido X com 3 un reservadas sem lastro -> resolver via recompra/realocacao/cancelar). Nao bloquear, nao esconder."
+  },
+  "P091": {
+    "id": "P091",
+    "title": "Galpão muda no meio do caminho — estoque fica em lugar errado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Salvar galpão no pedido (na criação ou rota). Sistema usa esse galpão pra sempre.",
+    "nota": "gravar o galpao no pedido ao rotear e usar sempre esse ate o fim (imune a mudanca de config)"
+  },
+  "P092": {
+    "id": "P092",
+    "title": "Pedido cancelado mas saldo não volta na loja",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "FUTURO: usuario vai sincronizar o estoque do marketplace direto com o WMS. Nao tratar via estorno no Tiny por ora — resolver quando a sync marketplace<->WMS existir."
+  },
+  "P093": {
+    "id": "P093",
+    "title": "Galpão não tem código — sistema não sabe onde guardar",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "A tela não deixa salvar config sem galpão selecionado",
+    "nota": "op1+op2: tela nao salva sem galpao/deposito E backend valida (dupla seguranca)"
+  },
+  "P094": {
+    "id": "P094",
+    "title": "Sua conta MercadoLivre fica desconectada porque o sistema não guardou a autorização renovada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 3,
+    "opcao_label": "Ambas: tentar de novo primeiro, se ainda falhar, mostra alerta",
+    "nota": "retentar salvar token ML + alertar se persistir"
+  },
+  "P095": {
+    "id": "P095",
+    "title": "Kit novo com 1 componente sem mapeamento",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "TODOS os produtos devem cair, com ou sem mapeamento (igual P002). Adicionar filtro facil de produtos SEM mapeamento na aba de produtos."
+  },
+  "P096": {
+    "id": "P096",
+    "title": "Imagens apagadas no Tiny (produto tinha 3, agora tem 0)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta (referencia velha de imagem apos apagar fotos no Tiny)"
+  },
+  "P097": {
+    "id": "P097",
+    "title": "Kit com 0 componentes (tipo=K mas vazio em Tiny)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Bloquear na sincronização e avisar que precisa adicionar peças antes",
+    "nota": "bloquear sync de kit vazio e avisar que precisa de pelo menos 1 peca"
+  },
+  "P098": {
+    "id": "P098",
+    "title": "Produto perde mapeamento (empresa desativa, referência deletada)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Mostrar erro vermelho ao operador explicando que mapeamento foi perdido",
+    "nota": "mostrar erro vermelho claro quando mapeamento/conexao Tiny perdido; nunca sync silencioso"
+  },
+  "P099": {
+    "id": "P099",
+    "title": "Duplo clique no recebimento (mesma NF, lote, itens)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Usar assinatura fixa da nota fiscal como ID em vez de gerar aleatório",
+    "nota": "usar assinatura fixa da NF como ID idempotente; 2o clique reconhecido como duplicata"
+  },
+  "P100": {
+    "id": "P100",
+    "title": "Quando duas compras chegam em preços diferentes, o custo fica errado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — nao priorizar custo medio (media final sem rastreio de vendas no meio)"
+  },
+  "P101": {
+    "id": "P101",
+    "title": "Descobrir uma compra de 3 meses atrás desfaz o custo de tudo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — nao priorizar custo medio em lancamento retroativo"
+  },
+  "P102": {
+    "id": "P102",
+    "title": "Desfazer uma entrada não corrige o custo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — nao priorizar custo medio ao desfazer entrada (custo-fantasma)"
+  },
+  "P103": {
+    "id": "P103",
+    "title": "Produto grátis ou devolvido não baixa o custo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — nao priorizar custo medio em devolucao custo-zero"
+  },
+  "P104": {
+    "id": "P104",
+    "title": "Valor das mercadorias novas aparece zerado no relatório",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Forçar preço na entrada: não deixar registrar compra sem preço unitário",
+    "nota": "op1+op2: forcar preco na entrada, com fallback no custo medio historico"
+  },
+  "P105": {
+    "id": "P105",
+    "title": "Relatório demora porque puxa dados desnecessários antes de filtrar",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Limitar período automático: quando você abre o relatório, já vem com 'últimos 12 meses' pré-selecionado",
+    "nota": "op1+op2: padrao ultimos 12 meses + paginacao 5 mil registros"
+  },
+  "P106": {
+    "id": "P106",
+    "title": "A mesma mercadoria pode ser 'cancelada' duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloqueio no banco de dados: constraint que não permite dois cancelamentos da mesma entrada",
+    "nota": "constraint UNIQUE no banco contra cancelamento duplicado de entrada"
+  },
+  "P107": {
+    "id": "P107",
+    "title": "Sistema puxa todos os dados e depois filtra no servidor (ineficiente)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Mover filtro para banco: SQL já retorna só os registros da empresa que você quer",
+    "nota": "filtrar por empresa no SQL (nao em memoria)"
+  },
+  "P108": {
+    "id": "P108",
+    "title": "Custo fica zerado quando produto recebe ajuste sem valor",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear entradas com custo zero",
+    "nota": "bloquear entrada com custo zero quando ha qty (ou usar custo minimo); evita produto valendo R$0 no relatorio"
+  },
+  "P109": {
+    "id": "P109",
+    "title": "Mesmo pedido entra duas vezes no sistema, dobrando o estoque",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Sistema bloqueia se nota fiscal já foi recebida",
+    "nota": "bloquear entrada se a NF ja foi recebida (dedup por NF); protege contra reenvio do integrador"
+  },
+  "P110": {
+    "id": "P110",
+    "title": "Estorno de mercadoria não reverte o custo médio — fica inflado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Estorno recalcula o custo como se entrada nunca tivesse existido",
+    "nota": "estorno recalcula o custo medio como se a entrada nunca existisse (reverte o efeito)"
+  },
+  "P111": {
+    "id": "P111",
+    "title": "Sistema mostra 20 unidades de um produto, Tiny mostra 30 — perdi 10 na conta",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta / resolver junto da sync marketplace<->WMS futura (P092)"
+  },
+  "P112": {
+    "id": "P112",
+    "title": "Relatório só mostra os primeiros 50 produtos — os outros 150 não aparecem",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "noop / deixar como esta (limite de 50 produtos no relatorio de sync)"
+  },
+  "P113": {
+    "id": "P113",
+    "title": "Alguém tira o código de uma prateleira enquanto o operador está contando",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear completamente — se está em contagem, ninguém mexe",
+    "nota": "bloquear troca de tipo/delete de prateleira enquanto ha contagem ativa"
+  },
+  "P114": {
+    "id": "P114",
+    "title": "Prateleira de recebimento usada errado na separação",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "CORRECAO DO USER: pode separar de prateleira de recebimento normalmente — NAO bloquear, nao e erro"
+  },
+  "P115": {
+    "id": "P115",
+    "title": "Prateleira desbloqueada com estoque pendente (reserva expirada)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Limpar automaticamente apartações vencidas 1 hora antes — sistema solta o estoque sozinho",
+    "nota": "limpar reservas vencidas automaticamente, depois permitir desativar a prateleira"
+  },
+  "P116": {
+    "id": "P116",
+    "title": "Operador contorna bloqueio de permissão com curl",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Exigir que servidor valide quem está enviando antes de criar — checa permissão na rota",
+    "nota": "validar permissao no backend ao criar prateleira (curl tambem rejeitado); familia P069"
+  },
+  "P117": {
+    "id": "P117",
+    "title": "Sincronizar produto editado no fornecedor: silêncio total no sistema",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Avisar: 'Não achei o mapeamento desse produto com o fornecedor. Precisa criar manualmente antes'",
+    "nota": "avisar quando falta vinculo produto<->Tiny na sync; opcional mostrar antes/depois"
+  },
+  "P118": {
+    "id": "P118",
+    "title": "Produto sem mapeamento no fornecedor: sincronização falha em silêncio",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Avisar: 'Não achei o vínculo com o fornecedor. Crie o mapeamento manualmente primeiro'",
+    "nota": "avisar que faltou vinculo com fornecedor/Tiny na sync (so avisar)"
+  },
+  "P119": {
+    "id": "P119",
+    "title": "Deletar um produto que ainda tem estoque no galpão",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Trocar delete por desativar: produto sai da venda mas continua no banco, marcado como 'inativo desde X'",
+    "nota": "trocar delete por DESATIVAR produto (inativo desde X); bloquear delete real; historico intacto"
+  },
+  "P120": {
+    "id": "P120",
+    "title": "Kit criado vazio não funciona",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Validar ao criar/editar o kit no cadastro",
+    "nota": "bloquear no cadastro: kit exige >=1 componente"
+  },
+  "P121": {
+    "id": "P121",
+    "title": "Quantidade negativa ou zero em componente do kit",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Bloquear na tela E retornar mensagem clara do servidor",
+    "nota": "validar qty componente na tela E no servidor (400 quantidade >= 1)"
+  },
+  "P122": {
+    "id": "P122",
+    "title": "Produto que é um pacote (kit) — histórico desaparece",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Gravar no histórico: contagem 1 do kit + contagem 1 de cada peça (3 linhas no histórico)",
+    "nota": "gravar contagem do kit + das pecas, marcando 1 bipe expandido em N (auditoria honesta)"
+  },
+  "P123": {
+    "id": "P123",
+    "title": "Clique duplo causa contagem errada",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Deixar o registro de dados garantir que só um consegue inserir (gravar ou atualizar)",
+    "nota": "upsert (gravar-ou-atualizar) no auto-cadastro de mapeamento; contagem correta pros dois cliques"
+  },
+  "P124": {
+    "id": "P124",
+    "title": "Quando marca um fornecedor como preferencial, outro pode ficar sem ser desativado corretamente",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Usar uma regra no banco que só permite 1 preferencial por produto",
+    "nota": "constraint no banco: so 1 fornecedor preferencial por produto"
+  },
+  "P125": {
+    "id": "P125",
+    "title": "Dois cliques muito rápidos no mesmo fornecedor preferencial causam confusão",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Desabilitar o botão enquanto processa (navegador) + travar no banco",
+    "nota": "desabilitar botao na tela + travar no banco (protecao dupla) ao marcar preferencial"
+  },
+  "P126": {
+    "id": "P126",
+    "title": "Inventário trancado há horas aparece como se fosse travado agora",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Implementar limpeza automática: a cada 5 minutos, o sistema verifica bloqueios abertos há mais de 24 horas e fecha automaticamente, registrando quem/o quê.",
+    "nota": "limpeza automatica de bloqueios de inventario > 24h (a cada 5min), registrando quem/o que"
+  },
+  "P127": {
+    "id": "P127",
+    "title": "Operador fica preso quando desiste de guardar no meio do caminho",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Tela de força-unlock: quando outro operador vê item travado, clica 'Tomar' e leva pra si",
+    "nota": "força-unlock visivel Tomar de Fulano (continua do ponto) + aviso se > 30min"
+  },
+  "P128": {
+    "id": "P128",
+    "title": "Relatório de estoque mostra números zerados ou desaparece",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Atualizar a migração que recria o relatório (arquivo 20260605_wms_excecoes_dashboards.sql linhas 38-51) pra agrupar só por (produto, galpão) — não por empresa",
+    "nota": "corrigir consulta do dashboard de cobertura (agrupar por produto+galpao; nao ler empresa_dona_id)"
+  },
+  "P129": {
+    "id": "P129",
+    "title": "Dois cliques muito rápido no botão de confirmar (pessoa aperta duas vezes em 100 milissegundos)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "O sistema por trás sabe quem está clicando e quando (manda um ID único pra cada tentativa). Se chegar dois cliques com mesmo ID em 60 segundos, ignora o segundo.",
+    "nota": "ID unico por clique na embalagem, ignora repetido (robustez contra rede)"
+  },
+  "P130": {
+    "id": "P130",
+    "title": "Dois operadores marcam o mesmo item como embalado no mesmo instante",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Usar uma função de gravar ou atualizar com soma: +3 somado ao que já existe, não sobrescrita.",
+    "nota": "gravar com SOMA atomica no banco (nao sobrescrever) ao embalar item concorrente"
+  },
+  "P131": {
+    "id": "P131",
+    "title": "Um clique duplo no 'confirmar item' faz o sistema contar duas vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Enviar um ID único com cada clique; se chegar repetido em menos de 1 segundo, sistema ignora o duplicado.",
+    "nota": "ID unico por clique no confirmar item da separacao, ignora repetido < 1s"
+  },
+  "P132": {
+    "id": "P132",
+    "title": "Desfazer embalagem não limpa a data de conclusão",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Criar rota de estorno: quando usuário clica 'desfazer embalagem', limpa data + operador automaticamente.",
+    "nota": "rota de estorno de embalagem limpa data + operador e tira credito do ranking"
+  },
+  "P133": {
+    "id": "P133",
+    "title": "Galpão preferencial desaparece quando deletado",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Bloquear delete completamente se o galpão está vinculado a qualquer empresa",
+    "nota": "bloquear delete de galpao se e preferencial de alguma empresa ou tem estoque/pedido; avisar o que impede"
+  },
+  "P134": {
+    "id": "P134",
+    "title": "Criar operador sem nenhuma loja / galpão",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Sistema exigir ≥1 loja ao criar e salvar",
+    "nota": "exigir >=1 loja/galpao ao criar operador; botao Criar so ativa com loja marcada"
+  },
+  "P135": {
+    "id": "P135",
+    "title": "Deletar operador que já mexeu em pedidos e movimentações",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": "custom",
+    "opcao_label": "DECISÃO CUSTOM (ver nota)",
+    "nota": "soft-delete: desativar operador (igual P119, inativo desde X); nome e historico preservados"
+  },
+  "P136": {
+    "id": "P136",
+    "title": "Único admin desativa a si mesmo sem aviso",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Sistema recusar desativação do último admin",
+    "nota": "recusar desativacao do ultimo admin (anti-lockout)"
+  },
+  "P137": {
+    "id": "P137",
+    "title": "Editar operador dias depois remove acesso sem querer",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Form carregar com as lojas atuais preenchidas + bloqueio se ficar vazio para operador",
+    "nota": "form de operador carrega com lojas atuais preenchidas + bloqueia salvar vazio (combina P134)"
+  },
+  "P138": {
+    "id": "P138",
+    "title": "Ao mudar as permissões de um cargo, as permissões somem e depois voltam (operação quebrada)",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Usar o banco de dados pra 'reservar' as novas permissões antes de tirar as antigas — se tudo der certo, confirma; se não, desfaz tudo",
+    "nota": "troca de permissoes de cargo tudo-ou-nada via transacao no banco"
+  },
+  "P139": {
+    "id": "P139",
+    "title": "Dois admins mudando o mesmo cargo ao mesmo tempo — o segundo sobrescreve o primeiro",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Colocar um 'cadeado' no banco de dados enquanto um admin edita. Segundo admin espera o primeiro terminar.",
+    "nota": "cadeado: um admin edita o cargo por vez; 2o ve aviso e espera"
+  },
+  "P140": {
+    "id": "P140",
+    "title": "Três funcionários mexem no token ao mesmo tempo e o sistema fica confuso",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — nao adicionar lock na renovacao do token Tiny (cada tarefa renova quando quer)"
+  },
+  "P141": {
+    "id": "P141",
+    "title": "Gerente deleta uma conta de impressora e ninguém sabe quais prateleiras ficarão sem etiqueta",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Mostrar lista: 'Se deletar, estas 3 prateleiras ficarão sem impressora: SP (Zona 1), RJ (Zona 2), MG (Zona 1)'",
+    "nota": "mostrar prateleiras/galpoes afetados ANTES de deletar conta de impressora"
+  },
+  "P142": {
+    "id": "P142",
+    "title": "Reimpressora quebra quando serviço de impressão falha",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Sistema tenta sozinho 3 vezes (com 10 segundos de espera cada), se continuar falhando avisa o operador",
+    "nota": "reimpressao tenta 3x sozinho (10s cada) depois avisa claro impressora indisponivel"
+  },
+  "P143": {
+    "id": "P143",
+    "title": "Etiqueta desaparece do sistema depois de 7 dias",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 3,
+    "opcao_label": "Guardar por 30 dias em vez de 7",
+    "nota": "guardar etiqueta por 30 dias (em vez de 7) antes de apagar"
+  },
+  "P144": {
+    "id": "P144",
+    "title": "Reimprimir coloca só nota fiscal, perde a etiqueta de envio",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Sempre imprimir as duas (nota fiscal + etiqueta de envio)",
+    "nota": "reimprimir sempre as 2 etiquetas (NF + envio), avisando; nao pegar so a primeira"
+  },
+  "P145": {
+    "id": "P145",
+    "title": "Tarefa fica travada quando o sistema falha no meio da execução",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Timeout automático de 5 minutos",
+    "nota": "timeout 5min: tarefa em progresso ha +5min volta pra fila e worker reprocessa"
+  },
+  "P146": {
+    "id": "P146",
+    "title": "Operador clica 'Lançar' duas vezes (rede demora), estoque sobe em dobro",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 3,
+    "opcao_label": "Sistema gera um código único pra cada lançamento e recusa repetição desse código",
+    "nota": "codigo unico (idempotency) por lancamento retroativo; recusa repeticao mesmo horas depois"
+  },
+  "P147": {
+    "id": "P147",
+    "title": "Estoque de lançamento retroativo já foi parcialmente vendido; estorno falha",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Sistema avisa e pergunta ao operador: 'Você tem 70 un. livres agora. Deseja estornar só esses 70?'",
+    "nota": "reconciliacao: avisar saldo disponivel e deixar estornar so o que tem (parcial)"
+  },
+  "P148": {
+    "id": "P148",
+    "title": "Operador clica 'Reconciliar' duas vezes (duplo clique), estorno dobra",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Sistema verifica se já existe um estorno ligado a esse lançamento. Se existir, recusa criar outro.",
+    "nota": "recusar reconciliacao se ja existe estorno ligado ao lancamento"
+  },
+  "P149": {
+    "id": "P149",
+    "title": "Varredura pós-entrada falha silenciosamente; pedidos não recebem aviso de saldo aparecido",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Colocar tarefa numa fila com tentativas automáticas (tenta 3x se falhar, espera e tenta de novo)",
+    "nota": "varredura pos-entrada em fila com retry automatico 3x"
+  },
+  "P150": {
+    "id": "P150",
+    "title": "O mesmo clique no botão é processado 2 vezes",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Antes de executar, o sistema verifica se essa ação já foi feita. Se sim, avisa 'sucesso' direto.",
+    "nota": "acertar estoque idempotente: detectar acao repetida e responder sucesso sem refazer"
+  },
+  "P151": {
+    "id": "P151",
+    "title": "Operador tenta acertar estoque de novo depois de semanas",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Sistema marca a nota como 'acertada' e nunca mais aceita aceitar de novo.",
+    "nota": "marcar nota como acertada; reclique dias depois responde ja processada"
+  },
+  "P152": {
+    "id": "P152",
+    "title": "2 operadores acertam o estoque da mesma compra ao mesmo tempo",
+    "severity": "grave",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Usa um 'cadeado de banco de dados': a primeira requisição marca 'acertando', a segunda espera ou é rejeitada.",
+    "nota": "cadeado de banco: so 1 acerto de compra por vez (2o ve ja sendo processada)"
+  },
+  "P153": {
+    "id": "P153",
+    "title": "Clique duplo no botão 'Separar' causa confusão",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Mostrar mensagem clara se tentar clicar 2x (tipo 'esses 10 pedidos já estão em separação')",
+    "nota": "mostrar mensagem esses pedidos ja estao em separacao no 2o clique"
+  },
+  "P154": {
+    "id": "P154",
+    "title": "Pedido antigo fica 'em separação' por dias",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Cancelar automaticamente pedidos em 'em separação' há mais de 24h",
+    "nota": "cancelar/revisar automaticamente pedido em separacao ha mais de 24h, com notificacao"
+  },
+  "P155": {
+    "id": "P155",
+    "title": "Mercadoria com fornecedor equivalente: fica confuso qual produto está sendo guardado",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Trocar de verdade: cancela o produto original (A), cria um pedido novo pro produto B. Fica claro dois pedidos separados.",
+    "nota": "equivalente: cancela A e cria pedido novo de B (historico limpo, sem ambiguidade)"
+  },
+  "P156": {
+    "id": "P156",
+    "title": "Fornecedor muda de localidade e ninguém avisa",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "noop / deixar como esta (troca de fornecedor que muda galpao)"
+  },
+  "P157": {
+    "id": "P157",
+    "title": "Devolução chega sem informação de quem é a loja — fica como 'vazio'",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "noop / deixar como esta (devolucao sem loja preenchida)"
+  },
+  "P158": {
+    "id": "P158",
+    "title": "Devolução com troca de produto aparece no relatório de compras (mistura tudo)",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Excluir devoluções do relatório de compras de fornecedor (mostrar só compras de verdade)",
+    "nota": "excluir devolucoes do relatorio de compras de fornecedor (so compras de verdade)"
+  },
+  "P159": {
+    "id": "P159",
+    "title": "Estorno de contagem não desfaz só o que errou",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Permitir estorno de contagem individual",
+    "nota": "permitir estorno de contagem individual (nao a sessao inteira)"
+  },
+  "P160": {
+    "id": "P160",
+    "title": "Dois supervisores aprovam a contagem ao mesmo tempo",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Adicionar verificação no banco: só aprova se a etapa for 'em_revisao' (não 'já_aprovada')",
+    "nota": "so aprova contagem se etapa ainda e em_revisao (bloqueia 2a aprovacao)"
+  },
+  "P161": {
+    "id": "P161",
+    "title": "Supervisor muda de ideia e o sistema não deixa corrigir",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Permitir que o supervisor aprove/rejeite de novo (refaz a decisão)",
+    "nota": "permitir Reabrir e refazer a decisao de aprovar/rejeitar divergencia sem admin"
+  },
+  "P162": {
+    "id": "P162",
+    "title": "Operador digita 12.5 unidades em vez de número inteiro — o sistema aceita e depois quebra",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Só inteiros — sistema rejeita se digitar 12.5",
+    "nota": "so inteiros na quantidade; produto a granel (kg/m) e excecao configuravel por produto"
+  },
+  "P163": {
+    "id": "P163",
+    "title": "Clique duplo no botão remover veiculo pode enganar o operador",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Mostrar erro 'Esse veiculo ja foi removido' quando alguem tentar remover de novo",
+    "nota": "erro claro esse veiculo ja foi removido no 2o clique"
+  },
+  "P164": {
+    "id": "P164",
+    "title": "Operador digita zero (0) e sistema aceita",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Rejeitar zero, pedir quantidade positiva",
+    "nota": "rejeitar quantidade zero na correcao; pra zerar usa ajuste de inventario"
+  },
+  "P165": {
+    "id": "P165",
+    "title": "Produto não aparece nos pedidos parados quando estoque volta a ter quantidade",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Enfileirar tarefa que roda sozinha em segundo plano e varre pedidos parados",
+    "nota": "ao corrigir estoque 0->positivo, enfileirar varredura de pedidos parados (libera sozinho)"
+  },
+  "P166": {
+    "id": "P166",
+    "title": "Dois operadores mexem no mesmo produto em galpões diferentes ao mesmo tempo",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Adicionar lock pessimista + o registro das movimentacoes de estoque",
+    "nota": "lock pessimista + registrar no ledger na correcao concorrente (auditoria; alinha P086)"
+  },
+  "P167": {
+    "id": "P167",
+    "title": "Não dá pra desfazer uma correção de estoque feita semana passada",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar sem estorno formal (como hoje) na correcao de estoque"
+  },
+  "P168": {
+    "id": "P168",
+    "title": "Dois cliques rápidos no botão 'Conectar MercadoLivre' causa falha na conexão",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Desabilitar botão enquanto o primeiro clique está processando",
+    "nota": "desabilitar botao Conectar ML durante a conexao (evita codigo OAuth conflitante)"
+  },
+  "P169": {
+    "id": "P169",
+    "title": "Kit do Tiny vira não-kit (tipo mudou)",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Quando mudar de kit para não-kit, apagar automaticamente a composição antiga",
+    "nota": "apagar composicao antiga do kit ao virar nao-kit (sem dados sujos)"
+  },
+  "P170": {
+    "id": "P170",
+    "title": "Produto com múltiplos mapeamentos (2 empresas)",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Exigir que operador escolha qual empresa sincronizar, depois sempre usar aquela",
+    "nota": "produto com 2 mapeamentos: operador escolhe a empresa e sempre usa aquela (deterministico)"
+  },
+  "P171": {
+    "id": "P171",
+    "title": "Produto sem nenhum mapeamento Tiny nunca sincronizado",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Avisar com clareza que produto não tem mapeamento Tiny (erro, não aviso)",
+    "nota": "avisar claramente que falta mapeamento Tiny ao sincronizar (igual P117/P118)"
+  },
+  "P172": {
+    "id": "P172",
+    "title": "Código da prateleira com caracteres estranhos (números e letras misturadas)",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta (sem validacao de caractere no codigo de prateleira)"
+  },
+  "P173": {
+    "id": "P173",
+    "title": "Novo tipo de prateleira criado, mas sistema não aceita",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Adicionar 'embalagem' à lista de tipos válidos no formulário",
+    "nota": "adicionar tipo embalagem/packing como valido no formulario — e usado no ciclo de cross-docking (loc PACKING)"
+  },
+  "P174": {
+    "id": "P174",
+    "title": "Dois cliques simultâneos no mesmo código de produto causam erro de duplicação",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Mostrar mensagem específica: 'Esse código já existe. Clique aqui pra encontrá-lo na lista'",
+    "nota": "mensagem clara esse codigo ja existe + link pra achar na lista"
+  },
+  "P175": {
+    "id": "P175",
+    "title": "Editar descrição de produto manualmente sem deixar rastro",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Ativar log de auditoria: toda edição fica registrada com quem/quando/antes/depois",
+    "nota": "log de auditoria (quem/quando/antes/depois) na edicao de produto; bloquear campos auto-sincronizados"
+  },
+  "P176": {
+    "id": "P176",
+    "title": "Clicar duas vezes no botão sincronizar causa sincronização duplicada",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Marcar produto como 'sincronizando' até terminar. Se clicar de novo, retorna 'já tá sincronizando, espere'",
+    "nota": "marcar produto sincronizando e recusar nova sync ate terminar (so 1 por vez)"
+  },
+  "P177": {
+    "id": "P177",
+    "title": "Prateleira apagada, mas contagem antiga fica órfã",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Nunca deletar prateleira — só marcar como inativa",
+    "nota": "nunca deletar prateleira, so marcar inativa (preserva contagens; alinha P063/P115/P133)"
+  },
+  "P178": {
+    "id": "P178",
+    "title": "Reativar fornecedor deletado não traz a relação de volta com a loja",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Reativar automático: se importa um vínculo que estava deletado, marca como ativo de novo",
+    "nota": "reativar vinculo fornecedor automaticamente ao reimportar do Tiny (recupera historico/lead time/custo)"
+  },
+  "P179": {
+    "id": "P179",
+    "title": "Fornecedor deletado fica ainda aparecendo nos estoque que tem vinculado",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Bloquear delete: avisar 'não posso deletar, F30 tem 5 vínculos ativos'",
+    "nota": "bloquear delete de fornecedor enquanto ha vinculos ativos (alinha P063/P133)"
+  },
+  "P180": {
+    "id": "P180",
+    "title": "Dois operadores editam inventário ao mesmo tempo e veem dados desincronizados",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Usar notificações em tempo real: quando um operador aprova, o sistema avisa todos os outros que estão vendo aquela divergência.",
+    "nota": "notificacao em tempo real (realtime ja existe) quando supervisor aprova divergencia"
+  },
+  "P181": {
+    "id": "P181",
+    "title": "Alarme falso: novo galpão (vazio) grita que embalagem está lenta",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 0,
+    "opcao_label": "SEM AÇÃO / deixar como está",
+    "nota": "deixar como esta — alarme falso de galpao novo e aceitavel"
+  },
+  "P182": {
+    "id": "P182",
+    "title": "Operador deletado deixa insight órfão no painel",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Verificação no banco: quando clica no insight, consulta primeiro 'esse operador ainda está ativo?'. Se não, mostra mensagem 'operador saiu da empresa'.",
+    "nota": "conferir se operador existe/ativo antes de exibir insight (nao quebrar; alinha P135)"
+  },
+  "P183": {
+    "id": "P183",
+    "title": "Quando muda a chave de integração, as impressoras antigas continuam funcionando por até 5 minutos",
+    "severity": "média",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Fazer o sistema esquecer a chave antiga assim que o gerente clica 'Salvar'",
+    "nota": "invalidar cache da chave PrintNode ao salvar a nova (sem espera de 5min)"
+  },
+  "P184": {
+    "id": "P184",
+    "title": "Duplo clique rápido no mesmo número (operador bate Enter duas vezes com mesma quantidade)",
+    "severity": "leve",
+    "status": "respondido",
+    "opcao": 2,
+    "opcao_label": "Adicionar chave ID único no banco local também",
+    "nota": "chave de ID unico (idempotency) tambem no banco local, alem do Tiny"
+  },
+  "P185": {
+    "id": "P185",
+    "title": "Duplo clique no botão de recarregar faz o sistema consultar o banco de dados duas vezes",
+    "severity": "leve",
+    "status": "respondido",
+    "opcao": 1,
+    "opcao_label": "Desabilitar o botão enquanto carrega: fica cinzento enquanto busca dados, não aceita novo clique.",
+    "nota": "desabilitar botao Recarregar enquanto carrega (evita consultas repetidas)"
+  }
+}

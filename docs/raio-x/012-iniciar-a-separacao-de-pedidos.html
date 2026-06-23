@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Iniciar a separação de pedidos — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Separação de pedidos</p>
+<h1>Iniciar a separação de pedidos</h1><p class="lead">Quando o operador decide que quer começar a separar um ou mais pedidos, o sistema marca os pedidos como &quot;em separação&quot;, bloqueia os que estão esperando compra de fornecedor, e entrega ao operador uma lista organizada por prateleira: &quot;você precisa pegar 5 da peça X na prateleira A3, depois 2 da peça Y na prateleira B1&quot;.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">2</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Se o operador clica duas vezes de novo, o sistema não conta em dobro — reconhece que já começou</span></li><li><span class="dot">✓</span><span>Pedido que está esperando compra de fornecedor não sai da fila (fica de fora da separação até chegar a peça)</span></li><li><span class="dot">✓</span><span>Pedido que já está em separação quando outro operador clica iniciar não sai do controle</span></li><li><span class="dot">✓</span><span>Realocação (quando muda peça de prateleira) não derruba a separação já em andamento</span></li></ul></div><h2>Problemas pra resolver · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P011</span>Item com quantidade zero bloqueia o pedido na separação</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Pedido com um item que tem quantidade zero (pode acontecer se cancelarem parte do pedido manualmente ou por erro de entrada).</p><p class="ln"><b>Hoje:</b> O sistema consolida os itens e o item com quantidade zero some da lista. O operador não consegue marcar esse item como separado porque ele não aparece. A separação fica travada e não consegue ser concluída.</p><p class="ln why"><b>Por que importa:</b> A onda de picking fica presa. O operador não consegue avançar e o pedido não sai da bancada de separação.</p><div class="decision"><p class="q">O sistema deveria recusar pedidos que têm itens com quantidade zero quando a separação começa, OU ignorar esses itens no checklist de conclusão.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear na entrada: o sistema recusa iniciar a separação se encontrar um item com qty=0</b> — Operador precisa resolver a quantidade zero antes de começar. Mais bloqueios na entrada, menos problemas depois.</span></li><li class=""><span class="ck"></span><span><b>Permitir entrar, mas ignorar no checklist: item com qty=0 não precisa ser marcado como separado</b> — Operador consegue terminar a separação mesmo com o item fantasma. Menos bloqueios, mas pode gerar confusão sobre quais itens realmente foram separados.</span></li></ul><p class="recnote"><b>Recomendo:</b> Bloquear na entrada. Se o item tem quantidade zero, algo já deu errado (cancelamento ou erro de entrada). Deixar claro pra operador consertar isso ANTES de iniciar picking.</p></div><p class="refp">rpc 20260529_consolidar</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P012</span>Confirmação falha após pedido já estar marcado como em separação</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Sistema começa a processar uma onda de separação. Marca os pedidos como 'em separação' no registro de movimentações. Aí tenta fazer uma consolidação dos itens e falha (banco lento, timeout, erro na query).</p><p class="ln"><b>Hoje:</b> O pedido já foi marcado como 'em separação' no registro, mas a consolidação falhou. Operador vê erro na tela, reconecta ou tenta novamente. Na segunda tentativa, o sistema vê que o pedido já está 'em separação' e não faz nada. A consolidação também falha de novo. O pedido fica órfão, congelado naquele estado. Só um admin consegue descongelar manualmente.</p><p class="ln why"><b>Por que importa:</b> Pedido fica travado indefinidamente. Operador fica confuso, cliente não recebe, tempo passa.</p><div class="decision"><p class="q">O sistema deveria marcar o pedido como 'em separação' DEPOIS que a consolidação funcionar com sucesso, não antes.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Fazer a consolidação ANTES de marcar como 'em separação': se falhar, nada de estado muda</b> — Operador tenta novamente, entra limpo da segunda vez. Sem pedidos órfãos.</span></li><li class=""><span class="ck"></span><span><b>Manter a ordem atual mas proteger com tudo-ou-nada: tudo junto ou nada</b> — Se algo falhar, o registro desfaz automaticamente. Nenhum pedido fica meio caminho.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer a consolidação ANTES de mudar o estado. Mais simples e remove o risco de pedidos congelados.</p></div><p class="refp">route.ts:141-182</p></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D042</span>Pedido com itens de múltiplos fornecedores no mesmo carrinho: como lidar?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Integração com a loja (Tiny / marketplace)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Chega um pedido manual (cross-dock) com 5 itens. 3 itens estão guardados no galpão A com fornecedor X, mas 2 itens estão no galpão B com fornecedor Y. É o mesmo pedido, mesmo cliente, para ser entregue junto.</p><p class="ln"><b>Hoje o sistema:</b> O sistema só olha pra empresa de ORIGEM do pedido. Os itens do fornecedor Y não encontram localização no sistema (localização fica vazia). Operador vê 'SKU ABC, qty 2, prateleira: desconhecida'. Tira do checklist como 'divergência, sem localização'.</p><p class="ln why"><b>Por que importa:</b> Operador fica no suspense: ele não consegue encontrar o item na prateleira porque o sistema não sabe onde procurar. Pode perder tempo procurando ou deixar o item pra trás sem perceber que deveria ter sido separado.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear pedidos multi-fornecedor na entrada: cada pedido só aceita itens do mesmo fornecedor</b> — Simplifica tudo. Operador nunca vê esse problema. Mas precisa separar o pedido em dois (dois ciclos de picking).</span></li><li class=""><span class="ck"></span><span><b>Permitir multi-fornecedor: sistema procura a localização certa pra cada item, independente de qual fornecedor é</b> — Um pedido, um ciclo, mais rápido. Mas precisa de ajustes no consolidador de produtos pra respeitar empresa de CADA item, não só origem do pedido.</span></li><li class=""><span class="ck"></span><span><b>Avisar e deixar operador resolver: mostrar 'itens de duas localizações diferentes' e operador marca parcialmente</b> — Máxima flexibilidade, mas operador fica carregando a decisão. Mais confusão, mais risco de erro.</span></li></ul><p class="recnote"><b>Recomendo:</b> Permitir multi-fornecedor, mas corrigir o sistema pra achar a localização certa de cada item. Um pedido deve sair de uma vez, não em dois carrinhos.</p></div><p class="refp">rpc 20260529 linha 24-27</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D276</span>Como proteger o operador que não tem galpão atribuído?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Novo funcionário contratado, recebe um código de acesso ao sistema de estoque. Login funciona. Mas ninguém setou qual galpão ele trabalha (ou removeram essa permissão depois). Operador tenta iniciar uma onda de picking.</p><p class="ln"><b>Hoje o sistema:</b> O sistema deixa ele fazer tudo. Marca os pedidos como 'em separação', registra o nome dele como quem iniciou. Mas no celular dele (que filtra por galpão), os pedidos não aparecem. Ele vê lista vazia, mas os pedidos já estão lá no registro marcados com o nome dele. Depois, quando alguém do galpão certo reconecta, os pedidos aparecem.</p><p class="ln why"><b>Por que importa:</b> Confusão: alguém iniciou a onda mas os pedidos desapareceram da tela de quem iniciou. Depois aparecem pra outra pessoa. Risco de pedido sendo iniciado por um, mas separado por outro (falta rastreamento claro de responsabilidade).</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Validar no celular: bloquear o botão 'iniciar picking' se operador não tem galpão setado</b> — Erro aparece no celular antes de tentar. Mais simples, mas depende do app estar atualizado.</span></li><li class=""><span class="ck"></span><span><b>Validar no servidor: rejeitar a requisição se o galpão do operador não bate com o galpão dos pedidos</b> — Seguro, funciona em qualquer versão do app. Operador não consegue nem iniciar se não for dele.</span></li></ul><p class="recnote"><b>Recomendo:</b> Validar no servidor. Sempre mais seguro. Ninguém inicia picking de um galpão que não é dele.</p></div><p class="refp">route.ts:19-22</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Item desaparece do estoque entre iniciar a separação e começar a marcar (vendido em outro galpão concorrente): localização fica vazia no checklist.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Consolidação retorna 0 produtos (todos os itens foram cancelados): operador vê onda vazia e consegue clicar 'concluir' sem separar nada.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

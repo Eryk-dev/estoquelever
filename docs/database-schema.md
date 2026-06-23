@@ -1596,7 +1596,7 @@ A curadoria humana de pares (D9) agora mora no caderno único do cross — ver `
 | `quantidade` | numeric > 0 | residual do item no momento da solicitação |
 | `tipo` | text | `mesmo_nivel` \| `upgrade` \| `downgrade` \| `sem_classificacao` \| `misto` |
 | `origem_solicitacao` | text | `roteamento` \| `separacao` \| `compras` \| `painel` |
-| `status` | text | `pendente` → `aprovada` \| `rejeitada` \| `expirada` \| `cancelada` |
+| `status` | text | `pendente` → `aprovada` \| `rejeitada` \| `expirada` \| `cancelada` \| `desfeita` |
 | `tier_*_snapshot` | text | tiers no momento da solicitação |
 | `reserva_mov_ids` | uuid[] | R(s) `reserva_troca` criadas AO SOLICITAR (D6, TTL 48h) |
 | `solicitado_por/em`, `decidido_por/em`, `motivo_rejeicao` | | auditoria |
@@ -1609,6 +1609,7 @@ A curadoria humana de pares (D9) agora mora no caderno único do cross — ver `
 
 - **`wms_aprovar_troca_atomico(p_troca_id, p_usuario_id)`** — converte cada R `reserva_troca` viva em L `liberacao_troca` + R `reserva_pedido` (lock da tripla segura o disponível entre as duas), seta `produto_wms_substituto_id`/`troca_equivalencia_id` no item e `status='aprovada'` — tudo-ou-nada.
 - **`wms_encerrar_troca_atomico(p_troca_id, p_usuario_id, p_status, p_motivo)`** — libera R de troca remanescentes + fecha (`rejeitada`/`cancelada`/`expirada`).
+- **`wms_desfazer_troca_aplicada_atomico(p_pedido_item_id, p_usuario_id)`** (2026-06-23, BUG-A) — desfaz uma troca **aplicada** num item reaberto e NÃO-picado (`status_separacao ∈ {aguardando_separacao, em_separacao}`, `separacao_marcado=false`, `quantidade_pega` 0/null). Libera a R `reserva_pedido` viva do **substituto** (L `liberacao_reserva`) **limitada à qty do item** (`quantidade_pedida`), preferindo R(s) que ainda carreguem `origem_detalhes->>'troca_id'` deste item — a R é chaveada por `(pedido, produto, loc)` e a ressuscitada por `reset-state` perde o `troca_id`, então o teto de qty evita invadir a R de um item-irmão do mesmo pedido no mesmo produto físico. Limpa `produto_wms_substituto_id`/`troca_equivalencia_id` no item (volta a resolver pro original) e marca a troca `status='desfeita'` — tudo-ou-nada. NÃO recria R no original (item fica sem R → re-roteia/solicita nova troca depois). Raises `TROCA_NAO_APLICADA` (sem substituto), `ITEM_JA_PICADO` (já marcado/picado), `PEDIDO_ESTADO_INVALIDO:<status>` (não reaberto).
 
 ### Enum siso_decisao
 
@@ -1993,6 +1994,9 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-19 | `20260619b_cross_equivalencias.sql` | **Redesign Cross** — cria `siso_cross_equivalencias`, o caderno único de equivalência (cross + troca): par direto humano-confirmado (`sku_a < sku_b` FK `siso_produtos(sku)` CASCADE, `UNIQUE(sku_a, sku_b)`), `relacao='equivalente'`, `status IN ('sugestao','confirmado','bloqueado')`, `fonte`, audit (`criado_por/em`, `decidido_por/em`, `atualizado_em`) + índices `idx_cross_eq_sku_a/sku_b/status`. Zero auto-merge, sem transitividade. |
 | 2026-06-19 | `20260619c_cross_seed_de_verificadas.sql` | **Redesign Cross** — seed do caderno a partir dos pares validados de `siso_equivalencias_verificadas` (só pares com ambos SKUs em `siso_produtos`; `verificado`→`confirmado`, `bloqueado`→`bloqueado`). 9 pares migrados (7 `confirmado` + 2 `bloqueado`). |
 | 2026-06-19 | `20260619d_cross_drop_legado.sql` | **Redesign Cross** — DROP de `siso_produtos_catalogo`, `siso_produto_oems`, `siso_produto_veiculos`, `siso_produto_links`, `siso_equivalencias_verificadas` + função `siso_cross_cluster_skus`. Cross agora é 100% caderno (`siso_cross_equivalencias`) + ledger (`aggregateLiveStockBySku`). |
+| 2026-06-22 | `20260622_fornecedor_razao_social.sql` | `siso_fornecedores` +`razao_social text` (nullable) — nome jurídico, separado do `nome` (que é o CÓDIGO CURTO usado como chave de match: prefix map `sku-fornecedor.ts`, seed, `fornecedor_oc`, `.ilike("nome",...)` nas rotas de compra/recebimento — não renomear). |
+| 2026-06-23 | `20260623_pick_parcial_idempotency.sql` | **BUG-09 — `/parcial` idempotente.** `wms_pick_parcial_atomico` +`p_idempotency_key uuid` (drop do overload de 10 args): top-check retorna `ja_aplicado=true` se a key já existe; a S de venda (ou o ajuste quando `qty_pega=0`) carrega a key → `wms_inserir_movimentacao` deduplica no ledger (UNIQUE parcial). Fecha o reenvio do MESMO request (timeout/duplo-clique de rede) que dobrava a S e inflava `quantidade_pega` no ramo residual (`loc_zerou=false`, item aberto). Route (`parcial/route.ts`) guarda a key no topo (item+realoc) e o caminho realocação passou a usar a MESMA RPC (antes 2 `inserirMovimentacao` diretos). |
+| 2026-06-23 | `20260623b_desfazer_troca_aplicada.sql` | **BUG-A — desfazer troca aplicada.** `siso_trocas_equivalencia.status` CHECK +`desfeita`. Nova RPC `wms_desfazer_troca_aplicada_atomico(p_pedido_item_id, p_usuario_id)`: num item reaberto e não-picado, libera a R `reserva_pedido` do substituto, limpa `produto_wms_substituto_id`/`troca_equivalencia_id` e fecha a troca `desfeita` — tudo-ou-nada. Endpoint `POST /api/wms/trocas/[id]/desfazer`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

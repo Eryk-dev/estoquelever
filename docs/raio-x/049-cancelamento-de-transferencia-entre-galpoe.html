@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Cancelamento de transferência entre galpões — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Transferências entre galpões</p>
+<h1>Cancelamento de transferência entre galpões</h1><p class="lead">Quando você cancela uma transferência de estoque que foi enviada de um galpão para outro (ex: CWB manda 5 peças pra SP), o sistema tira as peças de circulação e devolve elas pra origem.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">4</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">3</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Cancelar uma transferência que ninguém recebeu ainda — volta tudo certo</span></li><li><span class="dot">✓</span><span>Cancelar uma transferência que foi totalmente recebida no destino — sistema limpa as contas</span></li><li><span class="dot">✓</span><span>Sistema bloqueia cancelamento duplo — se você clicar duas vezes, aviso aparece na segunda vez</span></li><li><span class="dot">✓</span><span>Criação de rastro — fica registrado quem cancelou, quando e em qual data</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P068</span>Dois operadores mexem no mesmo instante: um cancela, outro recebe</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador A clica 'Cancelar' na transferência. Operador B, na mesma hora, clica 'Receber' no destino. Os dois comandos chegam no servidor quase junto.</p><p class="ln"><b>Hoje:</b> O sistema começa a desfazer os estornos da entrada enquanto o recebimento está inserindo os movimentos novos. Os dois processos mexem no mesmo estoque ao mesmo tempo.</p><p class="ln why"><b>Por que importa:</b> O saldo fica errado. Uma mercadoria pode ser contada duas vezes, ou desaparecer. O estoque não bate mais com a realidade.</p><div class="decision"><p class="q">Precisa de um cadeado que impeça dois operadores de mexer na transferência simultaneamente.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Travar a transferência enquanto está sendo cancelada (ninguém consegue receber enquanto o cancelamento está acontecendo)</b> — Operador B tenta receber → sistema responde 'transferência está sendo cancelada, tente novamente em alguns segundos'. Depois que A termina, B consegue fazer.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está</b> — Continua acontecendo. Saldo fica errado quando coincide.</span></li></ul><p class="recnote"><b>Recomendo:</b> Implementar o cadeado. Vale a pena pelos estornos que causa quando estoque fica negativo ou duplicado.</p></div><p class="refp">transferencias.ts:475-490, receberTransferencia.ts:299-305</p></div><h2>Decisões pra você tomar · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D013</span>Se o operador clica 'Cancelar' duas vezes muito rápido, o que deveria acontecer?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador clica 'Cancelar' em uma transferência, e 300 milissegundos depois clica de novo, por acidente ou por impaciência.</p><p class="ln"><b>Hoje o sistema:</b> O primeiro clique cancela mesmo. O segundo clique falha e mostra erro: 'só cancelo transferências em trânsito, essa já foi cancelada'.</p><p class="ln why"><b>Por que importa:</b> Se a primeira cancela com sucesso, a segunda falha — isso é ruim? Ou é proteção? Precisa decidir: errar é aceitável, ou o sistema deveria simplesmente ignorar cliques repetidos?</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar falhar com erro (como faz hoje)</b> — Operador vê erro na tela. Precisa entender que 'ops, já cancelei'. Se for confuso, vai confundir o operador.</span></li><li class=""><span class="ck"></span><span><b>Sistema ignora a segunda tentativa (responde OK como se tivesse feito, mas não faz nada)</b> — Operador não vê erro. Fica mais tranquilo. Mas esconde do operador que ele clicou duas vezes.</span></li><li class=""><span class="ck"></span><span><b>Sistema bloqueia o botão por 2 segundos após o clique (evita o problema no começo)</b> — Operador não consegue clicar duas vezes. Mais preventivo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 1 (deixar falhar) está OK se o operador entende a mensagem. Mas se quer menos confusão, opção 3 (bloquear o botão) é melhor: evita o erro de entrada.</p></div><p class="refp">transferencias.ts:469-473</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D014</span>Se falha o desfazimento de um item durante o cancelamento, o que acontece com os outros itens já desfeitos?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Transferência tem 4 itens. Cancelo — desfaz item 1 e item 2 com sucesso. Item 3 falha (servidor cai, rede cai, etc.). O que fica em pé?</p><p class="ln"><b>Hoje o sistema:</b> Sistema para no item 3, joga erro, e o cancelamento inteiro falha. Itens 1 e 2 ficam com o estorno já feito (fora do estoque), mas a transferência não é marcada como cancelada. Status permanece 'em trânsito'.</p><p class="ln why"><b>Por que importa:</b> Fica estado podre: alguns itens desfazem, outros não. O operador tenta cancelar de novo e fica confuso com o que já foi feito e o que não foi.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Tudo ou nada: se um item falha, refazer (reverter) os itens que já foram desfeitos, e não cancelar nada</b> — Estoque volta ao normal se falhar no meio. Mas é mais lento e usa mais processamento.</span></li><li class=""><span class="ck"></span><span><b>Desfazer o máximo possível: se um item falha, marca a transferência como 'cancelada parcialmente' ou com aviso</b> — Alguns itens voltam pro estoque, outros ficam fora. Operador vê um aviso e pode corrigir manualmente depois.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está</b> — Continua com estado podre quando falha no meio.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2 (desfazer o máximo possível): marca como cancelada mesmo que um item tenha falhado, e deixa um aviso. Assim o operador sabe que tem coisa pra revisar manualmente.</p></div><p class="refp">transferencias.ts:500-512</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D015</span>Se falha ao desfazer a saída de um item, o que faz: cancela tudo ou tenta aproveitar o que já foi feito?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Transferência saiu ontem com 3 itens (estoque foi tirado de Curitiba). Hoje tentam cancelar. Desfeita a saída do item 1 e 2. Item 3 falha porque o saldo ficaria negativo ou tem constraint quebrada.</p><p class="ln"><b>Hoje o sistema:</b> Para e lança erro. Itens 1 e 2 ficam com estorno marcado (devolvido pro estoque), item 3 não. Transferência fica em 'em trânsito'.</p><p class="ln why"><b>Por que importa:</b> Estoque parcialmente revertido: confuso o que foi desfeito e o que não foi. Se operador tenta cancelar de novo, não sabe por onde começar.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Recusar tudo: se um item não consegue desfazer, não desfaz nenhum (reverter os 1-2)</b> — Estoque volta 100% ao original. Mas operador precisa descobrir por que falhou (pode ser saldo negativo mesmo).</span></li><li class=""><span class="ck"></span><span><b>Desfazer só o que consegue, marcar como 'cancelada com avisos', deixar operador revisar</b> — Itens 1-2 voltam, item 3 fica pendente. Operador sabe que tem coisa pra revisar.</span></li><li class=""><span class="ck"></span><span><b>Bloquear cancelamento se detecta que vai falhar</b> — Sistema avisa antes: 'não consigo cancelar porque item 3 deixaria saldo negativo'. Mais preventivo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 3: avisar antes se vai falhar. Assim operador não tenta e não deixa estoque em estado podre.</p></div><p class="refp">transferencias.ts:516-536</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D016</span>Se passa dias e o estoque muda, ainda posso cancelar a transferência?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Segunda: crio transferência Curitiba → São Paulo com 5 peças de um produto (saída lançada). Terça: galpão de Curitiba vende 3 peças do mesmo produto pra outro cliente. Sexta: tenta cancelar a transferência. Saldo de Curitiba não tem mais espaço pra devolver 5 peças.</p><p class="ln"><b>Hoje o sistema:</b> Sistema tenta desfazer (estornar) as 5 peças. Saldo de Curitiba fica negativo (ou viola constraint). Sistema rejeita ou deixa negativo.</p><p class="ln why"><b>Por que importa:</b> Ou estoque fica negativo (errado), ou cancelamento é rejeitado e operador fica sem saber o que fazer. Transferência fica presa em 'em trânsito'.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Avisar antes: 'Curitiba só tem espaço pra devolver 2 peças, as outras 3 vão pra débito/pendência'</b> — Operador escolhe: quer mesmo cancelar sabendo que fica saldo negativo? Ou quer esperar reposição?</span></li><li class=""><span class="ck"></span><span><b>Rejeitar o cancelamento se saldo ficar negativo</b> — Sistema diz 'não posso cancelar, saldo não aguenta'. Operador precisa recompor estoque antes.</span></li><li class=""><span class="ck"></span><span><b>Deixar negativar (como hoje)</b> — Estoque fica errado, mas cancelamento funciona. Depois operador tira mira com ajuste manual.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 1: avisar qual é o conflito. Assim operador toma a decisão com informação, em vez de erro surpresa.</p></div><p class="refp">transferencias.ts:451</p></div><h2>Ainda a conferir · 3</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Se a transferência foi cancelada uma vez antes e fica com estorno já feito, o que acontece se tenta cancelar de novo?</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Se o estorno de um item foi parcialmente desfeito antes, e tenta cancelar de novo, o sistema consegue lidar?</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Se a transferência aponta pra um movimento que não existe mais (referência órfã), o cancelamento faz o quê?</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

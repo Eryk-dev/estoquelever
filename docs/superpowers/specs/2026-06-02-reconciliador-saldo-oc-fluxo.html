@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reconciliador de saldo OC — Fluxo em diagramas</title>
+<style>
+  :root{
+    --bg:#fafafa; --card:#fff; --ink:#18181b; --muted:#71717a; --line:#e4e4e7; --accent:#2563eb;
+    --feliz:#16a34a; --feliz-bg:#dcfce7;
+    --borda:#d97706; --borda-bg:#fef3c7;
+    --erro:#dc2626;  --erro-bg:#fee2e2;
+    --div:#a21caf;   --div-bg:#fae8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);line-height:1.5;padding:48px 24px 96px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto}
+  header.top h1{font-size:30px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+  header.top p{margin:0;color:var(--muted);font-size:15px}
+  .legenda{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin:22px 0 40px;
+    padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:12px;
+    font-size:13px;color:var(--muted)}
+  .legenda b{color:var(--ink);font-weight:600;margin-right:4px}
+  .chip{display:inline-flex;align-items:center;gap:7px}
+  .dot{width:12px;height:12px;border-radius:4px;border:1.5px solid}
+  .dot.feliz{background:var(--feliz-bg);border-color:var(--feliz)}
+  .dot.borda{background:var(--borda-bg);border-color:var(--borda)}
+  .dot.erro{background:var(--erro-bg);border-color:var(--erro)}
+  .dot.dec{background:#dbeafe;border-color:var(--accent)}
+  .dot.div{background:var(--div-bg);border-color:var(--div);border-style:dashed}
+  section.diag{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:28px 28px 18px;margin-bottom:28px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  section.diag>h2{font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 2px}
+  section.diag.is-div>h2{color:var(--div)}
+  section.diag>.cap{margin:0 0 18px;color:var(--muted);font-size:14px}
+  .mermaid{display:flex;justify-content:center;min-height:60px}
+  .mermaid svg{max-width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Estoque que chega devolve o pedido pro picking sozinho</h1>
+    <p>Quando entra estoque de um item que estava na compra, o pedido mais antigo que ele cobrir volta pra separação automaticamente — ninguém fica preso em “Esgotado”.</p>
+  </header>
+
+  <div class="legenda">
+    <b>Legenda:</b>
+    <span class="chip"><span class="dot feliz"></span> caminho feliz</span>
+    <span class="chip"><span class="dot borda"></span> borda (acontece, tratável)</span>
+    <span class="chip"><span class="dot erro"></span> erro (precisa de atenção)</span>
+    <span class="chip"><span class="dot dec"></span> decisão</span>
+    <span class="chip"><span class="dot div"></span> ⚠ hoje quebrado / conserto</span>
+  </div>
+
+  <!-- 1. HOJE (QUEBRADO) -->
+  <section class="diag is-div">
+    <h2>⚠ Hoje · como trava (o problema do ACD003)</h2>
+    <p class="cap">O item vira compra, o estoque chega depois, e nada o traz de volta.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Item sem estoque<br/>aprovado como compra"]:::n --> B["Operador marca<br/>ESGOTADO"]:::borda
+  B --> C["Pedido entra<br/>na fila de compra"]:::borda
+  C --> D["Estoque CHEGA depois<br/>(recebimento, transferência,<br/>ajuste, inventário, devolução)"]:::dec
+  D --> E{"O sistema<br/>reage?"}:::dec
+  E -->|"hoje"| F["⚠ Nada acontece<br/>(no máximo acende um aviso,<br/>e só em parte dos casos)"]:::div
+  F --> G["⚠ Item continua em ESGOTADO<br/>preso pra sempre,<br/>mesmo já tendo estoque"]:::div
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+  classDef div fill:#fae8ff,stroke:#a21caf,stroke-width:1.5px,stroke-dasharray:5 4,color:#701a75;
+    </pre>
+  </section>
+
+  <!-- 2. MAPA DO FLUXO NOVO -->
+  <section class="diag">
+    <h2>Novo · o reconciliador (a regra que faltava)</h2>
+    <p class="cap">Toda entrada de estoque reavalia os pedidos parados, do mais antigo pro mais novo.</p>
+    <pre class="mermaid">
+flowchart TD
+  S["Entra estoque de um produto<br/>num galpão"]:::start --> R["Sistema olha os pedidos parados<br/>por falta desse produto"]:::n
+  R --> O["Fila do MAIS ANTIGO<br/>pro mais novo (FIFO)"]:::n
+  O --> L{"O saldo LIVRE cobre a falta<br/>do pedido mais antigo da fila?<br/>(sem tocar nas reservas)"}:::dec
+  L -->|"cobre"| V["Reserva o estoque ·<br/>tira da compra ·<br/>volta pro picking normal"]:::feliz
+  V --> N["Desconta o saldo livre<br/>e passa pro próximo da fila"]:::feliz
+  N --> L
+  L -->|"não cobre"| K["Pedido continua na compra<br/>até chegar mais estoque"]:::borda
+  classDef start fill:#1e293b,color:#fff,stroke:#1e293b,stroke-width:0px;
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 3. EXEMPLO REAL -->
+  <section class="diag">
+    <h2>Exemplo real · chega 15 de ACD003</h2>
+    <p class="cap">Dois pedidos esperando o mesmo item; o mais antigo leva primeiro.</p>
+    <pre class="mermaid">
+flowchart TD
+  CH["Chega 15 de ACD003<br/>saldo livre agora: 15"]:::start --> P1["Pedido #2001 (mais antigo)<br/>precisa 13"]:::dec
+  P1 -->|"15 cobre 13 ✓"| R1["reserva 13 ·<br/>volta pro picking ·<br/>sobra 2 livre"]:::feliz
+  R1 --> P2["Pedido #2050 (mais novo)<br/>precisa 10"]:::dec
+  P2 -->|"sobrou só 2, não cobre 10 ✗"| K2["continua na compra<br/>até chegar mais"]:::borda
+  classDef start fill:#1e293b,color:#fff,stroke:#1e293b,stroke-width:0px;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 4. ESTADOS -->
+  <section class="diag">
+    <h2>Estados do item · com a volta automática</h2>
+    <p class="cap">A seta tracejada verde é o caminho novo: estoque chega e cobre → volta pro picking.</p>
+    <pre class="mermaid">
+flowchart LR
+  s1["Sem estoque<br/>(vira compra)"]:::borda --> s2["Esgotado ·<br/>aguardando compra"]:::borda
+  s2 -.->|"estoque chega e cobre (FIFO)"| s4["Pronto pra<br/>separar"]:::feliz
+  s4 --> s5["Em separação"]:::feliz --> s6["Separado"]:::feliz --> s7["Embalado"]:::feliz --> s8["Despachado"]:::feliz
+  s2 --> s3["Comprado<br/>(dinheiro já gasto)"]:::n
+  s3 --> s9["Recebido →<br/>entra na separação"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 5. BORDA · RESPEITA RESERVA -->
+  <section class="diag">
+    <h2>Borda · nunca rouba reserva de outro pedido</h2>
+    <p class="cap">Só conta o que está realmente livre.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Produto tem 20 no total,<br/>mas 8 já reservados<br/>→ livre: 12"]:::borda --> B{"Item parado<br/>precisa de quanto?"}:::dec
+  B -->|"precisa 12 → cabe ✓"| C["libera, sem encostar<br/>nos 8 reservados"]:::feliz
+  B -->|"precisa 15 → não cabe ✗"| D["não mexe<br/>(espera chegar mais)"]:::borda
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 6. BORDA · PEDIDO MISTO -->
+  <section class="diag">
+    <h2>Borda · pedido com parte separável e parte na compra</h2>
+    <p class="cap">Libera só o item que estava na compra; junta com o resto.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Pedido com 2 itens:<br/>item X já separável,<br/>item Y estava na compra"]:::n --> B["Chega estoque do Y<br/>e cobre"]:::feliz
+  B --> C["Libera o Y pro picking<br/>e junta com o X"]:::feliz
+  C --> D["Pedido segue<br/>completo pra separação"]:::feliz
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+  <!-- 7. BORDA · JÁ COMPRADO -->
+  <section class="diag">
+    <h2>Borda · item que JÁ foi comprado</h2>
+    <p class="cap">Dinheiro já gasto: a compra não é desfeita.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Item já comprado<br/>(ordem de compra emitida, paga)"]:::n --> B{"Aparece<br/>estoque avulso?"}:::dec
+  B -->|"sim"| C["NÃO desfaz a compra<br/>(dinheiro já gasto)"]:::borda
+  C --> D["A mercadoria comprada chega<br/>e vira reposição de estoque"]:::borda
+  classDef n fill:#f4f4f5,stroke:#a1a1aa,stroke-width:1.5px,color:#3f3f46;
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef borda fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    </pre>
+  </section>
+
+  <!-- 8. CONSERTO · DOIS RECEBIMENTOS -->
+  <section class="diag is-div">
+    <h2>⚠ Conserto · os dois caminhos de recebimento</h2>
+    <p class="cap">Hoje um destrava o pedido e o outro não; vamos unificar.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Chega a mercadoria<br/>da própria ordem de compra"]:::feliz --> B{"Por qual caminho<br/>o estoque foi dado entrada?"}:::dec
+  B -->|"caminho 1"| C["destrava o pedido ✓"]:::feliz
+  B -->|"caminho 2"| D["⚠ hoje NÃO destrava<br/>(fica preso)"]:::div
+  D -.->|"conserto: unificar os dois"| C
+  classDef dec fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+  classDef div fill:#fae8ff,stroke:#a21caf,stroke-width:1.5px,stroke-dasharray:5 4,color:#701a75;
+    </pre>
+  </section>
+
+  <!-- 9. ERRO · SALDO FANTASMA -->
+  <section class="diag">
+    <h2>Erro · saldo fantasma (aviso, mas no físico não tem)</h2>
+    <p class="cap">A reserva é atômica: nunca reserva além do que existe de verdade.</p>
+    <pre class="mermaid">
+flowchart TD
+  A["Apareceu saldo no sistema,<br/>mas no físico não tem"]:::erro --> B["Ao tentar reservar,<br/>não acha estoque real"]:::erro
+  B --> C["Não libera nada<br/>(nunca reserva o que não existe)"]:::feliz
+  classDef erro fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+  classDef feliz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    </pre>
+  </section>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+      fontSize:'16px', lineColor:'#a1a1aa',
+      primaryColor:'#f4f4f5', primaryBorderColor:'#a1a1aa', primaryTextColor:'#18181b'
+    },
+    flowchart:{ useMaxWidth:true, htmlLabels:true, curve:'basis', nodeSpacing:55, rankSpacing:55, padding:14 }
+  });
+</script>
+</body>
+</html>

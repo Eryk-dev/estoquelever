@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Mandar item para compra quando não tem estoque no galpão — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Separação de pedidos</p>
+<h1>Mandar item para compra quando não tem estoque no galpão</h1><p class="lead">Quando o operador na separação descobre que não consegue pegar a quantidade que o cliente pediu (ou pega menos), o sistema decide se realoca pra outra prateleira ou manda pra comprar de novo.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">4</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">3</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Operador marca que pegou TODAS as unidades (se pegou tudo, nenhum problema — segue embora)</span></li><li><span class="dot">✓</span><span>Se pegou MENOS mas a prateleira ainda tem saldo: sistema aparta o que falta pra quando operador voltar (parcial em progresso)</span></li><li><span class="dot">✓</span><span>Se a prateleira zerou: sistema procura em outra prateleira do galpão e realoca automaticamente</span></li><li><span class="dot">✓</span><span>Se encontrou em outra prateleira: item já fica com novas unidades separadas pra completar</span></li></ul></div><h2>Decisões pra você tomar · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D005</span>O sistema tem um jeito simples de DESFAZER quando a gente manda um item pro fornecedor por engano?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um supervisor percebe que um item estava marcado pra compra, mas encontra a mercadoria de verdade na prateleira — foi só organização errada. Ele quer voltar o item pra separação normal.</p><p class="ln"><b>Hoje o sistema:</b> Não existe nenhum botão ou comando pra isso. O supervisor teria que pedir pra alguém entrar no banco de dados e mexer manualmente. O sistema fica confuso: o item está ao mesmo tempo marcado pra compra E marcado pra separação.</p><p class="ln why"><b>Por que importa:</b> Acontece de verdade quando a galera não acha uma caixa no lugar esperado. Perder 2 horas de produção e ter que chamar TI é muito caro. Se houvesse um botão, o supervisor resolvia em 30 segundos.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Criar um botão de 'Desfazer compra' que limpa tudo automaticamente e devolve o item pra fila de separação</b> — O supervisor clica, item volta pra 'em separação', e pronto. Simples e rápido.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está: quem descobrir que foi engano chama TI</b> — Continua demorando. Mas também é mais raro, então talvez não compense criar a funcionalidade.</span></li></ul><p class="recnote"><b>Recomendo:</b> Criar o botão. Não é complicado de fazer, mas vai poupar muito tempo na prática. Coloca como 'raramente usado' no manual, não precisa de grande destaque na interface.</p></div><p class="refp">mandar-compras.ts (sem função de reverter), /api/wms/separacao/desfazer (não existe)</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D006</span>O que acontece com um item que já foi mandado pro fornecedor quando o cliente cancela o pedido inteiro?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um item de um pedido virou uma compra com fornecedor (já foi mandado pedir ao supplier). Depois disso, o cliente muda de ideia e cancela o pedido inteiro. O sistema sabe que a compra já saiu?</p><p class="ln"><b>Hoje o sistema:</b> Não temos certeza. O sistema provavelmente tira o item do pedido, mas se o fornecedor já mandou a nota fiscal com a mercadoria, o sistema pode confundir tudo e contar o estoque duas vezes.</p><p class="ln why"><b>Por que importa:</b> Se essa situação acontecer, a gente perde rastreabilidade: o estoque fica errado no sistema. E se o fornecedor entrega mesmo assim, o sistema não sabe se deve aceitar ou devolver.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Quando cancela um pedido, checar se tem compra ativa com fornecedor. Se ainda não chegou nada: cancela tudo limpo. Se já chegou mercadoria: força o usuário a fazer uma devolução explícita pro fornecedor.</b> — Fica claro pra galera: 'sua compra foi cancelada mas o fornecedor já mandou — tem que devolver'. Sem confusão.</span></li><li class=""><span class="ck"></span><span><b>Deixar o sistema recusar (rejeitar) qualquer nota fiscal que chegue de uma compra já cancelada</b> — Garante que a mercadoria não entra no estoque. Mas o fornecedor pode reclamar — vai dar trabalho.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está: confiar que isso é muito raro</b> — Risco de erro de estoque quando acontecer. Mas se acontecer 1 vez por ano, talvez não compense arrumar.</span></li></ul><p class="recnote"><b>Recomendo:</b> Ir com a opção 1: automatizar o bloqueio de entrada quando a compra foi cancelada. Protege o estoque com menos trabalho manual. Depois faz um treinamento rápido da galera: 'se cancelar pedido e já tinha compra ativa, o sistema avisa — aí você faz a devolução pro fornecedor'.</p></div><p class="refp">mandar-compras.ts:25-31 (docs menciona 'legado'), /api/wms/pedidos/cancelar (não lido)</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D226</span>O operador consegue separar e marcar um item que o departamento de compras já pegou?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Tarefas automáticas e fila do sistema</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um item virou uma compra com fornecedor (departamento de compras pegou). O operador na separação tenta marcar esse item como 'separado' no seu checklist. Deixa passar?</p><p class="ln"><b>Hoje o sistema:</b> O item aparece no checklist da separação (o sistema mostra ele lá). Quando o operador tenta marcar como pronto, não temos 100% de certeza se o sistema bloqueia ou se deixa passar.</p><p class="ln why"><b>Por que importa:</b> Se deixar passar, o operador marca algo que o departamento de compras já está resolvendo — resultado: o mesmo item é processado duas vezes, estoque fica errado, caos.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>O sistema não deixa marcar nada que tenha sido mandado pro fornecedor — bloqueia e mostra mensagem clara</b> — Seguro: operador tenta clicar, sistema diz 'isso já está com compras'. Nunca duplica.</span></li><li class=""><span class="ck"></span><span><b>Nem mostra no checklist os itens que foram mandados pra compras</b> — Simples: operador não vê, não tenta marcar. Cheklist fica só com o que de verdade pode separar.</span></li><li class=""><span class="ck"></span><span><b>Deixa passar: confia no operador não fazer besteira</b> — Risco. Mas se treinamento for bom, pode funcionar.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer a opção 2: não mostrar no checklist itens que já foram mandados pra compras. É a mais simples e deixa a interface limpa. Operador só vê o que ele pode fazer.</p></div><p class="refp">checklist/page.tsx:102-112 (isOcStatus), checklist-items query (não lido completo)</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D249</span>Quando faltam unidades e a gente realoca de outro lugar, o que faz com o pedaço que não achou?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Estoque apartado pros pedidos (reservas)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um item precisa de 5 unidades. Tem 3 em outra prateleira — a gente realoca. Mas faltam 2. O sistema manda esses 2 pra compra? Ou cria uma realocação incompleta? Ou faz os dois?</p><p class="ln"><b>Hoje o sistema:</b> O sistema tenta fazer os dois: realoca as 3 unidades que achou, e manda as 2 que faltam pro fornecedor automaticamente. Tudo em um clique. Mas não está 100% claro se um mesmo item pode ter ao mesmo tempo uma realocação E uma compra pendente.</p><p class="ln why"><b>Por que importa:</b> Pra saber se o sistema está fazendo o certo. Se um item virar dois pedaços (um realocado, outro pra compra), é completo e seguro. Se ficar confuso, o estoque erra.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está: sistema faz os dois automaticamente. Realoca o que achou, manda pra compra o que faltou.</b> — Automático, sem operador pensar. Mas precisa testar bem se funciona mesmo.</span></li><li class=""><span class="ck"></span><span><b>Só realoca o que achou. O que falta, o operador decide depois se manda pra compra ou não</b> — Menos automático, mas mais controle. Operador vê: 'achei 3, faltam 2, e aí?'</span></li><li class=""><span class="ck"></span><span><b>Só manda pra compra se conseguir realocação 100%. Senão, deixa o item como estava</b> — Conservador: só age se resolve tudo de uma vez.</span></li></ul><p class="recnote"><b>Recomendo:</b> Ir com a opção 1 (automático). Mas antes disso, fazer um teste completo com números reais pra garantir que o item fica bem estruturado nos dois lados (3 unidades realocadas, 2 em compra). Depois documenta pra galera como funciona.</p></div><p class="refp">parcial/route.ts:1137-1145 (lógica mista), mandar-compras.ts (não distingue se é residual ou total)</p></div><h2>Ainda a conferir · 3</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Verificar se o cancelamento de pedido limpa corretamente quando já teve compra feita</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Testar se itens com compra ativa realmente ficam bloqueados na separação ou se deixam passar</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Conferir se um item pode ter simultaneamente uma realocação e uma compra pendente no mesmo banco de dados</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

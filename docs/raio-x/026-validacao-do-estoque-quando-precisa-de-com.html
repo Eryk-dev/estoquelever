@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Validação do estoque quando precisa de compra — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Compras de fornecedor</p>
+<h1>Validação do estoque quando precisa de compra</h1><p class="lead">Quando um pedido precisa de compra de fornecedor, o operador valida cada peça — se está em prateleira ou se falta mesmo — em cerca de 30 segundos por item. Quando termina, o sistema automático classifica o pedido (só prateleira → separa, só compra → aguarda fornecedor, ou misto → fica aguardando decisão).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">2</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Operador consegue registrar quando encontrou a peça na prateleira, com localização e contagem confirmada</span></li><li><span class="dot">✓</span><span>Operador consegue confirmar quando a peça falta mesmo, e o sistema gera a solicitação de compra pro fornecedor</span></li><li><span class="dot">✓</span><span>Sistema consegue desfazer o que foi marcado (operador muda de ideia) sem deixar dados quebrados</span></li><li><span class="dot">✓</span><span>Quando todos os itens são encontrados na prateleira, o pedido avança automático pra fase de separação</span></li></ul></div><h2>Problemas pra resolver · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P029</span>Operador digita a prateleira errada ao confirmar que encontrou a mercadoria</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Recebimento e guarda de mercadoria</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido de compra chega com 5 unidades do produto XYZ. Operador marca que encontrou, mas digita ou scanneia a prateleira errada (por exemplo: digita LOC-A quando o produto está na LOC-B).</p><p class="ln"><b>Hoje:</b> O sistema registra a mercadoria na prateleira errada. Depois, quando um outro pedido tenta pegar essa mercadoria para enviar pro cliente, o sistema procura na LOC-A (onde o operador digitou). Se tem outro produto na LOC-A, o sistema pega errado. Se não tem nada, o operador vê uma mensagem de erro e o item fica pendente.</p><p class="ln why"><b>Por que importa:</b> A mercadoria fica registrada em lugar diferente de onde ela realmente está no galpão. Isso causa atraso (operador não acha o produto) ou risco de enviar produto errado pro cliente.</p><div class="decision"><p class="q">Como a prateleira é digitada manualmente, o sistema não valida se o produto realmente existe lá fisicamente</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Operador escaneia TANTO o código da prateleira QUANTO o código de barras do produto antes de confirmar</b> — Sistema verifica se produto + prateleira conferem. Rejeita se não bater. Demora mais 5 segundos por item, mas elimina erro.</span></li><li class=""><span class="ck"></span><span><b>Sistema registra a prateleira, mas mais tarde faz uma conferência (um operador vai lá ver se está mesmo)</b> — Erros descobertos depois, com atraso. Operador ainda precisa corrigir manualmente.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está agora (sem validação)</b> — Continua acontecendo erros. Cliente recebe produto errado ou entrega atrasa.</span></li></ul><p class="recnote"><b>Recomendo:</b> Implante validação de código de barras do produto (confirma que item está realmente na prateleira digitada) antes de o operador marcar 'encontrei'.</p></div><p class="refp">route.ts:170-200</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P030</span>Dois operadores clicam 'encontrei' no mesmo produto ao mesmo tempo</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Recebimento e guarda de mercadoria</span></div></div><p class="ln scn"><b>Imagina assim:</b> Pedido de compra tem 5 unidades de caneta azul (SKU-123). Operador A e operador B estão conferindo lado a lado (conexão lenta ou acidente). Ambos veem o item como não confirmado e clicam 'encontrei' quase simultaneamente.</p><p class="ln"><b>Hoje:</b> Operador A clica, carrega o item (5 unidades, nenhum registro de quem pegou). Operador B clica no mesmo segundo, também carrega o item (5 unidades, sem saber que A já pegou). Ambos confirmam. O sistema registra 2 movimentações de saída (uma para A, uma para B). O saldo total desce 10 unidades (5+5), mas o sistema só marca que o item foi pego uma vez. Matemática errada.</p><p class="ln why"><b>Por que importa:</b> Estoque fica errado. O sistema acha que tem menos mercadoria do que realmente tem. Pode causar cancelamento de vendas 'sem estoque' ou devoluções erradas depois.</p><div class="decision"><p class="q">Sistema não bloqueia a linha antes de deixar dois operadores mexer no mesmo item</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Ao começar a processar o item, sistema trava pra só um operador mexer</b> — Segundo operador recebe aviso 'operador X já está processando este item'. Precisa esperar. Sem risco de duplicação.</span></li><li class=""><span class="ck"></span><span><b>Ao confirmar, sistema valida se ninguém mexeu no item no meio-tempo</b> — Se detectar mudança, pede pro operador carregar de novo. Mais lento, mas seguro.</span></li><li class=""><span class="ck"></span><span><b>Deixar como agora</b> — Cliques simultâneos continuam dobrando a contagem de mercadoria</span></li></ul><p class="recnote"><b>Recomendo:</b> Implante um trava quando operador começa a processar um item. Segundo operador vê que o item já está em processamento e espera a vez.</p></div><p class="refp">route.ts:66-84, route.ts:390-403</p></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D099</span>Quando o pedido tem MIX (alguns itens encontrados, outros esgotados), o sistema deve passar para próxima etapa sozinho ou aguardar operador clicar em 'Concluir'?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Pedido tem 2 itens da compra: caneta azul (operador marcou encontrei, 5 de 5) e caderno (marcou esgotado, aguardando nova compra). Operador não sabe se aperta 'Concluir' ou espera o sistema fazer algo.</p><p class="ln"><b>Hoje o sistema:</b> Sistema deixa o pedido parado na etapa de validação, esperando operador decidir. Não transita automaticamente. Operador precisa clicar em 'Concluir' manualmente.</p><p class="ln why"><b>Por que importa:</b> Define quanto tempo o pedido fica parado. Afeta velocidade de separação e entrega.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Passar automaticamente pra 'separação' quando caneta está pronta (mesmo que caderno ainda esteja esgotado)</b> — Caneta sai do galpão rápido. Caderno fica como pendência num pedido separado. Mais rápido, mas pedido original vira 2 pedidos.</span></li><li class=""><span class="ck"></span><span><b>Ficar parado, esperando operador resolver (deixar como está agora)</b> — Operador tem tempo pra decidir se quer enviar só a caneta ou esperar caderno chegar. Controle manual, mais lento.</span></li><li class=""><span class="ck"></span><span><b>Aviso automático: 'Caneta pronta, caderno esgotado — quer enviar parcial?'</b> — Operador recebe alerta, decide num clique. Balanço entre automação e controle.</span></li></ul><p class="recnote"><b>Recomendo:</b> Deixe parado (como está agora) até operador clicar 'Concluir'. Dá tempo pra operador avisar cliente sobre atraso. Se quiser acelerar, faça um alerta ao invés de automático.</p></div><p class="refp">route.ts:604-649</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D153</span>Quando operador clica 'Esgotado' no item, o sistema pode vinculá-lo a um novo pedido de compra com o fornecedor — mas e se operador clicar 2 vezes de acidente?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Item caderno está faltando. Operador clica 'Esgotado', sistema cria automaticamente um pedido de compra pra 3 unidades ao fornecedor. Rede lenta, operador acha que não funcionou e clica novamente (duplo clique).</p><p class="ln"><b>Hoje o sistema:</b> Sistema verifica de novo, vê que o item já tem uma compra em andamento e reutiliza a mesma (não cria uma segunda). Parece seguro, mas não há validação de confirmação.</p><p class="ln why"><b>Por que importa:</b> Duplos pedidos de compra ao fornecedor causam chegada dupla de mercadoria (3 unidades agora, 3 unidades em meia hora) ou cancelamento confuso.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Exigir confirmação: 'Vai criar compra de 3 unidades. Confirma?'</b> — Duplo clique vira 2 cliques seguidos, segundo retorna 'compra já existe'. Mais seguro.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (seguro em background)</b> — Funciona 99% das vezes, mas sem feedback claro ao operador. Operador acha que nada aconteceu.</span></li><li class=""><span class="ck"></span><span><b>Mostrar aviso: 'Compra criada com sucesso — ID #4521'</b> — Operador recebe confirmação visual. Sabe que não precisa clicar denovo. Duplo clique rejeita com 'compra já existe pra este fornecedor'.</span></li></ul><p class="recnote"><b>Recomendo:</b> Mostre um aviso de sucesso com ID do pedido de compra. Segundo clique retorna 'compra já existe pra esta mercadoria'. Operador fica com 100% de certeza e não tenta de novo.</p></div><p class="refp">route.ts:524-532, route.ts:677-750</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Ao desfazer uma confirmação anterior ('encontrei'), se o sistema não tiver registrado a movimentação (por ser versão antiga ou configuração diferente), ele pula o desfazimento e pode deixar estoque errado sem avisar.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Se um pedido de compra pedir zero unidades de um item por acidente (configuração ruim ou dados podres), operador consegue confirmar que 'encontrou' zero itens. Sistema registra movimentação de zero unidades, sem validação.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

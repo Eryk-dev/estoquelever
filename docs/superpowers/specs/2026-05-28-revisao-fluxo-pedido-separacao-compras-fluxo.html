@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fluxo do Pedido — Entrada, Separação, Recebimento e Compras</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario.danger { border-left-color: var(--red); }
+  .scenario.ok { border-left-color: var(--green); }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+  .question { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--amber); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Fluxo do Pedido — Entrada, Separação, Recebimento e Compras</h1>
+  <p class="subtitle">Mapa de COMO funciona hoje, do pedido chegando até o cliente — pra validarmos o que está certo e o que precisa mudar.</p>
+  <p class="meta">Validação de fluxo · 2026-05-28 · linguagem de negócio (sem detalhe técnico) · os pontos marcados ⚠ são onde quero sua opinião</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal — entrada do pedido</a></li>
+    <li><a href="#separacao">Fluxo — separação e "esgotou"</a></li>
+    <li><a href="#compras">Fluxo — recebimento e compras</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos (onde dói)</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>
+  Quando um pedido cai do marketplace, o sistema olha o estoque dos galpões e decide sozinho: se o galpão preferido da loja tem tudo, ele aprova na hora; se falta alguma coisa, joga o pedido pro operador decidir (transferir de outro galpão ou comprar). Depois de aprovado e com nota fiscal, o pedido cai pra separação, onde o operador bipa os produtos. Se na hora de pegar um item a prateleira está vazia, o operador avisa que "a loc zerou" — e aí o sistema tenta achar o item em outra prateleira; se não acha em lugar nenhum, manda esse item pra Compras. O comprador compra, a mercadoria chega no recebimento, é guardada na prateleira, e o pedido volta a andar até ser embalado e expedido.
+</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Levar um pedido do marketplace até a porta do cliente, decidindo automaticamente o que tem em casa, o que precisa transferir e o que precisa comprar — sem deixar pedido "perdido" no meio do caminho.
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">O que mudou e gerou a confusão</div>
+  Antes, quando um item esgotava na separação, o sistema <strong>perguntava</strong> ao operador: "mandar pra Compras ou pra outro galpão?". Hoje, pelo caminho do Parcial, ele <strong>manda direto pra Compras</strong> e devolve o operador pra lista, sem perguntar. É o ponto central que vamos validar.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal — quando o pedido chega</h2>
+<p>O sistema decide o destino do pedido olhando o estoque dos galpões. Existem 4 saídas: aprovar sozinho, sugerir transferência, mandar comprar, ou recusar.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Da chegada do pedido até "aguardando separação"</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Chega Pedido #48213<br/>do marketplace · 3 itens] --> B{Algum galpão<br/>tem os 3 itens?}
+  B -->|Sim, e é o galpão<br/>preferido da loja| C[Aprova sozinho<br/>e reserva o estoque]
+  B -->|Sim, mas é<br/>outro galpão| D[Sugere transferência<br/>e manda pro painel]
+  B -->|Não tem tudo<br/>num galpão só| E[Vira compra<br/>e manda pro painel]
+  C --> F[Aguardando nota fiscal]
+  D --> G{Operador<br/>decide}
+  E --> G
+  G -->|Aprova| F
+  G -->|Manda comprar| H[Aguardando compra]
+  G -->|Recusa| I[Cancelado]
+  F --> J[Aguardando separação]
+  style C fill:#dcfce7
+  style J fill:#dcfce7
+  style I fill:#fee2e2
+  style H fill:#fef3c7
+  </pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠ Ponto pra validar</div>
+  Hoje, se um galpão não tem <strong>os 3 itens juntos</strong>, o pedido inteiro vira "compra" — mesmo que 2 dos 3 itens estejam em estoque. Os itens que já existem <strong>não</strong> seguem pra separação na frente; tudo espera a compra. <span class="question">É isso que você quer, ou o pedido deveria separar o que tem e só comprar o que falta?</span>
+</div>
+
+<h2 id="separacao">3. Fluxo — separação e o "esgotou"</h2>
+<p>Na separação, o operador bipa cada produto. O caminho fica interessante quando um item acaba na prateleira.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Wave picking · o que acontece quando o item acaba</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Aguardando separação] --> B[Operador inicia<br/>e bipa os produtos]
+  B --> C{Pegou tudo<br/>do produto?}
+  C -->|Sim| D[Marca o produto]
+  C -->|Não, ou a<br/>loc acabou| E[Abre o Parcial:<br/>quantas pegou? a loc zerou?]
+  E --> F{Sistema procura<br/>em outra prateleira}
+  F -->|Achou| G[Cria uma realocação<br/>operador pega na nova loc]
+  F -->|Não achou em<br/>lugar nenhum| H[Manda direto pra Compras<br/>e volta pra lista]
+  G --> D
+  D --> K{Todos os<br/>produtos OK?}
+  K -->|Sim| L[Separado]
+  K -->|Falta item<br/>em compra| M[Aguardando compra]
+  L --> N[Embalagem] --> O[Expedido]
+  style H fill:#fef3c7
+  style M fill:#fef3c7
+  style O fill:#dcfce7
+  style L fill:#dcfce7
+  </pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠ Ponto pra validar (o que você citou)</div>
+  No caminho do <strong>Parcial</strong>, quando o item não é achado em nenhuma prateleira, o sistema manda pra Compras <strong>sozinho</strong> e tira o operador da tela. A opção "mandar esse SKU pra outro galpão" existe, mas só por outro botão separado — não aparece nesse momento. <span class="question">O operador deveria poder escolher (Compras × outro galpão) aqui, ou o automático está bom?</span>
+</div>
+
+<h2 id="compras">4. Fluxo — recebimento e compras</h2>
+<p>O item que foi pra Compras percorre este caminho até voltar pro pedido. O recebimento tem duas etapas: registrar a chegada (dock) e guardar na prateleira.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Da compra à volta do pedido pra separação</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Comprador marca<br/>o SKU como comprado] --> B[Vira uma Ordem de Compra<br/>agrupada por fornecedor]
+  B --> C[Fornecedor entrega]
+  C --> D[Recebedor confere no dock<br/>entra no estoque de Recebimento]
+  D --> E[Guarda: imprime etiqueta,<br/>bipa a prateleira e confirma]
+  E --> F[Estoque pronto<br/>na prateleira]
+  D --> G{Já chegou tudo<br/>que o pedido comprou?}
+  G -->|Sim| H[Pedido retoma:<br/>aguardando NF / separação]
+  G -->|Ainda falta| I[Pedido segue<br/>aguardando compra]
+  style F fill:#dcfce7
+  style H fill:#dcfce7
+  style I fill:#fef3c7
+  </pre>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">⚠ Pontos pra validar</div>
+  <strong>(a)</strong> Se o fornecedor demora ou não entrega, o pedido fica em "aguardando compra" <strong>sem prazo e sem alerta</strong> — ninguém é avisado.
+  <strong>(b)</strong> "Conferir no dock" e "guardar na prateleira" são dois passos: o estoque só fica realmente disponível pra outro pedido depois da guarda. <span class="question">Esses dois pontos batem com a operação real do galpão?</span>
+</div>
+
+<h2 id="exemplo">5. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um caso concreto, do tipo que aprova sozinho (caminho feliz):</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Pedido <strong>#48213</strong> cai no marketplace pela loja NetAir (galpão preferido <strong>CWB</strong>): 2 unidades do <strong>EW123</strong> e 1 do <strong>GB456</strong>. No CWB tem EW123 com saldo 5 e GB456 com saldo 3.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Chega o pedido</strong>
+    <p>O sistema confere o estoque no CWB: EW123 = 5, GB456 = 3. Cobre as quantidades pedidas (2 e 1).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Aprova sozinho e reserva</strong>
+    <p>Como o CWB é o galpão preferido da NetAir e tem tudo, o sistema aprova na hora e reserva 2× EW123 + 1× GB456. O pedido fica em "aguardando nota fiscal".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sai a nota fiscal</strong>
+    <p>A nota é emitida no ERP. O estoque reservado é baixado de verdade e o pedido cai em "aguardando separação".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador João inicia a separação</strong>
+    <p>O sistema mostra os produtos ordenados por prateleira (ex.: corredor A-03, depois B-12), pra João andar o caminho mais curto.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João bipa o EW123</strong>
+    <p>Confere 2 unidades na mão, marca o produto como pego. O estoque do EW123 cai de 5 pra 3.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João bipa o GB456</strong>
+    <p>Confere 1 unidade, marca como pego. O estoque do GB456 cai de 3 pra 2.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Conclui a separação</strong>
+    <p>Todos os produtos marcados → João clica "Concluir". O pedido vira "separado".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Embala e confere</strong>
+    <p>Na embalagem, João bipa cada item pra garantir que está na caixa certa. O sistema imprime a etiqueta de envio.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Expede</strong>
+    <p>João dá baixa na expedição. O pedido #48213 vira "expedido". Fim do caminho feliz.</p>
+  </div>
+</div>
+
+<h2 id="estados">6. Estados e transições</h2>
+<p>O pedido passa pelos seguintes estados ao longo do fluxo:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">Pendente</span></td>
+      <td>Esperando o operador decidir no painel</td>
+      <td>O sistema não conseguiu aprovar sozinho (transferência ou compra)</td>
+      <td>Operador aprova ou recusa</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Aguardando NF</span></td>
+      <td>Aprovado, estoque reservado, esperando a nota fiscal</td>
+      <td>Aprovação automática ou manual (própria/transferência)</td>
+      <td>Nota fiscal é emitida</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Aguardando separação</span></td>
+      <td>Pronto pro operador começar a bipar</td>
+      <td>NF chegou, ou pedido retomou depois da compra</td>
+      <td>Operador inicia a separação</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Em separação</span></td>
+      <td>Wave picking em andamento</td>
+      <td>Operador inicia</td>
+      <td>Operador conclui (tudo pego)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando compra</span></td>
+      <td>Precisa comprar item(ns) antes de separar</td>
+      <td>Decisão de compra no painel, ou item esgotou na separação</td>
+      <td>Todos os itens comprados chegam (recebidos)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Separado</span></td>
+      <td>Tudo pego, pronto pra embalar</td>
+      <td>Operador conclui a separação</td>
+      <td>Vai pra embalagem</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Embalado</span></td>
+      <td>Embalado, pronto pra expedir</td>
+      <td>Conferência da embalagem completa</td>
+      <td>Operador expede</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Expedido</span></td>
+      <td>Saiu pro cliente</td>
+      <td>Operador dá baixa na expedição</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Cancelado</span></td>
+      <td>Pedido recusado ou cancelado</td>
+      <td>Operador recusa, ou o marketplace cancela</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">7. Cenários alternativos (onde dói)</h2>
+<p>O que acontece quando o caminho feliz é interrompido. Os marcados ⚠ são os que quero validar com você.</p>
+
+<div class="scenario ok">
+  <div class="scenario-title">✅ Item acaba, mas o sistema acha em outra prateleira</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João vai pegar o EW123 na loc A-03, mas só tem 1 lá (pedido quer 2) e a prateleira zerou.<br/><strong>O que o sistema faz:</strong> procura o EW123 em outra prateleira do mesmo galpão; acha 4 unidades na B-12 e cria uma "realocação".<br/><strong>O usuário vê:</strong> aviso "1 loc encontrada: B-12" — João vai até a B-12 e pega a unidade que faltava.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">⚠ Item acaba e NÃO tem em lugar nenhum (o que você citou)</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João marca Parcial no EW123 com "a loc zerou", e o item não existe em nenhuma outra prateleira do galpão.<br/><strong>O que o sistema faz:</strong> manda o EW123 direto pra Compras, sem perguntar nada.<br/><strong>O usuário vê:</strong> um aviso rápido "1 item sem cobertura enviado pra Compras" e é jogado de volta pra lista de separação.<br/><span class="question">É esse o comportamento que você quer? Ou o operador deveria escolher entre Compras e mandar pra outro galpão?</span></div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">⚠ Pedido com 3 itens, mas só 2 em estoque</div>
+  <div class="scenario-flow"><strong>Situação:</strong> chega um pedido com EW123, GB456 e KT789; o galpão tem os dois primeiros, mas não o KT789.<br/><strong>O que o sistema faz:</strong> marca o pedido inteiro como "compra" e segura tudo até resolver o KT789.<br/><strong>O usuário vê:</strong> o pedido inteiro parado em "aguardando compra", inclusive os 2 itens que já tinham em casa.<br/><span class="question">O pedido deveria separar os 2 que tem e só esperar o KT789, ou segurar tudo junto está certo?</span></div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">⚠ Pegou parte, mas a prateleira ainda tem</div>
+  <div class="scenario-flow"><strong>Situação:</strong> o pedido quer 5 do EW123, João só consegue pegar 3 agora, mas a prateleira não zerou.<br/><strong>O que o sistema faz:</strong> registra que pegou 3 e deixa o item "em andamento" (não fechado).<br/><strong>O usuário vê:</strong> o item pode parecer "não marcado" na tela, e há risco de ele clicar de novo achando que não fez — gerando confusão sobre o que já foi pego.<br/><span class="question">Como esse "meio-pego" deveria aparecer na tela pra não confundir?</span></div>
+</div>
+
+<div class="scenario danger">
+  <div class="scenario-title">⚠ Compra encalha (fornecedor não entrega)</div>
+  <div class="scenario-flow"><strong>Situação:</strong> o KT789 foi comprado, mas o fornecedor atrasa semanas.<br/><strong>O que o sistema faz:</strong> nada automático — o pedido fica em "aguardando compra" indefinidamente.<br/><strong>O usuário vê:</strong> o pedido some do radar; ninguém é alertado de que está velho ou travado.<br/><span class="question">Deveria ter um alerta de "compra parada há X dias" ou um prazo no quadro da home?</span></div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">⚠ Nota fiscal não chega</div>
+  <div class="scenario-flow"><strong>Situação:</strong> o pedido foi aprovado mas a nota fiscal do ERP não chega.<br/><strong>O que o sistema faz:</strong> mantém o pedido em "aguardando NF" esperando.<br/><strong>O usuário vê:</strong> pedido parado em "aguardando NF" sem indicação de há quanto tempo nem o que fazer.<br/><span class="question">Precisa de um jeito de forçar a separação sem NF (já existe parcialmente) ou de um alerta de NF atrasada?</span></div>
+</div>
+
+<div class="scenario ok">
+  <div class="scenario-title">✅ Pedido recebe item comprado e volta a andar</div>
+  <div class="scenario-flow"><strong>Situação:</strong> a mercadoria do KT789 chega no dock e é guardada na prateleira.<br/><strong>O que o sistema faz:</strong> ao perceber que tudo que o pedido comprou chegou, ele retoma o pedido e leva pra "aguardando NF / separação".<br/><strong>O usuário vê:</strong> o pedido reaparece na fila de separação normalmente.</div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

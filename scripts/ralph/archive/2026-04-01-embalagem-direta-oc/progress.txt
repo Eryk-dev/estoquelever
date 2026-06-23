@@ -1,0 +1,84 @@
+# Ralph Progress Log
+Started: Wed Apr  1 12:39:14 -03 2026
+---
+
+## Codebase Patterns
+- `kickWorker()` from `execution-worker.ts` is the preferred way to trigger the worker (fire-and-forget with `.catch()`)
+- `imprimirEtiquetaDireta()` is fast path (pre-claimed ZPL), `buscarEImprimirEtiqueta()` is slow fallback
+- `registrarEvento()` from `historico-service.ts` is fire-and-forget safe — always `.catch(() => {})`
+- EventoPedido type in `historico-service.ts` must be updated when adding new event types
+- Optimistic lock pattern for atomic increments: `UPDATE ... WHERE quantidade_bipada = previous_value`
+- Supabase `.not("field", "in", "(val1,val2)")` uses parenthesized comma-separated string (no spaces)
+- `concluir-oc/route.ts` is the reference for OC resolution logic (decisao, galpao, execution queue)
+- `SeparacaoPedido` field for order number is `numero_pedido` (not `numero`)
+- API docs in `docs/api-reference-complete.md` must be updated for any new/changed endpoint
+- Action bars per tab in separacao/page.tsx use IIFE pattern `(() => { ... })()` for computed local vars before JSX
+- Inline mode UIs replace normal tab content via ternary in the `{/* Tab content */}` section of separacao/page.tsx
+- `SeparacaoPedido` type has `nf_emitida`, `agrupamento_criado`, `etiqueta_pronta` booleans from GET /api/separacao
+
+---
+
+## 2026-04-01 - US-001
+- Implemented POST /api/separacao/bipar-embalagem-oc endpoint
+- Added 'embalagem_direta_concluida' to EventoPedido type
+- Updated docs/api-reference-complete.md with full endpoint documentation
+- Files changed:
+  - `src/app/api/separacao/bipar-embalagem-oc/route.ts` (new)
+  - `src/lib/historico-service.ts` (new event type)
+  - `docs/api-reference-complete.md` (new endpoint docs)
+- **Learnings for future iterations:**
+  - The bipar-embalagem endpoint uses an RPC (siso_processar_bip_embalagem), but bipar-embalagem-oc uses inline SQL as per PRD — simpler for scoped pedido_ids filtering
+  - `supabase.rpc` is always defined (it's a function), so `supabase.rpc ? x : y` always evaluates to x — don't use it as a conditional
+  - concluir-oc does per-item updates for compra_quantidade_recebida (can't batch since each item has different solicitada value)
+  - Lint has 6 pre-existing errors and ~27 warnings — none should be introduced by new code
+---
+
+## 2026-04-01 - US-002
+- Added engatilhado indicator (green left border + "Pronto" badge) to separacao-card for aguardando_compra orders with nf_emitida && agrupamento_criado
+- Added "Embalar N pedido(s)" button with Package icon and emerald color scheme in aguardando_compra action bar
+- Added embalagemMode and embalagemPedidoIds useState hooks for US-003/US-004 consumption
+- Button filters by engatilhado condition; if selected IDs exist, only includes engatilhado ones among selected
+- Files changed:
+  - `src/components/separacao/separacao-card.tsx` (isEngatilhado computed, green border, Pronto badge)
+  - `src/app/separacao/page.tsx` (Package import, embalagemMode/embalagemPedidoIds state, Embalar button)
+- **Learnings for future iterations:**
+  - The aguardando_compra action bar uses an IIFE `(() => { ... })()` pattern to compute local variables (like engatilhados count) before rendering JSX — follow this for any tab that needs computed values
+  - `SeparacaoPedido` type already has `nf_emitida` and `agrupamento_criado` booleans from the API — no need to fetch separately
+  - Tailwind `border-l-4 border-l-emerald-500` works with the existing `border` shorthand — just add them alongside
+  - The state hooks (embalagemMode, embalagemPedidoIds) are in SeparacaoPageContent scope and will be consumed by US-003's inline UI
+---
+
+## 2026-04-01 - US-003
+- Implemented inline embalagem mode UI in separacao/page.tsx aguardando_compra tab
+- Scan input with autofocus + keyboard redirect, quantity input, Sair button (X icon)
+- Compact pedido cards with progress bars (bipados/total) and emerald color scheme
+- bipProgress state synced from pedidos data, tracks completion per pedido
+- Auto-exit after 1.5s when all pedidos complete (useEffect with timeout)
+- Form submits on Enter key, scan input auto-refocuses
+- Completed cards show CheckCircle2 icon + "Embalado" label + emerald styling
+- Files changed:
+  - `src/app/separacao/page.tsx` (imports, state hooks, effects, inline UI)
+- **Learnings for future iterations:**
+  - The embalagem inline UI replaces the tab content section via ternary: `embalagemMode && activeTab === "aguardando_compra" ? <InlineUI /> : <NormalContent />`
+  - bipProgress is initialized with zeros in useEffect on embalagemMode, then synced from real pedidos data in a separate useEffect on pedidos change
+  - Keyboard redirect pattern: listen for keydown, check if printable char (key.length === 1), refocus scan input — same pattern as embalagem/page.tsx
+  - handleEmbalagemScanSubmit is a placeholder (clears input only) — US-004 adds actual API call + audio feedback
+  - embalagemCompletados is computed via useMemo from bipProgress, drives auto-exit useEffect
+---
+
+## 2026-04-01 - US-004
+- Replaced placeholder handleEmbalagemScanSubmit with full API integration (POST /api/separacao/bipar-embalagem-oc)
+- Added audio feedback: playSuccess on item scan, playComplete on pedido completion, playError on 404/errors
+- Added isScanningRef to prevent concurrent scans (same pattern as embalagem/page.tsx)
+- Optimistic bipProgress updates after each successful scan
+- Toast feedback: SKU + qty on item scan, pedido numero on completion, etiqueta warning if label failed
+- Auto-exit shows summary toast + kicks worker via fire-and-forget fetch
+- Manual exit (Sair button) also kicks worker before resetting state
+- Files changed:
+  - `src/app/separacao/page.tsx` (audio imports, isScanningRef, handleEmbalagemScanSubmit rewrite, auto-exit toast+worker, handleExitEmbalagemMode worker kick)
+- **Learnings for future iterations:**
+  - SeparacaoPedido uses `numero_pedido` not `numero` — always check the type definition before accessing fields
+  - `playComplete()` is the ascending melody for order-level completion, `playSuccess()` is the single beep for item-level success — match these to the user action scope
+  - The `isScanningRef` pattern (ref not state) prevents double-scans without re-render — critical for barcode scanner rapid fire
+  - Worker kick is fire-and-forget: `fetch("/api/worker/processar", { method: "POST" }).catch(() => {})` — no await needed
+---

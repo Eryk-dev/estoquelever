@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quadro de Tarefas Pendentes — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+
+  /* Mockup da tela */
+  .mockup { margin: 24px 0 32px; }
+  .mockup-frame { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 2px 14px rgba(0,0,0,0.04); }
+  .mockup-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; background: var(--zinc-100); border-bottom: 1px solid var(--border); }
+  .mockup-bar-dot { width: 10px; height: 10px; border-radius: 50%; background: #d4d4d8; }
+  .mockup-bar-title { margin-left: 12px; font-size: 12px; color: var(--muted); }
+  .mockup-body { padding: 28px; background: var(--bg); }
+  .mockup-quadro-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+  .mockup-h2 { font-size: 18px; font-weight: 600; margin: 0; color: var(--text); }
+  .mockup-meta { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .mockup-live { color: var(--green); display: inline-flex; align-items: center; gap: 4px; }
+  .mockup-sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+  .mockup-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .mockup-card { display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: 12px; border: 1px solid var(--border); background: #fff; min-height: 130px; cursor: pointer; transition: border-color 120ms ease, transform 120ms ease; }
+  .mockup-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .mockup-card-empty { opacity: 0.5; cursor: default; }
+  .mockup-card-empty:hover { border-color: var(--border); transform: none; }
+  .mockup-card-titulo { font-size: 13px; font-weight: 600; color: var(--text); }
+  .mockup-card-contador { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--text); margin-top: 2px; }
+  .mockup-card-legenda { font-size: 11px; color: var(--muted); }
+  .mockup-card-empty-label { font-size: 11px; color: var(--muted); font-style: italic; margin-top: auto; }
+  .mockup-card-dupla { display: flex; align-items: flex-end; gap: 10px; }
+  .mockup-card-sep { font-size: 22px; color: var(--muted); align-self: center; }
+  .mockup-card-avatares { display: flex; align-items: center; gap: 0; margin-top: auto; padding-top: 8px; }
+  .mk-avatar { width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: white; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.06); margin-left: -6px; }
+  .mk-avatar:first-child { margin-left: 0; }
+  .mockup-caption { text-align: center; font-size: 12px; color: var(--muted); margin-top: 12px; font-style: italic; }
+  @media (max-width: 720px) { .mockup-row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Quadro de Tarefas Pendentes na home do WMS</h1>
+  <p class="subtitle">Operador bate o olho na tela de entrada do WMS e sabe instantaneamente onde tem trabalho esperando e quem já está executando.</p>
+  <p class="meta">Validação de fluxo · 2026-05-21 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#mockup">Mockup da tela</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados das filas</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Quando o operador está ocioso — acabou uma tarefa, voltou de pausa, ou está esperando a próxima onda — ele abre a tela inicial do WMS e olha um quadro com seis cartões, um pra cada fila operacional. Cada cartão mostra quantas tarefas estão esperando e fotos de quem já está executando. Em vez de abrir cinco telas diferentes pra descobrir onde tem trabalho, ele decide em três segundos onde ajudar.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Eliminar o tempo morto entre "operador desocupou" e "operador escolheu a próxima tarefa", e evitar que dois operadores caiam na mesma fila enquanto outra fica órfã.
+</div>
+
+<h2 id="mockup">2. Mockup da tela</h2>
+<p>Como o quadro aparece pro operador. Cenário: 14h05, galpão CWB, com os dados do exemplo da seção 4.</p>
+
+<div class="mockup">
+  <div class="mockup-frame">
+    <div class="mockup-bar">
+      <div class="mockup-bar-dot"></div>
+      <div class="mockup-bar-dot"></div>
+      <div class="mockup-bar-dot"></div>
+      <div class="mockup-bar-title">app · /wms</div>
+    </div>
+    <div class="mockup-body">
+      <div class="mockup-quadro-head">
+        <h3 class="mockup-h2">Tarefas pendentes</h3>
+        <div class="mockup-meta">
+          <span>galpão: CWB</span>
+          <span class="mockup-live">● ao vivo</span>
+        </div>
+      </div>
+
+      <div class="mockup-sub">Pipeline do pedido</div>
+      <div class="mockup-row">
+        <div class="mockup-card mockup-card-empty" title="Aprovação — zero pendentes">
+          <div class="mockup-card-titulo">Aprovação</div>
+          <div class="mockup-card-contador">0</div>
+          <div class="mockup-card-legenda">aguardando</div>
+          <div class="mockup-card-empty-label">Tudo em dia</div>
+        </div>
+
+        <div class="mockup-card" title="Separação — 12 pendentes, 3 executando">
+          <div class="mockup-card-titulo">Separação</div>
+          <div class="mockup-card-contador">12</div>
+          <div class="mockup-card-legenda">na fila</div>
+          <div class="mockup-card-avatares" aria-label="3 operadores executando">
+            <span class="mk-avatar" style="background:#831843" title="Maria">MA</span>
+            <span class="mk-avatar" style="background:#0c4a6e" title="Bruno">BR</span>
+            <span class="mk-avatar" style="background:#581c87" title="Ana">AN</span>
+          </div>
+        </div>
+
+        <div class="mockup-card" title="Embalagem — 3 pendentes, 1 executando">
+          <div class="mockup-card-titulo">Embalagem</div>
+          <div class="mockup-card-contador">3</div>
+          <div class="mockup-card-legenda">prontos pra embalar</div>
+          <div class="mockup-card-avatares" aria-label="1 operador executando">
+            <span class="mk-avatar" style="background:#7c2d12" title="Carlos">CA</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="mockup-sub">Tarefas adjacentes</div>
+      <div class="mockup-row">
+        <div class="mockup-card" title="Guarda — 8 pendentes, ninguém executando">
+          <div class="mockup-card-titulo">Guarda</div>
+          <div class="mockup-card-contador">8</div>
+          <div class="mockup-card-legenda">caixas no dock</div>
+        </div>
+
+        <div class="mockup-card" title="Compras — 4 a comprar / 2 a receber">
+          <div class="mockup-card-titulo">Compras</div>
+          <div class="mockup-card-dupla">
+            <div>
+              <div class="mockup-card-contador">4</div>
+              <div class="mockup-card-legenda">a comprar</div>
+            </div>
+            <div class="mockup-card-sep">/</div>
+            <div>
+              <div class="mockup-card-contador">2</div>
+              <div class="mockup-card-legenda">a receber</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mockup-card" title="Inventário — 2 sessões ativas, 2 operadores">
+          <div class="mockup-card-titulo">Inventário</div>
+          <div class="mockup-card-contador">2</div>
+          <div class="mockup-card-legenda">sessões ativas</div>
+          <div class="mockup-card-avatares" aria-label="2 operadores executando">
+            <span class="mk-avatar" style="background:#365314" title="Pedro">PE</span>
+            <span class="mk-avatar" style="background:#134e4a" title="Lúcia">LU</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup-caption">Quadro renderizado na tela inicial do WMS · cenário 14h05 do exemplo da seção 4</div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">O que o operador entende em 3 segundos</div>
+  <strong>Aprovação</strong> está esmaecida → ignora. <strong>Separação</strong> tem 12 mas três pessoas já estão lá. <strong>Embalagem</strong> tem só 3. <strong>Guarda</strong> tem 8 e ninguém — destaque óbvio pra ele. <strong>Compras</strong> e <strong>Inventário</strong> seguem cobertos. Decisão: ir pra Guarda.
+</div>
+
+<h2 id="fluxo">3. Fluxo principal</h2>
+<p>O fluxo descreve o que o operador faz a partir do momento em que fica ocioso até voltar a executar uma tarefa concreta. O quadro é uma ferramenta de <strong>decisão</strong>, não de execução — todo trabalho concreto continua nas telas específicas (separação, guarda, inventário, etc.).</p>
+
+<div class="diagram">
+  <div class="diagram-title">Caminho feliz · do operador ocioso à próxima tarefa</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Operador termina uma tarefa<br/>ou volta de pausa] --> B[Abre a tela inicial do WMS]
+  B --> C[Quadro carrega com 6 cartões<br/>do galpão ativo]
+  C --> D{Algum cartão<br/>tem pendência?}
+  D -->|Todos vazios| E[Quadro mostra<br/>'Tudo em dia']
+  E --> F[Operador procura<br/>o coordenador]
+  D -->|Sim| G[Operador compara cartões:<br/>volume + quem já está executando]
+  G --> H{Encontrou fila<br/>onde pode ajudar?}
+  H -->|Fila com volume e<br/>sem executor| I[Clica no cartão]
+  H -->|Fila com volume e<br/>poucos executores| I
+  H -->|Todas filas já têm<br/>gente suficiente| F
+  I --> J[Vai pra tela específica<br/>da fila]
+  J --> K[Pega a primeira tarefa<br/>e começa a executar]
+  K --> L[Avatar do operador aparece<br/>no cartão em segundos]
+  L --> M[Outros operadores veem<br/>que essa fila tem cobertura]
+
+  style A fill:#f0f9ff
+  style E fill:#dcfce7
+  style L fill:#fef3c7
+  style M fill:#fef3c7
+  </pre>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Como o quadro influencia a escolha</div>
+  Volume alto sem executor → atrai. Volume alto com vários executores → operador deixa pra outra fila. Volume zero → cartão esmaecido, sai de cogitação. A leitura é instantânea.
+</div>
+
+<h2 id="exemplo">4. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um caso concreto pra ver o fluxo na prática.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Terça-feira, 14h05. Operador <strong>João</strong> acabou de almoçar e volta ao WMS. Galpão <strong>CWB</strong> selecionado. Ele tem 30 minutos antes da próxima onda chegar. Outros operadores no galpão agora: Maria, Bruno, Ana (na separação), Carlos (embalando), Pedro e Lúcia (inventariando o corredor B).
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>João abre a tela inicial do WMS</strong>
+    <p>O quadro de tarefas aparece no topo da página, antes dos grupos de navegação. O cabeçalho diz "Tarefas pendentes · galpão: CWB · ● ao vivo".</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Bate o olho na primeira linha — Pipeline do pedido</strong>
+    <p>Aprovação: 0 (cartão esmaecido, "Tudo em dia"). Separação: 12 pedidos esperando, com 3 avatares (Maria, Bruno, Ana). Embalagem: 3 pedidos, com 1 avatar (Carlos).</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Bate o olho na segunda linha — Tarefas adjacentes</strong>
+    <p>Guarda: 8 caixas esperando ir pra prateleira, <strong>sem nenhum avatar</strong>. Compras: 4 itens a comprar / 2 a receber. Inventário: 2 sessões rodando, com Pedro e Lúcia.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>João avalia em três segundos</strong>
+    <p>Separação tem mais volume (12) mas três pessoas já estão picando — vai ser difícil contribuir sem atrapalhar. Guarda tem 8 pendências e ninguém — perfeito.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Clica no cartão "Guarda"</strong>
+    <p>O sistema leva João direto pra tela de Guarda, com a fila completa do galpão CWB.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Pega a primeira pendência</strong>
+    <p>Quatro caixas do SKU <strong>EW123</strong> que chegaram às 10h da manhã, com etiqueta já impressa, esperando ir pra prateleira <strong>A-03-02</strong>.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Começa a guardar</strong>
+    <p>O sistema marca a pendência como "em guarda" e registra que foi João quem assumiu.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>Em outro tablet, no quadro, o avatar do João já apareceu</strong>
+    <p>Em menos de três segundos, o cartão "Guarda" agora mostra o avatar do João. Maria, que estava prestes a olhar a guarda, vê que já tem alguém e segue na separação.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>João termina a primeira pendência</strong>
+    <p>Bipa o código no destino, confirma. A pendência fica "guardada". No quadro, o contador do cartão cai de 8 pra 7 em tempo real.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>João continua na fila de Guarda</strong>
+    <p>Sem voltar à tela inicial — ele segue na tela de Guarda pegando uma pendência por vez até esgotar.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>15h00. Acabou a fila de Guarda</strong>
+    <p>O cartão "Guarda" volta a mostrar 0 e fica esmaecido. O avatar do João some.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>João volta à tela inicial</strong>
+    <p>Avalia o quadro de novo. Separação agora tem 5 (a Maria e o Bruno picaram bastante). Embalagem subiu pra 7 com 2 avatares. Decide ir pra Embalagem ajudar o Carlos.</p>
+  </div>
+</div>
+
+<h2 id="estados">5. Estados das filas</h2>
+<p>Cada um dos seis cartões do quadro está, a qualquer momento, em um destes estados visuais. O estado não é dito por escrito no cartão — é entendido olhando.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Estado</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-success">Tudo em dia</span></td>
+      <td>Não há trabalho pendente nessa fila no galpão ativo. O cartão fica esmaecido com a legenda "Tudo em dia".</td>
+      <td>Quando o contador cai pra zero — última pendência foi resolvida.</td>
+      <td>Quando entra uma nova pendência (pedido novo, recebimento no dock, etc.).</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando</span></td>
+      <td>A fila tem pendência mas ninguém começou. Cartão em destaque, contador grande, sem avatares.</td>
+      <td>Quando entra a primeira pendência depois do estado "Tudo em dia".</td>
+      <td>Quando o primeiro operador pega uma tarefa da fila.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Em execução</span></td>
+      <td>Pelo menos um operador está executando tarefas dessa fila agora. Cartão em destaque com avatares.</td>
+      <td>Quando alguém inicia a primeira tarefa.</td>
+      <td>Quando todos os operadores finalizam ou saem.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Lotada</span></td>
+      <td>Mais de cinco operadores executando — mostra cinco avatares + chip "+N" pros excedentes. Sinaliza que a fila está bem coberta.</td>
+      <td>Quando o 6º operador começa.</td>
+      <td>Quando o número volta pra cinco ou menos.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Todos os galpões</span></td>
+      <td>Visão agregada usada por admins sem galpão selecionado. Cartões mostram a soma de todos os galpões da empresa.</td>
+      <td>Quando o admin desmarca o filtro de galpão na barra lateral.</td>
+      <td>Quando seleciona um galpão específico.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">6. Cenários alternativos</h2>
+<p>O que acontece quando o fluxo principal é interrompido ou variado.</p>
+
+<div class="scenario">
+  <div class="scenario-title">Maria começa a separar enquanto João ainda está olhando o quadro</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João vê o cartão de Separação com 12 pendentes e 3 avatares. Maria, em outra mesa, abre uma nova onda.<br/><strong>O que o sistema faz:</strong> em até três segundos, atualiza o cartão sem que João precise dar refresh.<br/><strong>João vê:</strong> o avatar da Maria desaparece e reaparece (porque ela mudou de onda) — quatro avatares no cartão agora.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">João é admin e troca de galpão na barra lateral</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João tem acesso a CWB e SP. Estava em CWB, troca pra SP.<br/><strong>O que o sistema faz:</strong> recarrega o quadro com os números de SP em menos de um segundo. Contadores e avatares mudam.<br/><strong>João vê:</strong> os mesmos seis cartões, mas com volumes diferentes; cabeçalho passa a dizer "galpão: SP".</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Sábado de manhã, galpão totalmente limpo</div>
+  <div class="scenario-flow"><strong>Situação:</strong> não chegou nenhum pedido novo, nenhum recebimento, e o inventário do dia ainda não começou.<br/><strong>O que o sistema faz:</strong> mostra os seis cartões esmaecidos, todos com "Tudo em dia".<br/><strong>João vê:</strong> visualmente óbvio que não há trabalho operacional — vai procurar o coordenador pra organização do galpão.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Inventário grande com sete operadores na party</div>
+  <div class="scenario-flow"><strong>Situação:</strong> cycle count cobrindo um corredor inteiro, sete pessoas na sessão.<br/><strong>O que o sistema faz:</strong> no cartão de Inventário, exibe os cinco primeiros avatares e um chip "+2" do lado.<br/><strong>João vê:</strong> entende imediatamente que a fila de inventário já está bem coberta — não tem necessidade de entrar agora.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Servidor cai brevemente enquanto João olha o quadro</div>
+  <div class="scenario-flow"><strong>Situação:</strong> conexão com o servidor perde por 20 segundos.<br/><strong>O que o sistema faz:</strong> mantém os últimos números na tela e troca o indicador "● ao vivo" por "○ reconectando" em cinza. Quando volta, atualiza sozinho.<br/><strong>João vê:</strong> os contadores não somem nem zeram; ele entende que pode estar olhando uma foto de poucos segundos atrás, não uma tela vazia.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Operador clica num cartão vazio por curiosidade</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João clica no cartão "Aprovação" mesmo com contador zero.<br/><strong>O que o sistema faz:</strong> leva pra tela de pedidos pendentes normalmente, que mostra "Nenhum pedido pendente de aprovação".<br/><strong>João vê:</strong> nenhum erro, nenhum aviso especial — só a tela limpa. Pode voltar pra home e escolher outra fila.</div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Inventário / contagem — revisão</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#f4f4f5;color:#1b1b1b;
+    font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .page{max-width:780px;margin:0 auto;padding:52px 22px 100px}
+  h1{font-size:25px;line-height:1.25;margin:0 0 6px}
+  .lead{color:#666;margin:0 0 4px;font-size:16px}
+  .meta{color:#999;margin:0;font-size:13.5px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:46px 0 16px}
+
+  .card{background:#fff;border:1px solid #e6e6e6;border-radius:14px;padding:24px;margin-bottom:18px}
+  .head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:6px}
+  .head h3{font-size:18px;margin:0;line-height:1.3}
+  .sit{color:#666;font-size:15px;margin:2px 0 0}
+  .chip{font-size:12.5px;font-weight:600;border-radius:999px;padding:4px 12px;border:1px solid;white-space:nowrap;flex:0 0 auto}
+  .chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+  .chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+  .chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+
+  .screen{background:#fafafa;border:1px solid #e9e9e9;border-radius:10px;padding:12px 14px;font-size:14.5px;margin:18px 0 4px}
+  .line{display:flex;align-items:center;gap:10px;padding:7px 0}
+  .line + .line{border-top:1px dashed #e5e5e5}
+  .qty{margin-left:auto;font-weight:700;font-size:13px;color:#444}
+  .muted{color:#8a8a8a}
+  .arrowdown{color:#bbb;text-align:center;font-size:13px;margin:5px 0}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+  .box{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:13px 15px;font-size:15px}
+  .box .lab{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:5px}
+  .box.good{background:#f5faf6;border-color:#dcedde}
+  .box.ask{background:#fdfaf3;border-color:#f0e6cf}
+  @media(max-width:600px){.grid{grid-template-columns:1fr}}
+
+  .foot{margin-top:15px;font-size:14px;color:#555}
+  .foot.why{color:#888}
+
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:7px;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:16px 18px}
+  .step{border:1px solid #cfcfcf;border-radius:6px;padding:5px 11px;font-size:13.5px;white-space:nowrap}
+  .step.here{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+  .sep{color:#bbb}
+  .endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Inventário / contagem — revisão</h1>
+  <p class="lead">Contar o que tem de verdade na prateleira e acertar o saldo do sistema.</p>
+  <p class="meta">Lido do código real em 02/06/2026 · rascunho pra revisar</p>
+
+  <h2>O caminho da contagem</h2>
+  <div class="flow">
+    <span class="step">Criar sessão</span><span class="sep">→</span>
+    <span class="step">Contar (bipar)</span><span class="sep">→</span>
+    <span class="step">Encerrar (ver diferenças)</span><span class="sep">→</span>
+    <span class="step">Resolver diferenças</span><span class="sep">→</span>
+    <span class="step">Aprovar</span><span class="sep">→</span>
+    <span class="step here">Aplicar (muda o saldo)</span>
+  </div>
+  <p class="foot why" style="margin-top:10px">O saldo do sistema só muda no fim, no <b>Aplicar</b>. Até lá, contar é só registrar — nada mexe no estoque.</p>
+
+  <!-- ===================== O QUE JÁ FUNCIONA ===================== -->
+  <h2>O que já funciona (e funciona bem)</h2>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>1. Dois operadores não pegam a mesma prateleira</h3>
+        <p class="sit">Três pessoas contando o mesmo galpão ao mesmo tempo.</p>
+      </div>
+      <span class="chip ok">Está certo</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>Cada um clica "pegar próxima" e o sistema trava uma prateleira pra cada um — e ainda manda cada um pra um corredor diferente, longe dos outros. Se um pegou a A-01, ninguém mais pega a A-01.</div>
+      <div class="box good"><div class="lab">Como deveria ser</div>Isso. Ninguém conta a mesma coisa duas vezes nem se esbarra.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>2. Contar NÃO mexe no saldo na hora</h3>
+        <p class="sit">Você bipa e conta uma prateleira inteira.</p>
+      </div>
+      <span class="chip ok">Está certo</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>A contagem fica guardada, mas o saldo do sistema <b>não muda</b>. Ele só muda no fim, depois de você ver as diferenças, resolver uma a uma, aprovar e clicar "Aplicar". São 5 portões até mexer no estoque.</div>
+      <div class="box good"><div class="lab">Como deveria ser</div>Isso — contar é só registrar a realidade. O saldo só muda quando você confirma de propósito.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>3. Contar enquanto um pedido pega da mesma prateleira</h3>
+        <p class="sit">Você conta a prateleira (tinha 10) e, no meio, um pedido leva 2 de lá.</p>
+      </div>
+      <span class="chip ok">Está certo</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>O sistema compara sua contagem com o saldo <b>no momento em que você contou</b>, não com o de agora. Então ele <b>não</b> acusa uma "falta" falsa de 2.</div>
+      <div class="box good"><div class="lab">Como deveria ser</div>Isso — é um cuidado esperto e difícil de acertar. Tem teste (cenário 06).</div>
+    </div>
+    <p class="foot why">Ressalva: se a movimentação entra entre o "contar" e o "encerrar", ainda tem uma fresta — o recomendado é encerrar logo depois de contar.</p>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>4. Achado surpresa, desfazer, e aplicar sem dobrar</h3>
+        <p class="sit">Coisas que dão certo no básico.</p>
+      </div>
+      <span class="chip ok">Está certo</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>Item que está na prateleira mas não no sistema vira "ganho". Clicar "Aplicar" duas vezes não conta dobrado. E dá pra <b>desfazer</b> (estornar) uma sessão já aplicada, com motivo.</div>
+      <div class="box good"><div class="lab">Como deveria ser</div>Isso. Tudo com teste.</div>
+    </div>
+  </div>
+
+  <!-- ===================== O QUE DECIDIR ===================== -->
+  <h2>O que falta você decidir</h2>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>A. Contou MENOS, mas aquele estoque estava reservado pra um pedido</h3>
+        <p class="sit">A prateleira tinha 10 no sistema, e 5 estavam reservadas pra um pedido de cliente. Você conta e só acha 2 de verdade.</p>
+      </div>
+      <span class="chip fix">Conflito real</span>
+    </div>
+    <div class="screen">
+      <div class="line">Sistema: <span class="muted">saldo 10 · 5 reservadas pra um pedido</span> <span class="qty">10</span></div>
+      <div class="arrowdown">↓ você conta e acha só 2</div>
+      <div class="line">Aplicar a perda de 8… <span class="muted">mas 5 estão reservadas</span> <span class="qty">⛔ trava</span></div>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>Quando você clica "Aplicar", o sistema <b>dá erro e não aplica</b> — ele não consegue baixar o saldo pra 2 porque tem 5 reservadas. Você teria que resolver na mão. E o pedido do cliente continua "prometido" com estoque que <b>não existe na prateleira</b>.</div>
+      <div class="box ask"><div class="lab">O que decidir</div>O que deveria acontecer? O pedido perde a reserva e vai pra compras? Avisa você na hora? Conta a perda e deixa o pedido "furado" pra você resolver? — Isso liga direto com a política de SLA que a gente decidiu.</div>
+    </div>
+    <p class="foot why">Por que importa: é o ponto onde o inventário encosta no pedido do cliente. Hoje ele simplesmente trava — ninguém decidiu o que fazer.</p>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>B. Diferença pequena é aprovada sozinha</h3>
+        <p class="sit">Contou 99, o sistema tinha 100 (1% de diferença, abaixo da tolerância de 2%).</p>
+      </div>
+      <span class="chip dec">Você decide</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>O sistema aprova essa diferença <b>sozinho</b>, sem ninguém olhar. Só as grandes (acima de 2%, ou acima de R$1.000) é que pedem sua aprovação.</div>
+      <div class="box ask"><div class="lab">O que decidir</div>Tá certo aprovar perda pequena no automático? Perda pequena que se repete vira perda grande sem ninguém ver. Os limites (2% / R$1.000) estão bons?</div>
+    </div>
+    <p class="foot why">Por que importa: é onde some estoque "no aceitável" sem virar um alerta.</p>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>C. Contar "às cegas" ou vendo o que o sistema espera</h3>
+        <p class="sit">Ao criar a sessão, dá pra escolher: operador vê o esperado, ou conta sem saber.</p>
+      </div>
+      <span class="chip dec">Você decide</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>Os dois modos existem. No modo "aberto", o operador vê "esperado 10" do lado enquanto conta.</div>
+      <div class="box ask"><div class="lab">O que decidir</div>Ver o esperado faz o operador <b>confirmar o número do sistema</b> em vez de contar de verdade? Quando usar cego (mais rigoroso) e quando usar aberto (mais rápido, mas vicia)?</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>D. "Achei diferente" durante a separação</h3>
+        <p class="sit">Fora do inventário: o operador, separando um pedido, acha uma quantidade diferente da que o sistema diz.</p>
+      </div>
+      <span class="chip dec">Você decide</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>Existe um teste pra isso, mas <b>o que deveria acontecer não está claro</b> no código nem escrito em lugar nenhum. (Eu não confirmei o comportamento real — está no escuro.)</div>
+      <div class="box ask"><div class="lab">O que decidir</div>Achar diferente no meio da separação deveria: virar um ajuste na hora? abrir uma diferença pro inventário? só avisar o supervisor?</div>
+    </div>
+    <p class="foot why">Por que importa: é a contagem encontrando a separação — outro ponto onde dois módulos se tocam.</p>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <div>
+        <h3>E. Fechar a contagem com operador ainda contando</h3>
+        <p class="sit">O supervisor clica "encerrar" mas ainda tem gente bipando.</p>
+      </div>
+      <span class="chip dec">Você decide</span>
+    </div>
+    <div class="grid">
+      <div class="box"><div class="lab">Como é hoje</div>O sistema avisa que tem gente contando, mas dá pra <b>forçar</b>. Se forçar, quem estava contando vira "fantasma" e o que ele bipar depois <b>se perde</b> (até um cleanup automático de 30 min).</div>
+      <div class="box ask"><div class="lab">O que decidir</div>Forçar deveria descartar de vez (e avisar o operador na tela dele "a sessão fechou"), ou nunca deixar fechar com gente contando?</div>
+    </div>
+  </div>
+
+  <!-- ===================== O QUE FAZER ===================== -->
+  <h2>O que fazer com isso</h2>
+  <div class="card">
+    <p class="foot" style="margin:0">O inventário está num bom estado — o miolo (contar sem colisão, saldo só muda no fim, reconciliação temporal, desfazer) funciona e tem teste. O que precisa de você são as <b>5 decisões</b> acima, e a <b>A</b> é a mais séria: é um conflito real entre o inventário e o pedido do cliente, e hoje ela só <b>trava</b>.</p>
+  </div>
+
+  <p class="endnote">
+    Tudo em "Como é hoje" foi tirado do código (3 leituras + verificação). O que eu não confirmei está dito na cara (item D). As "regras" das decisões viram suas respostas na entrevista.
+  </p>
+
+</div>
+</body>
+</html>

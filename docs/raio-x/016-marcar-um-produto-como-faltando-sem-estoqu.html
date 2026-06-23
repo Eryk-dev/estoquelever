@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Marcar um produto como faltando / sem estoque — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Separação de pedidos</p>
+<h1>Marcar um produto como faltando / sem estoque</h1><p class="lead">Quando o operador está separando um pedido, descobre que não tem mais daquele produto na prateleira e precisa avisar o sistema. O sistema então tira o pedido daqui (manda pro outro galpão ou pra comprar mais).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">1</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Mostra qual quantidade já foi pega (se pegou 3 de 5, sabe que faltam 2)</span></li><li><span class="dot">✓</span><span>Procura em outras prateleiras do mesmo galpão antes de desistir</span></li><li><span class="dot">✓</span><span>Mostra uma lista de outros galpões que têm aquele produto em estoque</span></li><li><span class="dot">✓</span><span>Desfaz o movimento que já tinha feito (devolve ao estoque a quantidade que estava apartada)</span></li></ul></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D147</span>Pode um pedido criar dois pedidos de compra do mesmo produto ao mesmo tempo?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Dois operadores que estão organizando a separação olham pra um produto que acabou ao mesmo tempo. Os dois clicam em 'Criar compra' no mesmo instante.</p><p class="ln"><b>Hoje o sistema:</b> O sistema tenta evitar que isso aconteça, mas só faz uma primeira verificação. Se dois pedidos chegam muito rápido um após o outro, o sistema pode criar dois pedidos de compra separados para o mesmo produto do mesmo fornecedor — cada um com metade da quantidade que precisa.</p><p class="ln why"><b>Por que importa:</b> Se for criado um pedido duplicado, você acaba pedindo mais do que deveria pro fornecedor e gasta dinheiro desnecessário.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Adicionar um botão que só volta ao normal depois que o sistema confirma o pedido (impede o duplo clique)</b> — Simples e rápido de fazer. Reduz chance de duplo clique humano, mas não elimina 100% se dois operadores em máquinas diferentes clicarem.</span></li><li class=""><span class="ck"></span><span><b>Configurar o banco de dados pra permitir apenas um pedido por (fornecedor + galpão + status aguardando) — trava a segunda tentativa</b> — Mais seguro. Sistema recusa a segunda ordem automaticamente. Precisa mudar a base de dados.</span></li><li class=""><span class="ck"></span><span><b>Adicionar as duas proteções juntas</b> — Mais robusto. Evita na interface e garante na base de dados.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer as duas coisas. O botão desativado é fácil e rápido. Adicionar a proteção no banco é segurança extra que vale muito pra evitar sobrecompra.</p></div><p class="refp">src/app/api/wms/separacao/produto-esgotado/route.ts:425-465</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D148</span>Se um produto volta a ter quantidade enquanto estou mandando pra outro galpão, o sistema cancela a ação?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um operador abre um pedido e vê que um produto acabou em uma prateleira. Começa o processo de mandar esse pedido pra outro galpão pra separar de lá. Ao mesmo tempo, outro operador recebe mercadoria nova desse mesmo produto e coloca na prateleira original. A primeira ação continua ou para?</p><p class="ln"><b>Hoje o sistema:</b> O sistema continua o processo de enviar pra outro galpão sem verificar de novo se o produto realmente acabou. Assume que a decisão do operador é definitiva.</p><p class="ln why"><b>Por que importa:</b> Se o produto voltou a ter estoque onde estava, enviar pra outro galpão pode ser desnecessário, aumentando o trabalho da operação e o custo de movimentação.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Fazer o sistema checar de novo se realmente acabou, antes de enviar pro outro galpão. Se tiver estoque, cancela a ação com aviso.</b> — Evita movimentações desnecessárias. Mas operador precisa reabrir o pedido e escolher de novo o que fazer.</span></li><li class=""><span class="ck"></span><span><b>Deixar o sistema enviar mesmo que o produto tenha voltado (decisão do operador é final)</b> — Rápido e respeitosa decisão da operação. Pode gerar movimentações desnecessárias se o produto realmente voltou em quantidade.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer o sistema checar de novo. Se tiver estoque, avisar o operador que o produto voltou e perguntar se ainda quer enviar pra outro galpão. Assim a operação fica mais inteligente e reduz trabalho.</p></div><p class="refp">src/app/api/wms/separacao/produto-esgotado/route.ts:71-247</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D149</span>Se deixei um produto marcado como 'aguardando compra' há dias, posso tentar marcar de novo como esgotado?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> No dia 1º de junho um produto esgota e você manda um pedido de compra (fica esperando receber). No dia 10, você abre o pedido de novo pra separar (talvez esqueceu que já tinha marcado antes). Tenta marcar como esgotado de novo.</p><p class="ln"><b>Hoje o sistema:</b> O sistema deixa fazer. Se você marcar como esgotado de novo, ele cria um novo pedido de compra separado, porque não reconhece que já existe uma compra aguardando por esse produto.</p><p class="ln why"><b>Por que importa:</b> Você acaba pedindo duas vezes o mesmo produto. Quando chegarem as duas compras, você fica com estoque dobrado e gasta dinheiro desnecessário.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear na tela: se o produto já está aguardando compra, não deixar marcar como esgotado de novo</b> — Evita a duplicação. Operador vê aviso de que já existe compra aberta.</span></li><li class=""><span class="ck"></span><span><b>Permitir marcar de novo, mas se já existe compra, aumentar a quantidade naquela compra (não criar uma nova)</b> — Mais flexível. Sistema é inteligente e ajusta a quantidade automaticamente.</span></li><li class=""><span class="ck"></span><span><b>Permitir como está hoje (criar ordem separada) mas avisar com alerta bem óbvio</b> — Rápido de implementar. Aviso depende do operador prestar atenção.</span></li></ul><p class="recnote"><b>Recomendo:</b> Bloquear na tela. Se tiver compra aberta para esse produto, mostrar que já existe e não deixar criar outra. Evita duplicação de pedidos.</p></div><p class="refp">src/app/api/wms/separacao/produto-esgotado/route.ts:95-101</p></div><h2>Ainda a conferir · 1</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Quando o sistema falha no meio de reverter movimentos de estoque, alguns dados ficam incompletos (alguns movimentos foram revertidos mas os campos do pedido não foram atualizados)</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

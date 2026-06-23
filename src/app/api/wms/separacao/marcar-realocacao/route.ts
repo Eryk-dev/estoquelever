@@ -129,6 +129,12 @@ export async function POST(request: NextRequest) {
       tipo: "S",
       qty: realoc.quantidade,
       origem_tipo: "nf_venda",
+      // origem_id=pedido: a S de realocação grava seu mov_saida_id em
+      // siso_pedido_item_realocacoes (não em siso_pedido_itens), então o
+      // reverter-cutover só a acha pelo Caminho 1 (origem_id+nf_venda). Sem
+      // isso, um retrocesso (desfazer-bip) deixaria esta S sem estorno =
+      // estoque fantasma a menos. Single-realoc/single-pedido → tag seguro.
+      origem_id: String(pedido.id),
       origem_detalhes: {
         pedido_id_tiny: pedido.id,
         pedido_numero: pedido.numero,

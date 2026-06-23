@@ -44,7 +44,8 @@ export type TrocaStatus =
   | "aprovada"
   | "rejeitada"
   | "expirada"
-  | "cancelada";
+  | "cancelada"
+  | "desfeita";
 
 export type TrocaOrigem = "roteamento" | "separacao" | "compras" | "painel";
 
@@ -79,7 +80,9 @@ export class TrocaError extends Error {
       | "PEDIDO_NAO_ENCONTRADO"
       | "PEDIDO_ESTADO_INVALIDO"
       | "ITEM_JA_SEPARADO"
+      | "ITEM_JA_PICADO"
       | "TROCA_JA_APLICADA"
+      | "TROCA_NAO_APLICADA"
       | "TROCA_PENDENTE_EXISTE"
       | "SUBSTITUTO_NAO_ENCONTRADO"
       | "SUBSTITUTO_IGUAL_VENDIDO"
@@ -724,6 +727,101 @@ export async function rejeitarTroca(args: {
   });
 
   return troca as TrocaEquivalencia;
+}
+
+/**
+ * Desfaz uma troca APLICADA (item com produto_wms_substituto_id setado) num
+ * pedido reaberto e NÃO-picado — sai do beco-sem-saída (BUG-A). Libera a R
+ * reserva_pedido viva do substituto, limpa os 2 campos do item (volta a
+ * resolver pro original) e fecha a troca como 'desfeita', tudo-ou-nada via RPC.
+ * Depois o operador re-roteia o original OU solicita nova troca (3º SKU) — o
+ * guard de solicitarTroca volta a passar (substituto=NULL).
+ */
+export async function desfazerTrocaAplicada(args: {
+  trocaId: string;
+  usuarioId: string;
+  usuarioNome?: string | null;
+}): Promise<{
+  ok: true;
+  reservasLiberadas: number;
+  pedidoId: string;
+  pedidoItemId: number;
+}> {
+  const sb = createServiceClient();
+  const source = "wms.trocas-equivalencia";
+
+  const { data: troca } = await sb
+    .from("siso_trocas_equivalencia")
+    .select("id, pedido_id, pedido_item_id, status, sku_vendido, sku_substituto")
+    .eq("id", args.trocaId)
+    .maybeSingle();
+  if (!troca) throw new TrocaError("TROCA_NAO_ENCONTRADA", "troca não encontrada");
+  if (troca.status !== "aprovada") {
+    throw new TrocaError(
+      "TROCA_NAO_APLICADA",
+      `troca em status '${troca.status}' — só dá pra desfazer uma troca aplicada (aprovada)`,
+    );
+  }
+
+  const { data: rpcResult, error: rpcErr } = await sb.rpc(
+    "wms_desfazer_troca_aplicada_atomico",
+    {
+      p_pedido_item_id: troca.pedido_item_id,
+      p_usuario_id: args.usuarioId,
+    },
+  );
+  if (rpcErr) {
+    if (rpcErr.message.includes("TROCA_NAO_APLICADA")) {
+      throw new TrocaError("TROCA_NAO_APLICADA", "o item não tem troca aplicada");
+    }
+    if (rpcErr.message.includes("ITEM_JA_PICADO")) {
+      throw new TrocaError(
+        "ITEM_JA_PICADO",
+        "item já picado/marcado — reabra e estorne o pick antes de desfazer a troca",
+      );
+    }
+    if (rpcErr.message.includes("PEDIDO_ESTADO_INVALIDO")) {
+      throw new TrocaError(
+        "PEDIDO_ESTADO_INVALIDO",
+        "pedido não está reaberto/em separação — desfazer exige o item reaberto e não-picado",
+      );
+    }
+    if (rpcErr.message.includes("ITEM_NAO_ENCONTRADO")) {
+      throw new TrocaError("ITEM_NAO_ENCONTRADO", "item do pedido não encontrado");
+    }
+    throw new Error(`wms_desfazer_troca_aplicada_atomico falhou: ${rpcErr.message}`);
+  }
+
+  const reservasLiberadas = Number(
+    (rpcResult as { reservas_liberadas?: number } | null)?.reservas_liberadas ?? 0,
+  );
+
+  logger.info(source, "troca aplicada desfeita", {
+    troca_id: args.trocaId,
+    pedido_id: troca.pedido_id,
+    pedido_item_id: troca.pedido_item_id,
+    reservas_liberadas: reservasLiberadas,
+  });
+
+  await registrarEvento({
+    pedidoId: String(troca.pedido_id),
+    evento: "troca_desfeita",
+    usuarioId: args.usuarioId,
+    usuarioNome: args.usuarioNome ?? undefined,
+    detalhes: {
+      troca_id: args.trocaId,
+      sku_vendido: troca.sku_vendido,
+      sku_substituto: troca.sku_substituto,
+      reservas_liberadas: reservasLiberadas,
+    },
+  });
+
+  return {
+    ok: true,
+    reservasLiberadas,
+    pedidoId: String(troca.pedido_id),
+    pedidoItemId: Number(troca.pedido_item_id),
+  };
 }
 
 /**

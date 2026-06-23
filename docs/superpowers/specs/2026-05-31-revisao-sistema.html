@@ -1,0 +1,1935 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Revisão do Sistema · SISO / WMS</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #111725;
+    --panel2: #0e1420;
+    --ink: #e6ecf5;
+    --ink-dim: #9aa7bd;
+    --line: #243049;
+    --accent: #4f80c9;
+    --accent2: #7d5bd3;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Outfit", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+    padding: 0 0 120px;
+  }
+  header.top {
+    padding: 40px 32px 24px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #0e1626 0%, var(--bg) 100%);
+  }
+  header.top h1 {
+    margin: 0 0 8px;
+    font-size: 30px;
+    letter-spacing: -0.5px;
+  }
+  header.top p.sub {
+    margin: 0;
+    color: var(--ink-dim);
+    max-width: 920px;
+    font-size: 15px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .legenda {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 22px 0 6px;
+    align-items: center;
+  }
+  .legenda .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink-dim);
+  }
+  .legenda .pill .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    display: inline-block; border: 1px solid rgba(255,255,255,.18);
+  }
+  .dot-feliz { background: #2f8f4e; }
+  .dot-borda { background: #caa53a; }
+  .dot-erro { background: #d35b5b; }
+  .dot-dec { background: #4f80c9; }
+  .dot-n { background: #566075; }
+  .dot-div { background: #7d5bd3; }
+  section.mapa {
+    margin: 28px 0 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+  }
+  section.mapa h2 {
+    margin: 4px 4px 14px;
+    font-size: 18px;
+  }
+  section.modulos { margin-top: 18px; }
+  section.modulo {
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 22px 22px 8px;
+    margin: 26px 0;
+    scroll-margin-top: 20px;
+  }
+  section.modulo .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 12px;
+    margin-bottom: 6px;
+  }
+  section.modulo .head h2 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: -0.3px;
+  }
+  section.modulo .head a.back {
+    flex: 0 0 auto;
+    font-size: 13px;
+    color: var(--accent);
+    text-decoration: none;
+    border: 1px solid var(--line);
+    padding: 5px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  section.modulo .head a.back:hover { background: var(--panel); }
+  section.modulo > p.sub {
+    color: var(--ink-dim);
+    margin: 8px 2px 18px;
+    font-size: 14.5px;
+    max-width: 940px;
+  }
+  section.diag {
+    border-top: 1px dashed var(--line);
+    padding: 18px 0 6px;
+  }
+  section.diag:first-of-type { border-top: none; }
+  section.diag h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+  }
+  section.diag p.leg {
+    color: var(--ink-dim);
+    margin: 0 0 14px;
+    font-size: 13.5px;
+    max-width: 940px;
+  }
+  .mermaid {
+    background: #0a0e16;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    overflow-x: auto;
+  }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* ===== Mapa interativo: pan/zoom infinito + foco por módulo ===== */
+.mapa{ position:relative; }
+.map-toolbar{ position:absolute; top:14px; right:14px; z-index:6; display:flex; gap:6px; align-items:center; }
+.map-toolbar button{ min-width:34px; height:34px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center;
+  background:#13243f; color:#dbe9ff; border:1px solid #2c3f5e; border-radius:9px; cursor:pointer;
+  font:600 13.5px/1 Outfit,system-ui,sans-serif; }
+.map-toolbar button:hover{ background:#1a3050; border-color:#4f80c9; }
+.map-canvas{ position:relative; height:clamp(440px,76vh,880px); margin-top:4px;
+  background:#0a0e16; border:1px solid var(--line); border-radius:12px; overflow:hidden;
+  cursor:grab; touch-action:none; }
+.map-canvas.grabbing{ cursor:grabbing; }
+.mapa .map-canvas .mermaid{ width:100%; height:100%; background:transparent; border:0; padding:0; overflow:visible; cursor:inherit; text-align:left; }
+.map-canvas svg{ width:100% !important; height:100% !important; max-width:none !important; display:block; }
+.map-hint{ text-align:center; color:#566075; font:500 11.5px Outfit,system-ui,sans-serif; margin-top:9px; }
+
+/* foco: passar o mouse num módulo destaca ele + as conexões diretas, esmaece o resto */
+.map-canvas svg .node,
+.map-canvas svg .edgePaths .flowchart-link,
+.map-canvas svg .edgeLabels .edgeLabel{ transition:opacity .13s ease; }
+.map-canvas svg.focus-on .node,
+.map-canvas svg.focus-on .edgePaths .flowchart-link,
+.map-canvas svg.focus-on .edgeLabels .edgeLabel{ opacity:.07; }
+.map-canvas svg.focus-on .is-hot{ opacity:1; }
+.map-canvas svg .flowchart-link.is-div-edge{ stroke:#7d5bd3 !important; }
+
+/* painel de conexões (aparece ao focar um módulo) */
+.map-focus{ position:absolute; top:14px; left:14px; z-index:5; width:min(340px,calc(100% - 28px));
+  background:rgba(13,19,32,.95); border:1px solid #2c3f5e; border-radius:11px; padding:12px 13px;
+  box-shadow:0 10px 30px rgba(0,0,0,.45); pointer-events:none; backdrop-filter:blur(2px); }
+.map-focus[hidden]{ display:none; }
+.map-focus .mf-title{ font:700 14px Outfit,system-ui,sans-serif; color:#e7ecf3; margin-bottom:9px; }
+.map-focus .mf-row{ display:flex; gap:6px; align-items:baseline; font-size:12px; color:#aeb9cc; padding:3px 0; line-height:1.35; }
+.map-focus .mf-row .d{ color:#4f80c9; font-weight:700; flex:0 0 auto; }
+.map-focus .mf-row .nm{ color:#dbe9ff; font-weight:600; flex:0 0 auto; }
+.map-focus .mf-row .lb{ color:#7e8aa0; }
+.map-focus .mf-row.div .d,.map-focus .mf-row.div .nm{ color:#b58cf0; }
+.map-focus .mf-row.div .lb{ color:#9a7fc8; }
+.map-focus .mf-more{ margin-top:8px; font-size:11px; color:#566075; }
+
+/* tela cheia */
+.mapa:fullscreen{ background:var(--bg); padding:16px 22px; display:flex; flex-direction:column; }
+.mapa:fullscreen h2{ flex:0 0 auto; }
+.mapa:fullscreen .map-canvas{ flex:1 1 auto; height:auto; }
+.mapa:fullscreen .map-hint{ flex:0 0 auto; }
+.mapa:-webkit-full-screen{ background:var(--bg); padding:16px 22px; display:flex; flex-direction:column; }
+.mapa:-webkit-full-screen .map-canvas{ flex:1 1 auto; height:auto; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>Revisão do Sistema · SISO / WMS</h1>
+    <p class="sub">Mapa de todos os módulos e como uma venda/estoque atravessa o sistema. Clique num módulo no mapa para pular pra seção dele. Roxo tracejado ⚠ = divergência ou gambiarra encontrada no código real.</p>
+    <div class="legenda">
+      <span class="pill"><span class="dot dot-feliz"></span>caminho feliz</span>
+      <span class="pill"><span class="dot dot-borda"></span>borda / espera</span>
+      <span class="pill"><span class="dot dot-erro"></span>erro / bloqueio</span>
+      <span class="pill"><span class="dot dot-dec"></span>decisão</span>
+      <span class="pill"><span class="dot dot-n"></span>passo neutro</span>
+      <span class="pill"><span class="dot dot-div"></span>⚠ divergência / gambiarra</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+<section class="mapa" id="mapa">
+  <h2>🗺️ Mapa do Sistema</h2>
+  <div class="map-toolbar" id="map-toolbar">
+    <button type="button" data-a="out" title="Diminuir zoom">−</button>
+    <button type="button" data-a="in" title="Aumentar zoom">+</button>
+    <button type="button" data-a="fit" title="Ajustar à tela">⤢ Ajustar</button>
+    <button type="button" data-a="full" title="Tela cheia">⛶ Tela cheia</button>
+  </div>
+  <div class="map-canvas" id="map-canvas">
+  <div class="map-focus" id="map-focus" hidden></div>
+  <pre class="mermaid">
+flowchart TD
+entrada-aprovacao["📥 Entrada & Aprovação"]:::mod
+vendas["🛒 Vendas Diretas"]:::mod
+separacao["📦 Separação & Expedição"]:::mod
+compras["🧾 Compras (OC)"]:::mod
+recebimento-guarda["🚚 Recebimento & Guarda"]:::mod
+estoque-ledger["📒 Estoque & Ledger"]:::mod
+inventario["🔢 Inventário"]:::mod
+devolucoes["↩️ Devoluções"]:::mod
+transferencias-replenishment["🔁 Transferências & Replenishment"]:::mod
+ajustes-retroativos["🔧 Ajustes & Retroativos"]:::mod
+cross["🔗 Cross Catálogo"]:::mod
+home-quadro["🏠 Home & Quadro"]:::mod
+insights-cobertura["💡 Insights & Cobertura"]:::mod
+relatorios["📊 Relatórios por Empresa"]:::mod
+cadastros-conexoes["⚙️ Cadastros & Conexões"]:::mod
+entrada-aprovacao -->|"Novo pedido entra no quadro"| home-quadro
+entrada-aprovacao -->|"Pedido aprovado vai pra fila de picking"| separacao
+entrada-aprovacao -->|"Pedido em OC gera ordem de compra"| compras
+entrada-aprovacao -->|"Reservas no ledger 30 dias"| estoque-ledger
+entrada-aprovacao -->|"Lê saldo vivo para roteamento"| inventario
+entrada-aprovacao -->|"Transferência entre galpões"| transferencias-replenishment
+entrada-aprovacao -->|"Detecta NF de devolução via webhook"| devolucoes
+vendas -->|"Pedido vai pra fila de wave picking"| separacao
+vendas -->|"Gera saída S em baixa direta"| estoque-ledger
+vendas -->|"Reserva atomicamente TTL 30d"| transferencias-replenishment
+vendas -->|"Sem saldo cai em aguardando compra"| entrada-aprovacao
+separacao -->|"Recebe pedidos aguardando separação"| entrada-aprovacao
+separacao -->|"Encaminha itens sem cobertura pra compra"| compras
+separacao -->|"Registra saída S e ajustes loc zerou"| estoque-ledger
+separacao -->|"Busca saldo em recebimento pra realocação"| recebimento-guarda
+separacao -->|"Encaminha pedido pra outro galpão"| transferencias-replenishment
+separacao -->|"Métricas de separação por operador"| relatorios
+separacao -->|"Consulta saldo disponível em tempo real"| inventario
+compras -->|"Pedido origina de entrada e aprovação"| entrada-aprovacao
+compras -->|"Liberado flui pra separação após receber tudo"| separacao
+compras -->|"Entrada na loc recebimento ao receber NF"| estoque-ledger
+compras -->|"Consulta saldo live pra necessidade líquida"| inventario
+compras -->|"Prepara embalagem direta quando OC completa"| cross
+compras -->|"Resolve galpão da OC e roteamento"| transferencias-replenishment
+recebimento-guarda -->|"Pedido aguarda estoque guardado"| vendas
+recebimento-guarda -->|"Estoque já na localização picking"| separacao
+recebimento-guarda -->|"Cria entrada mais saída replenishment"| estoque-ledger
+recebimento-guarda -->|"NF de chegada aguarda confirmação de dock"| entrada-aprovacao
+recebimento-guarda -->|"Pendência cross-dock vai direto pra PACKING"| cross
+recebimento-guarda -. "⚠ Cancelamento cria débito ou devolução fornecedor" .-> ajustes-retroativos
+recebimento-guarda -->|"Impressão etiqueta com SKU e localização"| relatorios
+recebimento-guarda -->|"Alerta saldo órfão quando pendência cancelada"| home-quadro
+estoque-ledger -->|"Aprova pedido e reserva estoque"| entrada-aprovacao
+estoque-ledger -->|"Venda manual mov saída ou fila"| vendas
+estoque-ledger -->|"Processa saída e valida localizações"| separacao
+estoque-ledger -->|"Recebe NF cria entrada e custos"| compras
+estoque-ledger -->|"Cria pendência de guarda do dock à loc"| recebimento-guarda
+estoque-ledger -->|"Classifica devolução entrada ou saída"| devolucoes
+estoque-ledger -->|"Replenishment intra-galpão par S+E"| transferencias-replenishment
+estoque-ledger -->|"Ajuste inventário retroativo com categoria"| ajustes-retroativos
+estoque-ledger -->|"Saldo 3D pra dias de cobertura"| insights-cobertura
+inventario -->|"Gera movimentações de ganho ou perda"| estoque-ledger
+inventario -->|"Identifica locs sem contagem pra reposição"| compras
+inventario -->|"Bloqueia localizações durante inventário"| separacao
+inventario -->|"Exporta métricas de sessões e divergências"| relatorios
+inventario -->|"Alimenta histórico de contagens por SKU"| insights-cobertura
+inventario -->|"Status ao vivo da sessão em andamento"| home-quadro
+devolucoes -->|"Webhook NF entrada dispara classificação"| recebimento-guarda
+devolucoes -->|"Classifica gera entrada saída transferência"| estoque-ledger
+devolucoes -. "⚠ Classe B e C geram transferência pra quarentena" .-> transferencias-replenishment
+devolucoes -. "⚠ Classe C sinaliza garantia RMA" .-> compras
+devolucoes -. "⚠ Quarentena entra nas sugestões de contagem" .-> inventario
+devolucoes -->|"Relatórios mostram A/B/C/D em 30d"| insights-cobertura
+devolucoes -. "⚠ Histórico de custo médio movs por empresa" .-> relatorios
+devolucoes -. "⚠ Pendentes não aparecem no quadro" .-> home-quadro
+transferencias-replenishment -->|"Picking tira saldo via transferência"| separacao
+transferencias-replenishment -->|"Recebimento usa replenishment na alocação"| recebimento-guarda
+transferencias-replenishment -->|"Todas operações registram movimentações"| estoque-ledger
+transferencias-replenishment -->|"Card mostra transferências em trânsito"| home-quadro
+ajustes-retroativos -->|"Cria ou estorna movimentos"| estoque-ledger
+ajustes-retroativos -->|"Retroativo vira pendência de reconciliação"| entrada-aprovacao
+ajustes-retroativos -->|"Reconcilia retroativo com mov de compra"| compras
+ajustes-retroativos -. "⚠ Retroativo nasce em receber emergência" .-> recebimento-guarda
+ajustes-retroativos -->|"Categoria alimenta apuração de perdas"| inventario
+ajustes-retroativos -->|"Motivo e categoria visível em auditoria"| relatorios
+cross -->|"Consulta estoque por galpão no detalhe"| estoque-ledger
+cross -->|"Cross-popover em pedidos pra ver alternativas"| vendas
+cross -->|"Compatibilidade veicular busca por aplicação"| inventario
+cross -->|"Breadcrumb cross via modal portado"| home-quadro
+home-quadro -->|"Aprovação abre lista de pendentes"| entrada-aprovacao
+home-quadro -->|"Separação ou embalagem abre tela"| separacao
+home-quadro -->|"Card guarda abre detalhe do item"| recebimento-guarda
+home-quadro -->|"Inventário ou ciclo abre sessões"| inventario
+home-quadro -->|"Compras ou fornecedor abre módulo"| compras
+home-quadro -->|"Card devoluções abre fila de classificação"| devolucoes
+home-quadro -->|"Card transferências abre em trânsito"| transferencias-replenishment
+home-quadro -->|"Cards retroativos e saldo órfão abrem movimentações"| estoque-ledger
+insights-cobertura -->|"Lê saldos via cobertura e quadrante ABC"| estoque-ledger
+insights-cobertura -->|"Ranking operador e etapa gargalo"| separacao
+insights-cobertura -->|"Painel agrega A/B/C/D taxa 30d"| devolucoes
+insights-cobertura -->|"Lead time P50 criação até embalado"| entrada-aprovacao
+insights-cobertura -->|"Throughput e acurácia saúde operacional"| vendas
+insights-cobertura -->|"Alertas compras atrasadas e slow-movers"| compras
+insights-cobertura -->|"Valor de estoque e ajustes financeiro"| relatorios
+relatorios -->|"Importa movs fiscais de NF eletrônica"| entrada-aprovacao
+relatorios -->|"Rastreia saídas de venda registradas"| vendas
+relatorios -->|"Relaciona reserva com execução de pedido"| separacao
+relatorios -->|"Agrupa entradas de NFe de compra"| compras
+relatorios -->|"Registra devolução cliente fornecedor por empresa"| devolucoes
+relatorios -->|"Inclui transferências internas no saldo virtual"| transferencias-replenishment
+relatorios -->|"Lê movs não-estornadas com empresa compradora vendedora"| estoque-ledger
+relatorios -->|"Inclui ajustes manuais por categoria"| ajustes-retroativos
+relatorios -->|"Fornece custo médio global pra cobertura"| insights-cobertura
+relatorios -->|"Compara saldo WMS com contagem física"| inventario
+cadastros-conexoes -->|"Lê produtos-fornecedores lead time"| vendas
+cadastros-conexoes -->|"Lista localizações produtos e saldos"| separacao
+cadastros-conexoes -->|"Consulta fornecedores e galpões pra roteamento"| compras
+cadastros-conexoes -->|"Cadastro de localizações on-the-fly"| recebimento-guarda
+cadastros-conexoes -->|"Lê galpão preferencial pra reserva 3D"| estoque-ledger
+cadastros-conexoes -->|"Localização usada em contagem por endereço"| inventario
+cadastros-conexoes -->|"Exibe status conexões Tiny ML PrintNode"| home-quadro
+cadastros-conexoes -->|"Tabelas mestres como fonte pra relatórios"| relatorios
+click entrada-aprovacao href "#mod-entrada-aprovacao"
+click vendas href "#mod-vendas"
+click separacao href "#mod-separacao"
+click compras href "#mod-compras"
+click recebimento-guarda href "#mod-recebimento-guarda"
+click estoque-ledger href "#mod-estoque-ledger"
+click inventario href "#mod-inventario"
+click devolucoes href "#mod-devolucoes"
+click transferencias-replenishment href "#mod-transferencias-replenishment"
+click ajustes-retroativos href "#mod-ajustes-retroativos"
+click cross href "#mod-cross"
+click home-quadro href "#mod-home-quadro"
+click insights-cobertura href "#mod-insights-cobertura"
+click relatorios href "#mod-relatorios"
+click cadastros-conexoes href "#mod-cadastros-conexoes"
+classDef mod fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+  </pre>
+  </div>
+  <div class="map-hint">scroll = zoom &middot; arrastar = mover &middot; passar o mouse num módulo destaca as conexões dele &middot; clicar abre a seção &middot; ⛶ tela cheia</div>
+</section>
+
+<section class="modulos">
+
+<section class="modulo" id="mod-entrada-aprovacao">
+  <div class="head"><h2>📥 Entrada & Aprovação de Pedidos</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Pipeline de captura e aprovação automática ou manual de pedidos marketplace com roteamento inteligente do estoque.</p>
+  <section class="diag"><h3>1 · Recebimento via Webhook Tiny</h3><p class="leg">CNPJ identifica empresa; filtro deduplica por (pedido, tipo, situação); sistema ignora pedidos não-marketplace</p><pre class="mermaid">flowchart TD
+    webhook["📩 Webhook chega do marketplace"]:::n
+    cnpj["Identifica empresa por CNPJ"]:::n
+    dedup{"Já foi processado?"}:::dec
+    tipo{"É marketplace?"}:::dec
+
+    webhook --> cnpj
+    cnpj --> dedup
+    dedup -->|"sim"| skip["Descarta duplicado"]:::feliz
+    dedup -->|"não"| tipo
+    tipo -->|"não"| ignore["Ignorado — pedido manual Tiny"]:::borda
+    tipo -->|"sim"| busca["Busca pedido no Tiny<br/>Pequena de info fiscal"]:::n
+    busca --> resolve["Resolve estoque do galpão<br/>Enriquece com saldo WMS"]:::n
+    resolve --> gravado["Pedido gravado em<br/>siso_pedidos com sugestão"]:::feliz
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>2 · Enriquecimento & Roteamento Inteligente</h3><p class="leg">Expande kits em componentes; lê saldo vivo por galpão; algoritmo WMS-3 sugere origem preferencial ou transferência</p><pre class="mermaid">flowchart TD
+    itens["Itens do pedido"]:::n
+    expand{"Kit?"}:::dec
+    expand -->|"sim"| comp["Expande em componentes<br/>Busca composição no banco"]:::n
+    expand -->|"não"| comp
+    comp --> mapeamento["Map Tiny → SKU WMS<br/>Resolve produto catálogo"]:::n
+    mapeamento --> saldo["Lê saldo vivo<br/>siso_estoque<br/>Agregado por<br/>produto+galpão+localização"]:::n
+    saldo --> roteia["Algoritmo WMS<br/>Tenta cobrir 100% por galpão"]:::n
+    roteia --> dec{"Resultado?"}:::dec
+    dec -->|"Galpão home cobre tudo"| sugestao["Sugestão = Próprio"]:::feliz
+    dec -->|"Outro galpão cobre tudo"| trans["Sugestão = Transferência"]:::feliz
+    dec -->|"Nenhum cobre / Split"| oc["Sugestão = Ordem de Compra"]:::borda
+    sugestao --> status["Status = Executando<br/>Operador pode sobrescrever"]:::n
+    trans --> status
+    oc --> status
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>3 · Aprovação & Reserva de Estoque</h3><p class="leg">Sugestão auto-aprova para Próprio; operador aprova/rejeita via UI; reservas bloqueiam 30 dias ou até NF; idempotência por R</p><pre class="mermaid">flowchart TD
+    decide{"Sugestão =<br/>Próprio?"}:::dec
+    decide -->|"sim"| auto["Auto-aprova<br/>Status = Executando<br/>Tipo resolução = Auto"]:::feliz
+    decide -->|"não"| manual["Fica pendente<br/>Operador escolhe<br/>no painel"]:::borda
+    manual --> op{"Operador<br/>aprova?"}:::dec
+    op -->|"Recusa"| cancelado["Cancela pedido<br/>Sem reserva, sem fila"]:::erro
+    op -->|"Próprio ou Transf."| operador["Aprova manualmente<br/>Tipo resolução = Manual"]:::n
+    operador --> reserva["Cria N reservas<br/>1 por item<br/>bloqueadas 30 dias"]:::n
+    auto --> reserva
+    reserva --> fila["Enfileira execução<br/>siso_fila_execucao<br/>tipo = lancar_estoque"]:::n
+    fila --> marca["Marca com<br/>Galpão + LVR<br/>auto-atribui a<br/>system-marketplace"]:::n
+    cancelado -.-> fim["Pedido encerrado"]:::n
+    marca --> fim
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-vendas">
+  <div class="head"><h2>🛒 Vendas Diretas</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Pedidos manuais inseridos por vendedores nos balcões + marketplace (Mercado Livre / Shopee) rastreado. Dois modos: separação (fila wave) ou baixa direta (saída imediata se tiver saldo).</p>
+  <section class="diag"><h3>1 · Criar Venda Manual</h3><p class="leg">Vendedor escolhe galpão, lista itens. Sistema resolve localização + estoque automaticamente. Se faltar saldo, cai em modo separação (degradação).</p><pre class="mermaid">flowchart TD
+    ini["Operador ou vendedor<br/>acessa Nova venda"]:::n
+    form["Preenche formulário:<br/>cliente, galpão, itens,<br/>modo (separação | baixa_direta)"]:::n
+    resl["Sistema resolve<br/>para cada item:<br/>localização preferida +<br/>qty disponível no galpão"]:::n
+    deg{"Pedido em<br/>modo baixa_direta<br/>E algum item<br/>tem qty insuficiente?"}:::dec
+    degS["Degrada pra<br/>modo separação<br/>automaticamente<br/>Pedido segue fila wave"]:::borda
+    degN["Mantém modo<br/>solicitado<br/>Continua normal"]:::feliz
+    mod2{"Modo<br/>efetivo?"}:::dec
+    sep["Separação:<br/>Cria pedido<br/>status executando<br/>status_separacao<br/>aguardando_separacao"]:::n
+    res["Cria reservas R<br/>para itens com saldo<br/>TTL 30 dias"]:::n
+    bx["Baixa Direta:<br/>Para cada item,<br/>itera localizações"]:::n
+    split["Distribui qty entre<br/>localizações<br/>picking → overstock<br/>→ recebimento"]:::n
+    mov["Gera movimentação S<br/>origem_tipo venda_manual<br/>Decrementa estoque"]:::n
+    ok["Pedido criado<br/>status concluido<br/>status_separacao NULL"]:::feliz
+    err["Falha em mov:<br/>rollback<br/>Estorna movs anteriores<br/>Deleta pedido + itens"]:::erro
+
+    ini --> form
+    form --> resl
+    resl --> deg
+    deg -->|"sim"| degS
+    deg -->|"não"| degN
+    degS --> mod2
+    degN --> mod2
+    mod2 -->|"separacao"| sep
+    mod2 -->|"baixa_direta"| bx
+    sep --> res
+    res --> ok
+    bx --> split
+    split --> mov
+    mov -->|"sucesso<br/>todos itens"| ok
+    mov -->|"erro<br/>em item N"| err
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+
+<section class="diag"><h3>2 · Fluxo de Separação vs Baixa Direta</h3><p class="leg">Modo separação: pedido entra na fila com reservas (operador resolve picking). Modo baixa direta: saída imediata, sem fila de espera.</p><pre class="mermaid">flowchart TD
+    pedido["Pedido criado<br/>numero MAN-xxx"]:::n
+
+    sep["Modo Separação:<br/>status executando<br/>status_separacao<br/>aguardando_separacao"]:::n
+    res["Reservas criadas R<br/>tripla produto+galpao+loc<br/>qty pedida<br/>TTL 30 dias"]:::borda
+    fila["Entra fila wave<br/>Operador agrupa<br/>em batch picking"]:::n
+    pick["Separação:<br/>Operador bipa<br/>itens por localização"]:::n
+    emb["Embalagem<br/>Imprimir etiqueta"]:::n
+
+    baixa["Modo Baixa Direta:<br/>status concluido<br/>status_separacao NULL"]:::feliz
+    mov["Movimentações S<br/>criadas no ledger<br/>origem venda_manual<br/>1 ou N mov por item<br/>conforme split"]:::feliz
+
+    pedido --> sep
+    pedido --> baixa
+    sep --> res
+    res --> fila
+    fila --> pick
+    pick --> emb
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+
+<section class="diag"><h3>3 · Cancelamento de Venda</h3><p class="leg">Dois caminhos: liberar reservas (separação não iniciada) ou estornar movimentações (baixa direta completa). Separação ativa bloqueia até operador voltar etapa.</p><pre class="mermaid">flowchart TD
+    ini["Operador clica<br/>Cancelar venda"]:::n
+    val["Valida status<br/>do pedido"]:::n
+    act{"status_separacao<br/>em atividade?<br/>em_separacao<br/>separado<br/>embalado"}:::dec
+    blk["Bloqueia 400<br/>Operador precisa<br/>voltar-etapa primeiro<br/>Preserva auditoria picks"]:::erro
+
+    canc{"status anterior?"}:::dec
+
+    agtc["aguardando_separacao<br/>ou aguardando_compra"]:::dec
+    libs["Libera reservas R<br/>via liberarReserva<br/>Idempotente se houver<br/>L anterior"]:::borda
+
+    conc["status concluido<br/>movs venda_manual"]:::dec
+    stor["Encontra movs<br/>origem_tipo venda_manual<br/>Estorna cada mov S<br/>origem_detalhes-&gt;&gt;<br/>pedido_id_manual"]:::borda
+
+    ok1["Marca pedido<br/>status cancelado"]:::feliz
+    ok2["Marca pedido<br/>status cancelado"]:::feliz
+    idm["Já cancelado<br/>No-op idempotente<br/>Retorna 200"]:::borda
+
+    ini --> val
+    val --> act
+    act -->|"sim"| blk
+    act -->|"não"| canc
+    canc -->|"agtX"| agtc
+    canc -->|"concluido"| conc
+    canc -->|"cancelado"| idm
+    agtc --> libs
+    libs --> ok1
+    conc --> stor
+    stor --> ok2
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+</section>
+
+<section class="modulo" id="mod-separacao">
+  <div class="head"><h2>📦 Separação & Expedição</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Operador coleta produtos do galpão, resolve realocações em cascata, embala com etiqueta e expede para transportadora.</p>
+  <section class="diag"><h3>1 · Fluxo de Onda de Separação</h3><p class="leg">Pedido entra em estado aguardando_separacao e operador inicia onda com múltiplos pedidos. Sistema consolida SKUs de todos os pedidos numa única lista (checklist).  Bipar (escanear) cada item marca como pego. Quando todos itens da onda estão marcados, conclui e move para separado.</p><pre class="mermaid">flowchart TD
+    a["Onda criada<br/>aguardando_separacao"]:::feliz
+    b["Iniciar onda<br/>selecionar pedidos"]:::n
+    c["Sistema consolida<br/>produtos por SKU"]:::n
+    d["Operador bipar itens<br/>checklist de onda"]:::n
+    e{"Todos itens<br/>marcados?"}:::dec
+    f["Concluir onda<br/>status=separado"]:::feliz
+    g["Pré-criar agrupamentos<br/>Tiny 1 por pedido"]:::n
+    h["Tentar recarregar<br/>etiquetas faltantes"]:::borda
+
+    a --> b
+    b --> c
+    c --> d
+    e -->|"não"| d
+    e -->|"sim"| f
+    f --> g
+    g --> h
+    h --> |"pronto"| i["Sistema aguarda<br/>embalagem"]:::feliz
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>2 · Cascata de Realocação (Produto Falta na Loc Original)</h3><p class="leg">Quando operador marca item parcial (pegou menos do que pedido), sistema verifica se a localização zerou. Se zerou, procura saldo em outras localizações do mesmo galpão, respeitando prioridade: picking > overstock > recebimento > expedição > quarentena. Se encontrar cobertura total, cria realocações. Se não encontrar, oferece: completar parcial, mandar para compras, ou mover para outro galpão.</p><pre class="mermaid">flowchart TD
+    a["Item marcado<br/>quantidade &lt; pedida"]:::n
+    b{"Localização<br/>zerou?"}:::dec
+    c["Não há cascata<br/>item fica em progresso"]:::borda
+    d["Busca saldo em outras<br/>localizações do galpão"]:::n
+    e["Ordena por prioridade<br/>tipo + saldo + código"]:::n
+    f{"Cobertura<br/>total?"}:::dec
+    g["Cria realocações<br/>status=aguardando_picking"]:::feliz
+    h["Oferece 3 opções:<br/>1-Compras, 2-Outro galpão, 3-Legado"]:::dec
+    i["⚠ Marca<br/>pendente_realocacao"]:::div
+
+    a --> b
+    b -->|"não"| c
+    b -->|"sim"| d
+    d --> e
+    e --> f
+    f -->|"sim, ≥ pedida"| g
+    f -->|"não"| h
+    h --> |"supervisor escolhe"| i
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>3 · Fluxo de Embalagem & Expedição</h3><p class="leg">Pedido em estado separado entra na tela de embalagem. Operador bipar SKU (ler código) quantidade a embalar. Sistema encontra pedido separado com esse SKU mais antigo e desconta. Quando todos itens do pedido estão embalados, imprime etiqueta (ZPL em cache, ou fallback criando agrupamento). Por fim, expede (marca como expedido para transportadora).</p><pre class="mermaid">flowchart TD
+    a["Pedido separado<br/>aguardando embalagem"]:::feliz
+    b["Operador bipar SKU<br/>e quantidade"]:::n
+    c["Sistema busca pedido<br/>separado com SKU (FIFO)"]:::n
+    d{"Encontrou<br/>pedido?"}:::dec
+    e["Desconta quantidade<br/>embalado+=qty"]:::n
+    f{"Todos itens<br/>embalados?"}:::dec
+    g["Status=embalado"]:::feliz
+    h["Imprimir etiqueta<br/>1-Fast: ZPL cacheado"]:::n
+    i["2-Slow: criar agrupamento<br/>+ baixar ZPL se falhar"]:::borda
+    j["Enviar pra PrintNode<br/>impressora do galpão"]:::n
+    k["Expedir<br/>status=expedido"]:::feliz
+
+    a --> b
+    b --> c
+    c --> d
+    d -->|"sim"| e
+    e --> f
+    f -->|"não"| b
+    f -->|"sim"| g
+    g --> h
+    h --> i
+    i --> j
+    j --> k
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-compras">
+  <div class="head"><h2>🧾 Compras (OC)</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Recebe pedidos em espera, consolida SKU por fornecedor, marca como comprado, recebe no galpão, libera pro fluxo de separação quando tudo chegar.</p>
+  <section class="diag"><h3>1 · Fila de Compra</h3><p class="leg">Operador identifica itens aguardando compra, agrupa por fornecedor e necessidade real (demanda − estoque − transito).</p><pre class="mermaid">flowchart TD
+    a1["Item em espera<br/>aguardando_compra"]:::borda
+    a2["Comprador visualiza<br/>aba COMPRAR"]:::n
+    a3{"Há necessidade<br/>líquida?"}:::dec
+    a4["✗ Pula ou cancela<br/>(sem cobertura)"]:::erro
+    a5["✓ Agrupa por fornecedor"]:::n
+    a6["Consolida SKU<br/>por CNPJ"]:::n
+    a7["Sistema sugere galpão<br/>por filial do fornecedor"]:::feliz
+
+    a1 --> a2
+    a2 --> a3
+    a3 -->|"não"| a4
+    a3 -->|"sim"| a5
+    a5 --> a6
+    a6 --> a7
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>2 · Marcar como Comprado + Receber</h3><p class="leg">Comprador marca quantidade comprada por SKU (distribuída entre itens mais antigos). Quando chega mercadoria, operador registra quantidade recebida com nota fiscal e custo.</p><pre class="mermaid">flowchart TD
+    b1["Comprador digita:<br/>SKU + quantidade_comprada"]:::n
+    b2["Sistema cria/acha OC<br/>por fornecedor + galpão"]:::feliz
+    b3["Distribui quantidade<br/>por ordem (mais antigos 1º)"]:::n
+    b4["Marca cada item como<br/>comprado"]:::feliz
+    b5["⏳ Aguarda chegada<br/>da mercadoria"]:::borda
+    b6["Operador digita:<br/>SKU + quantidade_recebida"]:::n
+    b7["+ nota fiscal + custo<br/>unitário opcional"]:::n
+    b8["Distribui pelos itens<br/>comprado (mais antigos 1º)"]:::n
+    b9["Grava entrada de NF<br/>no WMS (loc RECEBIMENTO)"]:::feliz
+    b10["Marca item como<br/>recebido quando completo"]:::feliz
+
+    b1 --> b2
+    b2 --> b3
+    b3 --> b4
+    b4 --> b5
+    b5 --> b6
+    b6 --> b7
+    b7 --> b8
+    b8 --> b9
+    b9 --> b10
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>3 · Desbloqueio do Pedido + Tratamento de Exceções</h3><p class="leg">Quando todos itens de compra de um pedido chegam (recebido ou cancelado), sistema libera pro fluxo de separação. Operador também pode trocar por equivalente, marcar indisponível ou devolver pra fila.</p><pre class="mermaid">flowchart TD
+    c1["Último item do pedido<br/>chega = recebido"]:::feliz
+    c2["Sistema checa: todos<br/>itens resolvidos?"]:::dec
+    c3["Nota fiscal<br/>já chegou?"]:::dec
+    c4["Status = aguardando_nf"]:::borda
+    c5["Status = aguardando_separacao"]:::borda
+    c6["Roteia pro galpão<br/>da OC se diferente"]:::n
+    c7["Enfileira job:<br/>lancar_estoque"]:::n
+    c8["Pedido transita pra<br/>EXECUTANDO"]:::feliz
+    c9["⚠ Operador soluciona<br/>item indisponível"]:::div
+    c10["Busca equivalente<br/>em outro galpão"]:::n
+    c11["Troca SKU + libera<br/>reserva anterior"]:::feliz
+    c12["Item volta pra<br/>aguardando_compra"]:::borda
+    c13["Operador marca como<br/>indisponível (terminal)"]:::erro
+    c14["Se todos itens terminais<br/>= cancela pedido"]:::erro
+
+    c1 --> c2
+    c2 -->|"sim"| c3
+    c3 -->|"não"| c4
+    c3 -->|"sim"| c5
+    c5 --> c6
+    c6 --> c7
+    c7 --> c8
+    c2 -->|"não (aguarda mais)"| c12
+    c12 --> c9
+    c9 -->|"equivalente"| c10
+    c10 --> c11
+    c9 -->|"indisponível"| c13
+    c13 --> c14
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-recebimento-guarda">
+  <div class="head"><h2>🚚 Recebimento & Guarda</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Entrada física em 2 etapas: mercadoria no dock de chegada + operador leva pro endereço certo no tablet</p>
+  <section class="diag"><h3>1 · Dock de Recebimento</h3><p class="leg">Mercadoria chega do fornecedor, operador bipá SKU+quantidade e registra na área de chegada</p><pre class="mermaid">flowchart TD
+a1["Sistema recepciona<br/>caminhão ou transferência"]:::n
+a2["Operador bipá<br/>cada item na OC"]:::n
+a3{"Entrada direta?<br/>pula dock"}:::dec
+a4["Estoque entra direto<br/>na localização final<br/>sem pendência"]:::feliz
+a5["Estoque entra na<br/>área de RECEBIMENTO<br/>dock de chegada"]:::n
+a6["Sistema cria pendência<br/>de guarda para cada linha"]:::n
+a7["Imprime etiqueta de produto<br/>SKU QR da localização"]:::borda
+a1 --> a2
+a2 --> a3
+a3 -->|"sim"| a4
+a3 -->|"não"| a5
+a5 --> a6
+a6 --> a7
+classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>2 · Guarda no Tablet</h3><p class="leg">Operador em rota pega pendências da fila, leva peça ao endereço e confirma com bipar</p><pre class="mermaid">flowchart TD
+b1["Operador abre<br/>fila de guarda<br/>no tablet"]:::n
+b2["Agrupa em rotas por lote<br/>Mostra quantidade<br/>total a guardar"]:::n
+b3["Clica 'Iniciar' em uma pendência<br/>marca status em_guarda"]:::n
+b4["Operador carrega etiqueta<br/>transporta até localização"]:::n
+b5["Bipá o QR da localização<br/>sistema sugere destino"]:::borda
+b6{"Aceita sugestão?"}:::dec
+b7["Troca manualmente<br/>para outra localização<br/>se necessário"]:::n
+b8["Digita quantidade a guardar<br/>pode ser parcial"]:::n
+b9["Clica Confirmar<br/>cria movimentação par"]:::n
+b10["Sistema atualiza<br/>posição de estoque"]:::feliz
+b1 --> b2
+b2 --> b3
+b3 --> b4
+b4 --> b5
+b5 --> b6
+b6 -->|"sim"| b8
+b6 -->|"não"| b7
+b7 --> b8
+b8 --> b9
+b9 --> b10
+classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>3 · Guarda Parcial & Desfazer</h3><p class="leg">Operador pode guardar parcialmente, desfazer confirmação ou cancelar sem mexer no estoque</p><pre class="mermaid">flowchart TD
+c1["Pendência criada<br/>status pendente"]:::n
+c2["Operador guarda<br/>quantidade X"]:::n
+c3{"X menor que<br/>quantidade total?"}:::dec
+c4["Status volta a pendente<br/>Quantidade Y fica restante"]:::borda
+c5["Proxima vez tira<br/>quantidade Y da fila"]:::n
+c6["Operador tira<br/>de mais por engano"]:::n
+c7["Clica Desfazer<br/>volta movimentação"]:::n
+c8["Quantidade volta<br/>para pendente"]:::feliz
+c9["Peça danificada<br/>ou sumiu no dock"]:::n
+c10["Clica Cancelar<br/>tira de guarda"]:::n
+c11["Peça fica no RECEBIMENTO<br/>sem pendência"]:::erro
+c12["Cria ajuste manual<br/>ou devoluçao"]:::div
+c1 --> c2
+c2 --> c3
+c3 -->|"sim"| c4
+c3 -->|"não"| c6
+c4 --> c5
+c6 --> c7
+c7 --> c8
+c9 --> c10
+c10 --> c11
+c11 --> c12
+classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-estoque-ledger">
+  <div class="head"><h2>📒 Estoque & Ledger</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Escrita atômica de saldo 3D (produto × galpão × localização) através de um ledger imutável com lock pessimista, suportando reservas com expiração, custo médio global e reconciliação automática.</p>
+  <section class="diag"><h3>1 · Fluxo de Escrita Atômica</h3><p class="leg">Toda movimentação passa por um único ponto de entrada (RPC com lock FOR UPDATE) garantindo integridade do saldo em 3D, mesmo sob concorrência.</p><pre class="mermaid">flowchart TD
+    a["Operação<br/>Entrada/Saída/Reserva/Liberação"] --> b{"Valida<br/>Saldo > 0?"}
+    b -->|"não"| c["❌ Rejeita<br/>Insuficiente"]
+    b -->|"sim"| d["🔒 Lock pessimista<br/>SELECT FOR UPDATE"]
+    d --> e["Recalcula posterior<br/>saldo e reservado"]
+    e --> f["Insere mov<br/>no ledger"]
+    f --> g["Atualiza<br/>linha estoque"]
+    g --> h["✅ Mov criada<br/>com UUID"]
+    h --> i{"Tipo<br/>= E?"}
+    i -->|"sim"| j["Fire-and-forget:<br/>Varre pedidos<br/>pendentes"]
+    i -->|"não"| k["Fim"]
+    j --> k
+    c --> k
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+    a:::n
+    b:::dec
+    c:::erro
+    d:::borda
+    e:::n
+    f:::n
+    g:::feliz
+    h:::feliz
+    i:::dec
+    j:::borda
+</pre></section>
+
+<section class="diag"><h3>2 · Ciclo de Reserva e Liberação (48h TTL)</h3><p class="leg">Saldo reservado fica bloqueado por pedido até NF ou cancelamento; se vencer em 48h, cron libera automaticamente e alerta pedido.</p><pre class="mermaid">flowchart TD
+    a["Pedido aprovado<br/>para própria"] --> b["Reserva atômica<br/>calcula qty"]
+    b --> c["Insere mov R<br/>origem_tipo=reserva_pedido<br/>expira_em=now+48h"]
+    c --> d["Saldo intacto<br/>Reservado += qty"]
+    d --> e{"3 cenários"}
+    e -->|"1. NF emitida"| f["Libera (mov L)<br/>origem_tipo=liberacao_reserva<br/>motivo=nf_emitida"]
+    e -->|"2. Pedido cancelado"| g["Libera (mov L)<br/>motivo=cancelamento"]
+    e -->|"3. TTL vencido"| h["Cron cleanup<br/>a cada 5min"]
+    f --> i["Reservado -= qty<br/>Saldo segue"]
+    g --> i
+    h --> j["Expira se<br/>expira_em < now"]
+    j --> k["Libera auto (mov L)<br/>motivo=expirado"]
+    k --> l["Marca pedido<br/>status_alerta<br/>=reserva_expirada"]
+    l --> i
+    i --> m["✅ Finalizado"]
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+    a:::n
+    b:::borda
+    c:::borda
+    d:::feliz
+    e:::dec
+    f:::borda
+    g:::borda
+    h:::borda
+    i:::feliz
+    j:::borda
+    k:::borda
+    l:::borda
+    m:::feliz
+</pre></section>
+
+<section class="diag"><h3>3 · Custo Médio Ponderado Global</h3><p class="leg">Recalculado só em entradas (tipo E), tabela separada por SKU, alimenta relatórios de valor de inventário.</p><pre class="mermaid">flowchart LR
+    a["Entrada<br/>com custo_unitario"] --> b["Soma saldo global<br/>do produto"]
+    b --> c["Fórmula:<br/>novo_custo =<br/>saldo × custo_antigo +<br/>qty × custo_entrada ÷<br/>saldo + qty"]
+    c --> d["Upsert<br/>siso_custo_medio"]
+    d --> e["Atualiza:<br/>custo_medio<br/>ultima_movimentacao_id<br/>atualizado_em"]
+    e --> f["✅ Próx. saída<br/>usa novo custo"]
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+    a:::n
+    b:::n
+    c:::n
+    d:::n
+    e:::feliz
+    f:::feliz
+</pre></section>
+</section>
+
+<section class="modulo" id="mod-inventario">
+  <div class="head"><h2>🔢 Inventário</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Conferência contínua de estoque com ciclos inteligentes, roteamento dinâmico de operadores e ajustes automáticos baseados em tolerância</p>
+  <section class="diag"><h3>1 · Ciclo de vida da sessão</h3><p class="leg">Supervisior cria sessão (inteligente ou manual) → operadores contam em paralelo → aprova divergências → aplica saldo</p><pre class="mermaid">flowchart TD
+    a1["Supervisor inicia<br/>nova sessão"]:::n
+    a2{"Sugestão<br/>inteligente?"}:::dec
+    a3["Sistema sugere 30 locs<br/>50% curva A + 30% divergentes + 20% sem contagem recente"]:::borda
+    a4["Supervisor escolhe<br/>locs manualmente"]:::borda
+    a5["Sessão criada<br/>status planejada"]:::feliz
+    a6["Primeiro operador<br/>entra na party"]:::n
+    a7["Sessão inicia<br/>status em andamento"]:::feliz
+    a8["Operadores puxam locs<br/>do pool dinamicamente"]:::n
+    a9{"Pool<br/>vazio?"}:::dec
+    a10["Supervisor encerra<br/>contagem"]:::n
+    a11["Sistema computa<br/>divergências"]:::n
+    a12{"Tem<br/>pendentes?"}:::dec
+    a13["Supervisor resolve<br/>aprovando ou rejeitando"]:::n
+    a14["Sessão aprovada<br/>status aprovada"]:::feliz
+    a15["Admin aplica<br/>no estoque"]:::n
+    a16["Movs geradas<br/>status aplicada"]:::feliz
+
+    a1 --> a2
+    a2 -->|sim| a3
+    a2 -->|não| a4
+    a3 --> a5
+    a4 --> a5
+    a5 --> a6
+    a6 --> a7
+    a7 --> a8
+    a8 --> a9
+    a9 -->|não| a8
+    a9 -->|sim| a10
+    a10 --> a11
+    a11 --> a12
+    a12 -->|sim, revisao| a13
+    a12 -->|não, aprova direto| a14
+    a13 --> a14
+    a14 --> a15
+    a15 --> a16
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+
+<section class="diag"><h3>2 · Fluxo paralelo: operador pula locs com roteamento inteligente</h3><p class="leg">Cada operador trabalha sozinho → sistema sugere proxima loc baseado em zona/continuidade → bipa produtos → finaliza loc</p><pre class="mermaid">flowchart TD
+    b1["Operador puxa<br/>próxima loc"]:::n
+    b2["Sistema verifica:<br/>mesma zona do operador"]:::borda
+    b3["Se sim, retorna da zona<br/>em ordem alfabética"]:::feliz
+    b4["Se não, zona nova<br/>que ninguém tá contando"]:::borda
+    b5["Sistema bloqueia loc<br/>pra esse operador<br/>48 horas max"]:::n
+    b6{"Modo<br/>blind ou<br/>aberto?"}:::dec
+    b7["Modo blind<br/>operador não vê<br/>o que deveria ter"]:::borda
+    b8["Modo aberto<br/>mostra SKUs esperados<br/>pra conferir"]:::borda
+    b9["Operador bipa<br/>cada produto encontrado"]:::n
+    b10["Sistema registra contagem<br/>se mesma tripla<br/>soma quantidades"]:::feliz
+    b11["Operador marca<br/>localização como<br/>finalmente contada"]:::n
+    b12["Sistema libera<br/>bloqueia e volta<br/>status pra pendente"]:::feliz
+    b13["Contador do operador<br/>+1 localização"]:::feliz
+
+    b1 --> b2
+    b2 --> b3
+    b2 --> b4
+    b3 --> b5
+    b4 --> b5
+    b5 --> b6
+    b6 -->|blind| b7
+    b6 -->|aberto| b8
+    b7 --> b9
+    b8 --> b9
+    b9 --> b10
+    b10 --> b9
+    b10 --> b11
+    b11 --> b12
+    b12 --> b13
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+
+<section class="diag"><h3>3 · Divergências: reconciliação temporal + decisão supervisor</h3><p class="leg">Sistema compara contagem vs saldo esperado (saldo no momento exato da contagem, não agora) → classifica por tolerância → supervisor aprova ou rejeita</p><pre class="mermaid">flowchart TD
+    c1["Supervisor encerra<br/>contagem"]:::n
+    c2["Sistema carrega:<br/>todas as contagens<br/>saldo no sistema<br/>movimentacoes desde contagem"]:::n
+    c3["Para cada tripla<br/>produto X local<br/>soma todas contagens<br/>de todos operadores"]:::borda
+    c4["Busca primeira mov<br/>após contagem finalizar"]:::n
+    c5["Saldo esperado =<br/>saldo anterior daquela mov<br/>OU saldo atual se nenhuma mov"]:::borda
+    c6["Calcula delta<br/>contado - esperado"]:::n
+    c7{"Dentro da<br/>tolerancia?"}:::dec
+    c8{"Valor acima<br/>do limite?"}:::dec
+    c9["Divergencia<br/>auto aprovada"]:::feliz
+    c10["Divergencia<br/>pendente"]:::borda
+    c11["Supervisor vê<br/>fila de pendentes"]:::n
+    c12{"Aprovar ou<br/>rejeitar?"}:::dec
+    c13["Aprova<br/>usa a contagem"]:::feliz
+    c14["Rejeita<br/>volta pro sistema original"]:::erro
+    c15["Todas resolvidas?"]:::dec
+    c16["Avança pra<br/>status aprovada"]:::feliz
+
+    c1 --> c2
+    c2 --> c3
+    c3 --> c4
+    c4 --> c5
+    c5 --> c6
+    c6 --> c7
+    c7 -->|sim| c8
+    c7 -->|não| c10
+    c8 -->|não| c9
+    c8 -->|sim| c10
+    c10 --> c11
+    c11 --> c12
+    c12 -->|aprovar| c13
+    c12 -->|rejeitar| c14
+    c13 --> c15
+    c14 --> c15
+    c15 -->|sim| c16
+    c15 -->|não| c11
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+</section>
+
+<section class="modulo" id="mod-devolucoes">
+  <div class="head"><h2>↩️ Devoluções</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Sistema aguarda nota de devolução, operador classifica em 4 categorias (íntegro, avariado, garantia, troca), gera movimentações no estoque com custo médio recalculado.</p>
+  <section class="diag"><h3>1 · Recebimento e fila de classificação</h3><p class="leg">Webhook de nota fiscal de entrada chega, sistema detecta se é devolução e enfileira aguardando operador classificar.</p><pre class="mermaid">flowchart TD
+  nf["📨 Nota fiscal de devolução<br/>chega via Tiny webhook"]:::n
+  check{"É devolução?<br/>tipo=devolucao<br/>ou tipoOperacao=E"}:::dec
+  enfileira["Enfileira aguardando<br/>classificação"]:::feliz
+  ignora["⚠ Ignora (não<br/>é devolução)"]:::div
+  lista["Operador abre<br/>lista de devoluções"]:::n
+  detalhes["Clica em devolução<br/>para detalhe"]:::n
+
+  nf --> check
+  check -->|sim| enfileira
+  check -->|não| ignora
+  enfileira --> lista
+  lista --> detalhes
+
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>2 · Classificação A/B/C/D e movimentação</h3><p class="leg">Operador escolhe classe: A volta íntegra ao estoque, B transfere para quarentena, C sai para fornecedor (garantia), D reintegra com novo SKU.</p><pre class="mermaid">flowchart TD
+  escolhe["Operador escolhe<br/>classe de classificação"]:::n
+
+  subgraph a["Classe A — Íntegro"]
+    a1["✓ Entra 1 movimento"]:::feliz
+    a2["Custo médio recalcula"]:::feliz
+    a3["Retorna ao picking"]:::feliz
+  end
+
+  subgraph b["Classe B — Avariado"]
+    b1["⚠ Entra + Transfere +<br/>Sai para quarentena<br/>2 a 3 movimentos"]:::borda
+    b2["Sem custo agregado"]:::borda
+    b3["Bloqueia produto ate<br/>decisao de descarte"]:::borda
+  end
+
+  subgraph c["Classe C — Garantia<br/>⚠ QUEBRADA NA UI"]
+    c1["❌ Exige fornecedor na API<br/>mas UI nao coleta"]:::erro
+    c2["Selecionar C sempre<br/>retorna erro 400"]:::erro
+  end
+
+  subgraph d["Classe D — Troca SKU"]
+    d1["Reintegra como novo<br/>produto em picking"]:::feliz
+    d2["Sem baixa do SKU errado"]:::div
+  end
+
+  aplicar["Aplicar classificação<br/>ao ledger"]:::feliz
+  fim["Status muda para<br/>classificada"]:::feliz
+
+  escolhe --> a & b & c & d
+  a & b & c & d --> aplicar
+  aplicar --> fim
+
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>3 · Desclassificação (reversa limitada)</h3><p class="leg">Se operador errou classificação, pode reverter: estorna todas as movimentações e volta para fila aguardando.</p><pre class="mermaid">flowchart TD
+  jaclass["Devolução ja foi<br/>classificada"]:::borda
+  rev{"Operador clica<br/>Desclassificar?"}:::dec
+  motivo["Informa motivo<br/>min 3 caracteres"]:::n
+  estorna["Sistema estorna<br/>todas as movimentacoes<br/>geradas"]:::borda
+  volta["Status volta para<br/>aguardando classificacao"]:::feliz
+  reclassifica["Permite nova<br/>classificacao"]:::feliz
+
+  jaclass --> rev
+  rev -->|sim| motivo
+  motivo --> estorna
+  estorna --> volta
+  volta --> reclassifica
+
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-transferencias-replenishment">
+  <div class="head"><h2>🔁 Transferências & Replenishment</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Movimentação de estoque entre galpões e dentro do galpão, com controle de trânsito, lock de recebimento, e reversão de operações.</p>
+  <section class="diag"><h3>1 · Transferência inter-galpão: criar e receber</h3><p class="leg">Fluxo 2 etapas: origem envia, destino confirma localização. Produto sem dono (estoque neutro).</p><pre class="mermaid">flowchart TD
+    a1["Operador cria<br/>transferência"]:::n
+    a2["Sistema gera Saída<br/>no galpão origem"]:::feliz
+    a3["Cabeçalho status<br/>em trânsito"]:::borda
+    a4["Operador destino<br/>inicia recebimento"]:::n
+    a5{"Ninguém mais<br/>está recebendo?"}:::dec
+    a6["Sistema reserva<br/>recebimento com lock"]:::feliz
+    a7["Operador escolhe<br/>localização destino<br/>para cada item"]:::n
+    a8["Sistema gera Entrada<br/>no galpão destino"]:::feliz
+    a9["Cabeçalho muda para<br/>recebida"]:::feliz
+    a10["Lock liberado"]:::feliz
+    a11["⚠ Outra pessoa<br/>já está recebendo"]:::div
+    a12["Rejeita com error 409<br/>mostra quem ganhou"]:::erro
+    a1 --> a2
+    a2 --> a3
+    a3 --> a4
+    a4 --> a5
+    a5 -->|"sim"| a6
+    a6 --> a7
+    a7 --> a8
+    a8 --> a9
+    a9 --> a10
+    a5 -->|"não"| a11
+    a11 --> a12
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+
+<section class="diag"><h3>2 · Desfazer ou cancelar transferência</h3><p class="leg">Reverter operações: undo de recebimento volta para em trânsito; cancelamento estorna ambas as legs.</p><pre class="mermaid">flowchart TD
+    b1["Transferência em<br/>status recebida"]:::borda
+    b2["Operador escolhe<br/>Desfazer recebimento"]:::n
+    b3["Sistema estorna<br/>Entrada destino"]:::erro
+    b4["Reseta loc destino<br/>dos itens"]:::n
+    b5["Cabeçalho volta para<br/>em trânsito"]:::borda
+    b6["Pode receber<br/>novamente"]:::feliz
+    c1["Transferência em<br/>status em_transito"]:::borda
+    c2["Operador cancela"]:::n
+    c3["Sistema estorna<br/>Entrada destino<br/>se houver recebimento<br/>parcial"]:::erro
+    c4["Sistema estorna<br/>Saída origem"]:::erro
+    c5["Cabeçalho muda para<br/>cancelada"]:::erro
+    c6["Estoque volta<br/>ao galpão origem"]:::feliz
+    b1 --> b2
+    b2 --> b3
+    b3 --> b4
+    b4 --> b5
+    b5 --> b6
+    c1 --> c2
+    c2 --> c3
+    c3 --> c4
+    c4 --> c5
+    c5 --> c6
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+
+<section class="diag"><h3>3 · Replenishment intra-galpão (realocação)</h3><p class="leg">Mover produto entre localizações no mesmo galpão (overstock para picking, etc). Operação atômica par S+E.</p><pre class="mermaid">flowchart TD
+    d1["Operador inicia<br/>realocação"]:::n
+    d2["Escolhe produto,<br/>localização origem<br/>e destino"]:::n
+    d3["Sistema executa<br/>RPC atômica"]:::feliz
+    d4["Insere Saída<br/>na loc origem"]:::feliz
+    d5["Insere Entrada<br/>na loc destino<br/>na mesma transação"]:::feliz
+    d6{"Ambas as legs<br/>ok?"}:::dec
+    d7["Retorna origem_id<br/>compartilhado"]:::feliz
+    d8["⚠ Qualquer falha<br/>faz rollback"]:::div
+    d9["Saída cancelada<br/>estoque intacto"]:::feliz
+    d1 --> d2
+    d2 --> d3
+    d3 --> d4
+    d4 --> d5
+    d5 --> d6
+    d6 -->|"sim"| d7
+    d6 -->|"não"| d8
+    d8 --> d9
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;
+</pre></section>
+</section>
+
+<section class="modulo" id="mod-ajustes-retroativos">
+  <div class="head"><h2>🔧 Ajustes & Retroativos</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Ajuste manual imediato com motivo registrado no ledger, e lançamento retroativo em emergência que depois reconcilia com a nota real.</p>
+  <section class="diag"><h3>1 · Ajuste Manual</h3><p class="leg">Operador corrige saldo em 1 posição com motivo obrigatório. Gera movimento imediata no ledger e pode ser estornada.</p><pre class="mermaid">flowchart TD
+    a1["Operador escolhe<br/>produto + local + quantidade"]:::n
+    a2["Seleciona categoria<br/>Avaria, Perda, Achado,<br/>Correção, Devolução sem fluxo,<br/>Outro"]:::dec
+    a3["Digita motivo<br/>≥3 caracteres"]:::n
+    a4{"Entrada<br/>ou Saída?"}:::dec
+    a5e["+ Entrada<br/>entrada_direta=false"]:::feliz
+    a5s["− Saída<br/>entrada_direta=false"]:::feliz
+    a6["Sistema cria movimento<br/>tipo E ou S no ledger"]:::n
+    a7["Registra categoria +<br/>motivo em origem_detalhes"]:::n
+    a8["Saldo atualizado<br/>na tripla"]:::feliz
+    a9e["Se entrada com custo,<br/>alimenta custo médio"]:::div
+    a10["Operador vê mov_id<br/>pra rastreamento"]:::n
+    a11{"Precisa<br/>desfazer?"}:::dec
+    a12["Chama estorno via<br/>POST estornar"]:::n
+    a13["Sistema cria mov S<br/>estorno_de=mov_id"]:::n
+    a14["Saldo volta ao original"]:::feliz
+
+    a1 --> a2 --> a3 --> a4
+    a4 -->|sim| a5e
+    a4 -->|não| a5s
+    a5e --> a6
+    a5s --> a6
+    a6 --> a7 --> a8
+    a8 --> a9e --> a10
+    a10 --> a11
+    a11 -->|sim| a12 --> a13 --> a14
+    a11 -->|não| a10
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>2 · Lançamento Retroativo + Reconciliação</h3><p class="leg">Quando a nota não chega, operador cria movimento datado no passado. Depois, quando chega a nota real, reconcilia linkando os 2 movimentos.</p><pre class="mermaid">flowchart TD
+    b1["Emergência:<br/>mercadoria chegou<br/>mas NF ainda não"]:::erro
+    b2["Operador registra<br/>lançamento retroativo"]:::n
+    b3["Tripla + quantidade +<br/>motivo + data estimada"]:::n
+    b4["Sistema cria movimento<br/>tipo E com origem<br/>lancamento_retroativo"]:::feliz
+    b5["Data viaja em<br/>origem_detalhes.data_recebimento"]:::borda
+    b6["Mov fica em lista<br/>de pendências reconciliação"]:::borda
+    b7["Máx 200 pendências<br/>por carregamento"]:::div
+    b8["NF real chega<br/>depois"]:::borda
+    b9["Operador recebe mercadoria<br/>via Receber Normal"]:::n
+    b10["Procura retroativo<br/>na lista de pendências"]:::n
+    b11["Coleta UUID da mov<br/>de compra real"]:::n
+    b12["Chama reconciliar<br/>passando UUID compra"]:::n
+    b13["Sistema cria mov S<br/>estorno do retroativo"]:::n
+    b14["Linkagem: estorno aponta<br/>pra compra_mov_id"]:::feliz
+    b15["Trilha auditória completa:<br/>retroativo→estorno→compra"]:::feliz
+    b16["Retroativo sai da lista<br/>pendências"]:::feliz
+
+    b1 --> b2 --> b3 --> b4 --> b5 --> b6
+    b6 --> b7
+    b8 --> b9 --> b10 --> b11 --> b12 --> b13 --> b14 --> b15 --> b16
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>3 · Permissões & Guardrails</h3><p class="leg">Cada operação tem validação de acesso e proteção contra duplicação ou estados inválidos.</p><pre class="mermaid">flowchart TD
+    c1["Ajuste Manual"]:::n
+    c1a["Requer permissão<br/>operacoes.ajuste_manual"]:::dec
+    c1b["Tripla completa obrigatória"]:::dec
+    c1c["Quantity > 0"]:::dec
+    c1d["Motivo ≥3 caracteres"]:::dec
+    c1e["Categoria deve ser 1 de 6"]:::dec
+
+    c2["Retroativo + Reconciliação"]:::n
+    c2a["Requer permissão<br/>operacoes.retroativo"]:::dec
+    c2b["UUID da mov compra<br/>deve existir no ledger"]:::dec
+    c2c["Double-reconciliação<br/>rejeitada por guard"]:::dec
+    c2d["Data recebimento<br/>não pode ser futuro"]:::dec
+
+    c1 --> c1a --> c1b --> c1c --> c1d --> c1e
+    c2 --> c2a --> c2b --> c2c --> c2d
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-cross">
+  <div class="head"><h2>🔗 Cross (Catálogo & Equivalência)</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Busca universal de produtos por SKU, OEM ou nome; mantém catálogo cruzado com OEMs editáveis, veículos compatíveis e links manuais de equivalência.</p>
+  <section class="diag"><h3>1 · Busca Universal</h3><p class="leg">Operador digita SKU, OEM ou nome de produto. Sistema detecta tipo automaticamente e retorna até 50 resultados, priorizando SKU exato.</p><pre class="mermaid">flowchart TD
+  a1["Operador digita na barra<br/>2+ caracteres"]:::n
+  a1 --> a2{"Detecta tipo:<br/>SKU / OEM / Nome"}:::dec
+  a2 -->|"SKU prefixo"| a3["Busca em catálogo<br/>por SKU ILIKE"]:::n
+  a2 -->|"OEM"| a4["Busca em catálogo<br/>por OEM contém"]:::n
+  a2 -->|"Texto livre"| a5["Busca em catálogo<br/>por Nome ILIKE"]:::n
+  a3 --> a6["Calcula cluster transitivo<br/>pra cada SKU<br/>conta equivalentes"]:::n
+  a4 --> a6
+  a5 --> a6
+  a6 --> a7["Retorna até 50 SKUs<br/>nome, marca, OEM, estoque total,<br/>contador de cross-refs"]:::feliz
+  a7 --> a8["Registra telemetria<br/>da busca<br/>fire-and-forget"]:::borda
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>2 · Detalhe & Lazy Fetch</h3><p class="leg">Ao abrir SKU, sistema busca dados do cache (OEM, veículos); se não existe, faz lazy fetch do Tiny com extração automática de OEM.</p><pre class="mermaid">flowchart TD
+  b1["Operador abre<br/>detalhe de SKU"]:::n
+  b1 --> b2{"SKU existe<br/>no catálogo?"}:::dec
+  b2 -->|"Sim"| b3["Carrega detalhe<br/>OEMs + Veículos"]:::feliz
+  b2 -->|"Não"| b4["Lazy fetch Tiny<br/>buscar pelo SKU"]:::borda
+  b4 --> b5{"Encontrou<br/>no Tiny?"}:::dec
+  b5 -->|"Não"| b6["HTTP 404<br/>SKU não existe"]:::erro
+  b5 -->|"Sim"| b7["Extrai OEMs<br/>da descrição<br/>padrão OEM:"]:::n
+  b7 --> b8["Persiste no catálogo<br/>nome, descrição, imagem, GTIN"]:::feliz
+  b8 --> b9["Insere OEMs<br/>origem extracao_tiny<br/>idempotente"]:::feliz
+  b9 --> b3
+  b3 --> b10["Operador vê:<br/>foto, SKU, marca, OEMs, veículos"]:::feliz
+  b10 --> b11["Carrega estoque em paralelo<br/>via endpoint separado"]:::borda
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>3 · OEMs, Veículos & Links</h3><p class="leg">Operador edita OEMs (adiciona manual ou vê extraídos), compatibilidade veicular, e cria links diretos entre SKUs sem precisar OEM.</p><pre class="mermaid">flowchart TD
+  c1["Operador em detalhe<br/>de SKU"]:::n
+  c1 --> c2{"Ação selecionada?"}:::dec
+  c2 -->|"Adicionar OEM"| c3["Valida código<br/>4-30 chars, alphanumeric-dot-dash"]:::n
+  c3 --> c4["Insere em OEMs table<br/>origem manual"]:::feliz
+  c4 --> c5["Sistema busca cruzamentos<br/>qual outro SKU tem este OEM"]:::borda
+  c5 --> c6["Retorna lista de cross<br/>até 5 SKUs"]:::feliz
+  c2 -->|"Remover OEM"| c7{"Pode remover?<br/>Admin OU autoria"}:::dec
+  c7 -->|"Sim"| c8["Delete no banco"]:::feliz
+  c7 -->|"Não"| c9["403 Forbid"]:::erro
+  c2 -->|"Adicionar Veículo"| c10["Valida marca, modelo<br/>ano_inicio ≤ ano_fim"]:::n
+  c10 --> c11["Insere em Veículos<br/>rastreia quem adicionou"]:::feliz
+  c2 -->|"Remover Veículo"| c12{"Pode remover?<br/>Admin OU autoria"}:::dec
+  c12 -->|"Sim"| c13["Delete no banco"]:::feliz
+  c12 -->|"Não"| c14["403 Forbid"]:::erro
+  c2 -->|"Linkar SKUs"| c15["Normaliza par sku_a &lt; sku_b"]:::n
+  c15 --> c16["Confirma ambos SKUs existem"]:::n
+  c16 --> c17["Insere link com motivo<br/>rastreia autoria"]:::feliz
+  classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+  classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+  classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+  classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+  classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+  classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-home-quadro">
+  <div class="head"><h2>🏠 Home & Quadro de Tarefas</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Painel ao vivo de operações de estoque: pipeline do pedido, kanban de guarda/inventário/compras e 7 cards de situações operacionais (devoluções, transferências, inventário pendente, reservas órfãs, lançamentos retroativos, saldos órfãos, entradas diretas)</p>
+  <section class="diag"><h3>1 · Pipeline do pedido (aprovação → separação → embalagem)</h3><p class="leg">Fluxo principal de cada pedido de venda. Contadores atualizados em tempo real, com avatares dos operadores ativos.</p><pre class="mermaid">flowchart TD
+    p1["Pendente<br/>Aprovação"]:::n -->|"clica"| p2["Operador<br/>Aprova"]:::feliz
+    p2 -->|"define galpão +<br/>origem marketplace ou manual"| p3["Aguardando<br/>Separação"]:::borda
+    p3 -->|"operador inicia"| p4["Em Separação"]:::feliz
+    p4 -->|"completa coleta"| p5["Aguardando<br/>Embalagem"]:::borda
+    p5 -->|"operador pega"| p6["Em Embalagem"]:::feliz
+    p6 -->|"fecha caixa"| p7["Pronto pra despacho"]:::feliz
+
+    p1 -.->|"card topo:<br/>Aprovação + contador"| c1["Marketplace<br/>vs Manual"]:::n
+    p3 -.->|"card topo:<br/>Separação + operadores"| c2["Avatares<br/>ao vivo"]:::n
+    p5 -.->|"card topo:<br/>Embalagem + operadores"| c3["Avatares<br/>ao vivo"]:::n
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>2 · Kanban de guarda, inventário e compras</h3><p class="leg">Três colunas de cards detalhados: pendências de guarda (com barra de progresso), ciclos de inventário em andamento, e compras agrupadas por fornecedor (a comprar vs a receber).</p><pre class="mermaid">flowchart TD
+    g1["Produto chega<br/>em RECEBIMENTO"]:::borda --> g2["Cria pendência<br/>de guarda"]:::n
+    g2 -->|"≤ 50 cards<br/>mostrados"| g3["Kanban GUARDA<br/>mostra qty pendente +<br/>operador quem pegou"]:::feliz
+    g3 -->|"clica card"| g4["Abre detalhe<br/>guarda (com histórico)"]:::borda
+
+    i1["Operador inicia<br/>contagem"]:::borda --> i2["Ciclo ativo<br/>= sessão"]:::n
+    i2 -->|"barra progresso<br/>atualiza em tempo real"| i3["Kanban INVENTÁRIO<br/>mostra % locs contadas<br/>+ operadores presentes"]:::feliz
+    i3 -->|"100% = aguarda<br/>supervisor"| i4["Em Revisão"]:::borda
+
+    c1["Compra pendente<br/>em siso_pedido_itens"]:::borda --> c2["Agrupado por<br/>fornecedor"]:::n
+    c3["Ordem compra criada"]:::borda --> c3b["Agrupado por<br/>fornecedor"]:::n
+    c2 --> c4["Kanban COMPRAS<br/>X to-do a comprar<br/>Y to-do a receber"]:::feliz
+    c3b --> c4
+    c4 -->|"clica card<br/>fornecedor"| c5["Abre módulo<br/>compras"]:::borda
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>3 · Exceções operacionais (7 cards expansíveis)</h3><p class="leg">Monitora 7 situações que requerem ação manual: devoluções em fila, transferências em trânsito, ciclos aguardando supervisão, reservas órfãs de pedidos cancelados, lançamentos retroativos pendentes, saldos órfãos no dock, entradas que pularam o fluxo padrão.</p><pre class="mermaid">flowchart TD
+    ex1["Devolução chega"]:::borda -->|"aguardando<br/>classificação"| ex1a["Card 1<br/>Devoluções Pendentes<br/>mostra NF + empresa<br/>+ tempo"]:::erro
+
+    ex2["Transfer inter-galpão<br/>iniciada"]:::borda -->|"status<br/>em_transito"| ex2a["Card 2<br/>Transferências em<br/>Trânsito<br/>origem → destino<br/>+ qty itens + tempo<br/>badge: ok 24h<br/>warn 72h alert"]:::borda
+
+    ex3["Ciclo encerrado"]:::borda -->|"supervisor não<br/>aprovou ainda"| ex3a["Card 3<br/>Inventário em Revisão<br/>nome ciclo + galpão<br/>+ quantidade divergências"]:::borda
+
+    ex4["Pedido cancelado"]:::erro -->|"reserva 48h<br/>nunca liberada"| ex4a["Card 4<br/>Reservas Órfãs<br/>sku + pedido + qty<br/>ALERTA se count 5+<br/>webhook pode estar<br/>morto"]:::erro
+
+    ex5["Lançamento<br/>retroativo criado"]:::borda -->|"não estornado<br/>ainda"| ex5a["Card 5<br/>Retroativos<br/>Pendentes<br/>sku + qty + motivo<br/>fecha automaticamente<br/>quando reconciliado"]:::borda
+
+    ex6["Guarda cancelada"]:::erro -->|"saldo fica<br/>em RECEBIMENTO<br/>sem pendência viva"| ex6a["Card 6<br/>Saldo Órfão<br/>em RECEBIMENTO<br/>sku + galpão +<br/>localizacao + saldo<br/>operador resolve"]:::erro
+
+    ex7["NF de compra"]:::feliz -->|"entrada direta<br/>loc destino ≠<br/>RECEBIMENTO"| ex7a["Card 7<br/>Entradas Diretas<br/>Hoje<br/>sku + galpão +<br/>localizacao + qty<br/>SEM alerta =<br/>informativo"]:::n
+
+    ex_toggle["Seção Exceções<br/>colapsável"]:::dec -->|"count total<br/>torna card vermelho"| ex_check{"Total<br/>exceções<br/>0?"}:::dec
+    ex_check -->|"sim"| ex_hide["Seção fecha<br/>por padrão"]:::feliz
+    ex_check -->|"não"| ex_show["Seção abre<br/>por padrão"]:::erro
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-insights-cobertura">
+  <div class="head"><h2>💡 Insights & Cobertura</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Motor de alertas automáticos por regra customizável + análise de cobertura de estoque por giro e lead time do fornecedor</p>
+  <section class="diag"><h3>1 · Motor de Alertas (Regras de Anomalia)</h3><p class="leg">Executa a cada 5 minutos. Cada regra ativa busca entidades no banco (operador, SKU, fornecedor, etc.) e dispara alerta se threshold bate. Cooldown evita spam da mesma regra para a mesma entidade em menos de N minutos.</p><pre class="mermaid">flowchart TD
+    cron["Cron a cada 5 min<br/>POST /api/wms/insights/refresh"]:::n
+    motor["Motor executa<br/>todas as regras ativas"]:::n
+    listRules["Busca regras com<br/>ativa = true"]:::n
+    iterRule["Para cada regra:<br/>busca código + threshold"]:::n
+    rpc["Chama RPC<br/>wms_insights_executar_regra"]:::n
+
+    cooldown{"Insight desta regra<br/>+ entidade criado<br/>nos últimos N min?"}:::dec
+    ignore["Ignora resultado<br/>cooldown ativo"]:::borda
+    skip["Continua próxima<br/>regra"]:::borda
+
+    upsert["Insere em<br/>siso_wms_insights_ativos"]:::feliz
+    expire["Auto-expira alertas<br/>antigos que não voltaram"]:::borda
+
+    updateLog["Registra última<br/>execução + status ok"]:::feliz
+
+    fail["Captura erro da RPC"]:::erro
+    incFail["Incrementa<br/>falhas_consecutivas"]:::erro
+    disable{"≥ 3 falhas<br/>seguidas?"}:::dec
+    deactivate["Desativa regra<br/>auto para não inundar"]:::erro
+    updateLogErr["Registra status=erro<br/>+ mensagem"]:::erro
+
+    cron --> motor --> listRules --> iterRule --> rpc
+    rpc --> cooldown
+    cooldown -->|sim| ignore --> skip --> iterRule
+    cooldown -->|não| upsert --> expire --> updateLog
+    updateLog --> iterRule
+    rpc -.->|falha| fail --> incFail --> disable
+    disable -->|sim| deactivate --> updateLogErr
+    disable -->|não| updateLogErr --> iterRule
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+
+<section class="diag"><h3>2 · Painel de Alertas Ativos + KPIs Executivos</h3><p class="leg">Quando operador entra em /wms/insights, vê strip com alertas críticos não dispensados e cards de KPIs em tempo real (throughput hoje, lead time, acurácia, ruptura, capital, taxa devolução).</p><pre class="mermaid">flowchart TD
+    user["Operador abre<br/>/wms/insights/hub"]:::n
+    fetch["GET /api/wms/insights/hub<br/>?galpao_id=X"]:::n
+
+    kpi["RPC wms_insights_hub_kpis<br/>→ throughput 24h + 7d<br/>+ lead time P50 24h/7d<br/>+ acurácia inventário<br/>+ SKUs crítico/risco<br/>+ capital em estoque<br/>+ taxa devolução 30d"]:::n
+
+    active["GET siso_wms_insights_ativos<br/>WHERE dispensado_em IS NULL<br/>AND expira_em &gt; now()<br/>ORDER BY severidade, criado_em"]:::n
+
+    throughput["RPC wms_insights_throughput_diario<br/>últimos 30 dias"]:::n
+
+    render["Renderiza:<br/>- Strip alertas (até 6 ativos)<br/>- 6 KPI cards com delta<br/>- Sparkline throughput"]:::feliz
+
+    dispense["Operador clica 'Dispensar'<br/>POST /api/wms/insights/ativos/[id]/dispensar"]:::borda
+    dispensar["Marca dispensado_em = now()<br/>dispensado_por = user_id"]:::feliz
+
+    links["5 cards de navegação:<br/>Pessoas | Fluxo | Estoque<br/>Financeiro | Devoluções<br/>+ 'Configurar regras' (admin)"]:::n
+
+    fetch --> kpi
+    fetch --> active
+    fetch --> throughput
+    kpi --> render
+    active --> render
+    throughput --> render
+    render --> links
+    render --> dispense --> dispensar
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+
+<section class="diag"><h3>3 · Análise de Cobertura de Estoque (Giro vs Lead Time)</h3><p class="leg">Cruzamento: disponível atual × giro médio 30d × lead time do fornecedor preferencial. Classifica cada SKU+galpão em 5 status. Dados agregados em view materializada, refresh via cron POST /api/wms/cobertura/refresh.</p><pre class="mermaid">flowchart TD
+    user["Operador abre<br/>/wms/cobertura"]:::n
+    fetch["GET /api/wms/cobertura<br/>?status=X&galpao_id=Y"]:::n
+
+    view["Lê siso_cobertura_estoque<br/>view materializada 3D<br/>agregada por<br/>produto × galpão"]:::borda
+
+    status["Cada linha tem:<br/>disponível_total<br/>giro_diario<br/>dias_cobertura<br/>lead_time_medio<br/>status_cobertura"]:::n
+
+    classify["Classificação:<br/>1. Crítico: cobertura &lt; lead_time<br/>2. Atenção: cobertura ≈ lead_time<br/>3. OK: cobertura &gt; lead_time<br/>4. Sem giro: zero saída 30d<br/>5. Lead-time risco: sem fornecedor"]:::dec
+
+    filter["Filtra por status<br/>+ galpão + ordena<br/>por dias_cobertura asc"]:::n
+
+    table["Renderiza tabela:<br/>SKU | Produto | Galpão<br/>Disponível | Giro/dia<br/>Lead time | Cobertura (barra)"]:::feliz
+
+    drawer["Clica linha →<br/>abre drawer<br/>com detalhe do produto"]:::borda
+
+    refresh["Worker POST<br/>/api/wms/cobertura/refresh<br/>worker-secret"]:::n
+    rpc["RPC wms_refresh_cobertura<br/>reconstrói view"]:::n
+
+    fetch --> view --> status
+    view --> classify
+    classify --> filter --> table
+    table --> drawer
+    refresh --> rpc
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;</pre></section>
+</section>
+
+<section class="modulo" id="mod-relatorios">
+  <div class="head"><h2>📊 Relatórios (Apuração por Empresa)</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Módulo de análise financeira e fiscal: rastreia movimentações por empresa compradora/vendedora, reconstrói histórico de custos e compara saldo WMS com Tiny para auditoria contábil.</p>
+  <section class="diag"><h3>1 · Movimentações por Período e Empresa</h3><p class="leg">Filtro temporal com entrada/saída agregadas por (produto, empresa, tipo), exportável em CSV.</p><pre class="mermaid">flowchart TD
+    a["Operador abre relatório"]:::n
+    b["Escolhe data início/fim,<br/>galpão, empresa, produto"]:::dec
+    c["Sistema carrega movs<br/>não-estornadas do intervalo"]:::n
+    d["Filtra por:<br/>origem comercial<br/>NFe compra/venda/devolução"]:::borda
+    e["Agrupa por<br/>produto + empresa + tipo"]:::n
+    f["Soma quantidade<br/>e valor da movimentação"]:::n
+    g["Exibe tabela:<br/>Entrada E ou Saída S<br/>qty total, valor total"]:::feliz
+    h["Exporta em CSV<br/>com headers formatados"]:::feliz
+
+    a --> b
+    b --> c
+    c --> d
+    d --> e
+    e --> f
+    f --> g
+    g --> h
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>2 · Saldos Virtuais por Empresa e Galpão</h3><p class="leg">Visão fiscal: quanto cada empresa comprou e ainda não vendeu por localidade, recalculado a cada consulta.</p><pre class="mermaid">flowchart TD
+    a["Operador acessa saldos"]:::n
+    b["Filtra por galpão<br/>e empresa opcional"]:::dec
+    c["Sistema lê todas movs<br/>tipo E e S não-estornadas"]:::n
+    d["Agrupa por<br/>empresa + produto + galpão"]:::n
+    e["Calcula saldo virtual:<br/>Σ entradas − Σ saídas"]:::borda
+    f["Omite linhas com<br/>saldo virtual = 0"]:::borda
+    g["Exibe tabela com<br/>nome empresa, SKU,<br/>galpão, saldo em unidades"]:::feliz
+    h["Exporta CSV<br/>para análise financeira"]:::feliz
+
+    a --> b
+    b --> c
+    c --> d
+    d --> e
+    e --> f
+    f --> g
+    g --> h
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>3 · Histórico de Custo Unitário e Recálculo Médio</h3><p class="leg">Série temporal: cada entrada com custo registra antes/depois do custo médio global, visualizado em gráfico SVG + tabela detalhada.</p><pre class="mermaid">flowchart TD
+    a["Operador busca um produto<br/>por SKU ou descrição"]:::n
+    b["Sistema carrega<br/>histórico de custo"]:::borda
+    c["Filtra movs com<br/>custo unitário IS NOT NULL"]:::borda
+    d["Ordena cronologicamente<br/>da mais antiga"]:::n
+    e["Para cada movimentação:<br/>mostra custo_medio_anterior<br/>e custo_medio_posterior"]:::borda
+    f["Snapshot atual:<br/>consulta tabela cache<br/>de custo médio global"]:::feliz
+    g["Renderiza gráfico SVG:<br/>linha custo médio,<br/>pontos custo unitário"]:::feliz
+    h["Tabela com data,<br/>qty, origem, empresa,<br/>fornecedor e custos"]:::feliz
+
+    a --> b
+    b --> c
+    c --> d
+    d --> e
+    e --> f
+    f --> g
+    g --> h
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section><section class="diag"><h3>4 · Reconciliação Tiny vs Ledger WMS</h3><p class="leg">Auditoria contábil automatizada: compara saldo agregado WMS com Tiny, identifica divergências por produto e empresa, roda cron diário às 6am UTC.</p><pre class="mermaid">flowchart TD
+    a["Operador ou cron<br/>6am UTC solicita reconciliação"]:::dec
+    b["Sistema lista todas<br/>as empresas ativas"]:::n
+    c["Para cada empresa:<br/>recupera mapeamento<br/>produto ↔ tiny_id"]:::borda
+    d["Soma saldo WMS<br/>agregado por produto<br/>em todos galpões"]:::feliz
+    e["Faz 1 chamada Tiny<br/>por produto mapeado<br/>pra obter saldo lá"]:::borda
+    f["Calcula delta:<br/>WMS - Tiny"]:::n
+    g{Delta menor que<br/>threshold?}:::dec
+    h["Registra divergência<br/>no resultado"]:::erro
+    i["Falha ao chamar Tiny?"]:::dec
+    j["Contabiliza falha<br/>e continua"]:::erro
+    k["Compilação final:<br/>divergencias, comparados,<br/>falhas, timestamp"]:::feliz
+    l["Exibe tabela<br/>com empresa, SKU,<br/>saldo WMS, saldo Tiny,<br/>delta, cor por sinal"]:::feliz
+
+    a --> b
+    b --> c
+    c --> d
+    d --> e
+    e --> f
+    f --> g
+    g -->|"não, |delta| ≥ threshold"| h
+    g -->|"sim, alinhado"| k
+    e --> i
+    i -->|"sim"| j
+    i -->|"não"| g
+    j --> k
+    k --> l
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+<section class="modulo" id="mod-cadastros-conexoes">
+  <div class="head"><h2>⚙️ Cadastros & Conexões</h2><a class="back" href="#mapa">↑ voltar ao mapa</a></div>
+  <p class="sub">Gerenciador centralizado de mestres (produtos, fornecedores, localizações, galpões, empresas), usuários com roles dinâmicas, e integrações OAuth2 com Tiny ERP, Mercado Livre e PrintNode.</p>
+  <section class="diag"><h3>1 · Mestres de Operação</h3><p class="leg">Catálogo de produtos, localidades de estoque, fornecedores e suas relações</p><pre class="mermaid">flowchart TD
+    p1["Produto<br/>SKU + foto + descricao"]:::n
+    p2["Localização<br/>codigo + galpao"]:::n
+    p3["Fornecedor<br/>nome + CNPJ + lead time"]:::n
+    p4["Produto-Fornecedor<br/>SKU vinculado a fornecedor"]:::n
+    p5["Operador cria<br/>localização on-the-fly<br/>em modal de recebimento"]:::borda
+
+    p1 --> p4
+    p3 --> p4
+    p2 -.->|por galpao| p5
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>2 · Estrutura Organizacional & Preferenciais Geográficos</h3><p class="leg">Multi-empresa, multi-galpão com roteamento por preferência geográfica</p><pre class="mermaid">flowchart TD
+    g1["Galpão<br/>CWB / São Paulo / etc"]:::n
+    e1["Empresa<br/>CNPJ + nome"]:::n
+    pref["Galpão Preferencial<br/>geo-priority 0..N<br/>por empresa"]:::borda
+    grupo["Grupo<br/>legado - display only<br/>tier ordenado"]:::div
+
+    e1 -->|cria em| g1
+    e1 -->|marca preferenciais| pref
+    g1 -.->|nao usa pra dedução<br/>fase 5 3D| grupo
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>3 · Sistema de Usuários, Roles e Permissões Dinâmicas</h3><p class="leg">Matriz de acesso granular: admin, operador, comprador, vendedor com perms por módulo</p><pre class="mermaid">flowchart TD
+    u1["Usuário<br/>nome + PIN 4 dígitos + foto"]:::n
+    u2["Role<br/>lista nomeada de 20+ perms"]:::n
+    u3["Permissão<br/>vendas.ver, cadastros.editar,<br/>sistema.conexoes, etc"]:::n
+    u4["Usuário-Galpão<br/>associação 1..N"]:::borda
+    u5["Usuário-Role<br/>associação 1..N"]:::borda
+
+    u1 --> u4
+    u1 --> u5
+    u2 --> u3
+    u5 -->|aplica| u3
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>4 · Integrações OAuth2 & Webhooks</h3><p class="leg">Conexão Tiny ERP multi-empresa, Mercado Livre multi-conta, PrintNode multi-chave, single-flight refresh</p><pre class="mermaid">flowchart TD
+    ta["Admin abre config<br/>e clica autorizar"]:::n
+    tb["Sistema redireciona<br/>pra Tiny/ML/PrintNode"]:::n
+    tc["Usuário confirma<br/>no provedor"]:::borda
+    td["Callback retorna code"]:::n
+    te["Sistema troca code<br/>por access + refresh token<br/>testa conexão imediatamente"]:::n
+    tf["Token salvo com TTL<br/>auto-refresh com 5min buffer<br/>single-flight lease lock"]:::feliz
+
+    ta --> tb
+    tb --> tc
+    tc --> td
+    td --> te
+    te --> tf
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>5 · Tiny: Conexão por Empresa + Depósito</h3><p class="leg">Cliente ID + Secret por empresa, seleção de depósito, webhook cadastrado 1x</p><pre class="mermaid">flowchart TD
+    tiny1["Criar conexão Tiny<br/>pra empresa"]:::n
+    tiny2["Preencher client_id<br/>e client_secret"]:::borda
+    tiny3["Clicar autorizar<br/>fluxo OAuth2 Tiny"]:::borda
+    tiny4["Admin escolhe qual<br/>depósito Tiny mapear<br/>pra esta empresa"]:::borda
+    tiny5["Webhook testado<br/>URL registrada no Tiny<br/>por filial"]:::feliz
+    tiny6["Pedidos chegam<br/>processados via webhook<br/>identificacao por CNPJ"]:::feliz
+
+    tiny1 --> tiny2
+    tiny2 --> tiny3
+    tiny3 --> tiny4
+    tiny4 --> tiny5
+    tiny5 --> tiny6
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>6 · Mercado Livre: Multi-Conta</h3><p class="leg">Múltiplas contas vendedor por site, vinculação opcional a empresa, auto-refresh com retenção de single-use token</p><pre class="mermaid">flowchart TD
+    ml1["Admin abre Mercado Livre<br/>clica autorizar"]:::n
+    ml2["Redireciona pra<br/>auth.mercadolivre.com.br"]:::borda
+    ml3["Usuário autoriza<br/>scope: offline_access<br/>read write"]:::borda
+    ml4["Callback: exchange code<br/>GET /users/me pra nickname<br/>email site_id"]:::n
+    ml5["UPSERT por ml_user_id<br/>permite re-auth mesma conta"]:::feliz
+    ml6["Token dura 6h<br/>refresh token single-use<br/>auto-refresh a 5min antes<br/>lease lock 30s anti-race"]:::feliz
+    ml7["⚠ Sem app_id/secret<br/>refresh falha e desativa conexao"]:::erro
+
+    ml1 --> ml2
+    ml2 --> ml3
+    ml3 --> ml4
+    ml4 --> ml5
+    ml5 --> ml6
+    ml6 -.->|se falhar| ml7
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+
+<section class="diag"><h3>7 · PrintNode: Multi-Chave + Atribuição</h3><p class="leg">API Key por conta, impressoras descobertas, atribuição por galpão ou usuário individual</p><pre class="mermaid">flowchart TD
+    pn1["Admin cadastra<br/>chave API PrintNode"]:::borda
+    pn2["Sistema lista impressoras<br/>por conta"]:::n
+    pn3["Galpão tem impressora<br/>padrão pedido + padrão nota"]:::borda
+    pn4["Usuário pode ter<br/>impressora pedido override<br/>e impressora nota override"]:::borda
+    pn5["Seletor de impressora<br/>prioriza: usuário pedido ><br/>galpao pedido > usuário<br/>nota > galpao nota"]:::feliz
+
+    pn1 --> pn2
+    pn2 --> pn3
+    pn3 --> pn5
+    pn4 --> pn5
+
+    classDef feliz fill:#13351f,stroke:#2f8f4e,color:#dff3e6;
+    classDef borda fill:#3a2f12,stroke:#caa53a,color:#f3e9c9;
+    classDef erro fill:#3a1717,stroke:#d35b5b,color:#f3d6d6;
+    classDef dec fill:#13243f,stroke:#4f80c9,color:#dbe9ff;
+    classDef n fill:#1a1f2b,stroke:#566075,color:#d6dbe6;
+    classDef div fill:#241a3a,stroke:#7d5bd3,color:#e6d9ff,stroke-dasharray:5 4;</pre></section>
+</section>
+
+</section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "loose",
+    theme: "dark",
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: "basis" },
+    themeVariables: { fontFamily: "Outfit, system-ui, sans-serif" }
+  });
+
+  // Dados das conex\u00f5es do mapa (preenchidos ao tirar os r\u00f3tulos antes de renderizar).
+  var MAP = { nodeLabel: {}, out: {}, inc: {}, div: {} };
+
+  // 1) Tira os r\u00f3tulos das arestas DO MAPA antes de renderizar \u2014 o layout fica ~4x mais
+  //    compacto e leg\u00edvel \u2014 e guarda os r\u00f3tulos como dados pro painel de foco.
+  //    N\u00e3o toca nos diagramas dos m\u00f3dulos.
+  prepararMapa();
+  mermaid.run().then(initMapaInterativo).catch(function(e){ console.error("mermaid", e); });
+
+  function prepararMapa(){
+    var pre = document.querySelector('#map-canvas .mermaid');
+    if(!pre) return;
+    var reNode   = /^([\w-]+)\["(.*)"\](?::::[\w-]+)?\s*$/;
+    var reSolid  = /^([\w-]+)\s*-->\s*\|"?(.*?)"?\|\s*([\w-]+)\s*$/;
+    var reDash   = /^([\w-]+)\s*-\.\s*"?(.*?)"?\s*\.->\s*([\w-]+)\s*$/;
+    var reSolidN = /^([\w-]+)\s*-->\s*([\w-]+)\s*$/;
+    var reDashN  = /^([\w-]+)\s*-\.->\s*([\w-]+)\s*$/;
+    function clean(s){ return String(s).replace(/<br\s*\/?>/gi, ' ').trim(); }
+    function rec(a, b, lbl, dashed){
+      (MAP.out[a] = MAP.out[a] || []).push({ n: b, l: lbl, d: dashed });
+      (MAP.inc[b] = MAP.inc[b] || []).push({ n: a, l: lbl, d: dashed });
+      if(dashed) MAP.div[a + '>' + b] = 1;
+    }
+    var out = [];
+    pre.textContent.split('\n').forEach(function(raw){
+      var t = raw.trim(), m;
+      if((m = t.match(reNode)))   { MAP.nodeLabel[m[1]] = clean(m[2]); out.push(raw); return; }
+      if(t.indexOf('click ') === 0) return;                 // clique tratado no JS
+      if((m = t.match(reSolid)))  { rec(m[1], m[3], clean(m[2]), false); out.push('  ' + m[1] + ' --> ' + m[3]); return; }
+      if((m = t.match(reDash)))   { rec(m[1], m[3], clean(m[2]), true);  out.push('  ' + m[1] + ' -.-> ' + m[3]); return; }
+      if((m = t.match(reSolidN))) { rec(m[1], m[2], '', false); out.push(raw); return; }
+      if((m = t.match(reDashN)))  { rec(m[1], m[2], '', true);  out.push(raw); return; }
+      out.push(raw);                                         // flowchart / classDef / linkStyle / etc.
+    });
+    pre.textContent = out.join('\n');
+  }
+
+  // ===== Mapa macro: zoom infinito (svg-pan-zoom) + foco por m\u00f3dulo =====
+  function initMapaInterativo(){
+    var mapa = document.querySelector('.mapa');
+    var canvas = document.getElementById('map-canvas');
+    var svg = canvas && canvas.querySelector('svg');
+    var panel = document.getElementById('map-focus');
+    if(!mapa || !canvas || !svg) return;
+
+    svg.style.maxWidth = 'none'; svg.style.width = '100%'; svg.style.height = '100%';
+
+    var pz = svgPanZoom(svg, {
+      zoomEnabled: true, panEnabled: true, controlIconsEnabled: false,
+      fit: true, center: true, minZoom: 0.1, maxZoom: 50,
+      zoomScaleSensitivity: 0.35, dblClickZoomEnabled: false, mouseWheelZoomEnabled: true
+    });
+
+    // ---- \u00edndice de n\u00f3s/arestas (a partir dos ids do SVG j\u00e1 renderizado) ----
+    // n\u00f3:    id = "mermaid-<n>-flowchart-<modulo>-<i>"
+    // aresta: id = "mermaid-<n>-L_<origem>_<destino>_<i>"  (ids de m\u00f3dulo usam "-", nunca "_")
+    var nodeById = {}, edgesByNode = {}, neighborsByNode = {};
+    function nodeIdFromG(g){ var m = (g.id || '').match(/flowchart-(.+)-\d+$/); return m ? m[1] : null; }
+    function edgeEnds(path){
+      var parts = (path.id || '').replace(/^.*?-L_/, '').split('_');
+      return parts.length >= 3 ? [parts[0], parts[1]] : [null, null];
+    }
+    Array.prototype.forEach.call(svg.querySelectorAll('g.node'), function(g){
+      var id = nodeIdFromG(g);
+      if(id){ nodeById[id] = g; edgesByNode[id] = []; neighborsByNode[id] = {}; }
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll('.edgePaths .flowchart-link'), function(path){
+      var e = edgeEnds(path), a = e[0], b = e[1];
+      if(a && edgesByNode[a]) edgesByNode[a].push(path);
+      if(b && edgesByNode[b]) edgesByNode[b].push(path);
+      if(a && b){
+        if(neighborsByNode[a]) neighborsByNode[a][b] = 1;
+        if(neighborsByNode[b]) neighborsByNode[b][a] = 1;
+        if(MAP.div[a + '>' + b] || MAP.div[b + '>' + a]) path.classList.add('is-div-edge');
+      }
+    });
+
+    // ---- painel de conex\u00f5es ----
+    function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return { '&':'&amp;','<':'&lt;','>':'&gt;' }[c]; }); }
+    function buildPanel(id){
+      var rows = [];
+      (MAP.out[id] || []).forEach(function(e){ rows.push({ dir:'\u2192', n:e.n, l:e.l, d:e.d }); });
+      (MAP.inc[id] || []).forEach(function(e){ rows.push({ dir:'\u2190', n:e.n, l:e.l, d:e.d }); });
+      var cap = 15, html = '<div class="mf-title">' + esc(MAP.nodeLabel[id] || id) + '</div>';
+      rows.slice(0, cap).forEach(function(r){
+        html += '<div class="mf-row' + (r.d ? ' div' : '') + '">'
+          + '<span class="d">' + r.dir + '</span>'
+          + '<span class="nm">' + esc(MAP.nodeLabel[r.n] || r.n) + '</span>'
+          + (r.l ? '<span class="lb">' + esc(r.l) + '</span>' : '') + '</div>';
+      });
+      if(rows.length > cap) html += '<div class="mf-more">+' + (rows.length - cap) + ' conex\u00f5es \u00b7 abra a se\u00e7\u00e3o do m\u00f3dulo</div>';
+      panel.innerHTML = html;
+    }
+
+    function focus(id){
+      if(!nodeById[id]) return;
+      svg.classList.add('focus-on');
+      nodeById[id].classList.add('is-hot');
+      Object.keys(neighborsByNode[id]).forEach(function(n){ if(nodeById[n]) nodeById[n].classList.add('is-hot'); });
+      edgesByNode[id].forEach(function(p){ p.classList.add('is-hot'); });
+      buildPanel(id); panel.hidden = false;
+    }
+    function clearFocus(){
+      svg.classList.remove('focus-on');
+      Array.prototype.forEach.call(svg.querySelectorAll('.is-hot'), function(el){ el.classList.remove('is-hot'); });
+      panel.hidden = true;
+    }
+    Object.keys(nodeById).forEach(function(id){
+      var g = nodeById[id];
+      g.style.cursor = 'pointer';
+      g.addEventListener('mouseenter', function(){ focus(id); });
+    });
+    canvas.addEventListener('mouseleave', clearFocus);
+
+    // ---- clique num m\u00f3dulo (sem arrasto) abre a se\u00e7\u00e3o dele ----
+    var downX = 0, downY = 0, moved = false;
+    canvas.addEventListener('mousedown', function(e){ downX = e.clientX; downY = e.clientY; moved = false; canvas.classList.add('grabbing'); });
+    window.addEventListener('mousemove', function(e){ if(Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > 6) moved = true; });
+    window.addEventListener('mouseup', function(){ canvas.classList.remove('grabbing'); });
+    function fsElement(){ return document.fullscreenElement || document.webkitFullscreenElement || null; }
+    function exitFs(){ var f = document.exitFullscreen || document.webkitExitFullscreen; if(f) f.call(document); }
+    canvas.addEventListener('click', function(e){
+      if(moved) return;
+      var g = e.target.closest && e.target.closest('g.node'); if(!g) return;
+      var id = nodeIdFromG(g); if(!id) return;
+      if(fsElement()) exitFs();
+      location.hash = '#mod-' + id;
+    });
+
+    // ---- toolbar ----
+    function refit(){ try{ pz.resize(); pz.fit(); pz.center(); }catch(_){} }
+    document.getElementById('map-toolbar').addEventListener('click', function(e){
+      var b = e.target.closest('button'); if(!b) return;
+      var a = b.getAttribute('data-a');
+      if(a === 'in') pz.zoomBy(1.3);
+      else if(a === 'out') pz.zoomBy(1 / 1.3);
+      else if(a === 'fit') refit();
+      else if(a === 'full'){
+        if(fsElement()) exitFs();
+        else { var req = mapa.requestFullscreen || mapa.webkitRequestFullscreen; if(req){ var p = req.call(mapa); if(p && p.catch) p.catch(function(){}); } }
+      }
+    });
+
+    var rt;
+    window.addEventListener('resize', function(){ clearTimeout(rt); rt = setTimeout(refit, 120); });
+    document.addEventListener('fullscreenchange', function(){ setTimeout(refit, 130); });
+    document.addEventListener('webkitfullscreenchange', function(){ setTimeout(refit, 130); });
+
+    requestAnimationFrame(refit);
+  }
+</script>
+</body>
+</html>

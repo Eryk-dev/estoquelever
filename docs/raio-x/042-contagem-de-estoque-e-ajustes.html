@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Contagem de Estoque e Ajustes — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Inventário (contagem)</p>
+<h1>Contagem de Estoque e Ajustes</h1><p class="lead">Seu operador conta o que tem nas prateleiras, o sistema compara com o número que estava registrado, mostra as diferenças (perdas, achados), e você aprova quais diferenças para o sistema ajustar o estoque.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">2</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">1</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Operador entra, o sistema bloqueia a prateleira para ele trabalhar sozinho</span></li><li><span class="dot">✓</span><span>Operador pode ir bipando o que encontra (somar) ou informar o total que tem</span></li><li><span class="dot">✓</span><span>Se encontra 0 na prateleira, sistema confirma que a prateleira está vazia</span></li><li><span class="dot">✓</span><span>Se você rejeita um achado, o sistema não mexe naquele estoque (fica como estava)</span></li></ul></div><h2>Problemas pra resolver · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P161</span>Supervisor muda de ideia e o sistema não deixa corrigir</h3><div class="dchips"><span class="chip dec">média</span><span class="chip flat">Inventário e acertos de saldo</span></div></div><p class="ln scn"><b>Imagina assim:</b> Você faz uma contagem no dia, identifica uma diferença (por exemplo, faltam 5 peças de um produto que deveria ter 100). O sistema marca como 'Rejeitado' enquanto você decide. Você muda de ideia e quer aprovar mesmo assim. O botão desaparece da tela e nada funciona.</p><p class="ln"><b>Hoje:</b> Depois que você rejeita ou aprova uma diferença, o sistema bloqueia todos os botões. Se voltar na página, o sistema pode mostrar a tela antiga (como era antes) e você clica 'Aprovar' de novo, mas o sistema não faz nada — só mostra uma mensagem que 'algumas mudanças não foram salvas'.</p><p class="ln why"><b>Por que importa:</b> Se você descobrir que estava errado depois de rejeitar, quer desfazer sem chamar o gerente. Hoje isso não é possível na interface normal.</p><div class="decision"><p class="q">O sistema permite reverter? Ou precisa de um admin para desfazer?</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir que o supervisor aprove/rejeite de novo (refaz a decisão)</b> — Você clica 'Reabrir', refaz a escolha, tudo fica consistente. Sem precisar chamar admin.</span></li><li class=""><span class="ck"></span><span><b>Manter como está: só admin consegue desfazer por fora do sistema</b> — Precisa de alguém técnico mexer no banco de dados quando alguém muda de ideia.</span></li></ul><p class="recnote"><b>Recomendo:</b> Use a primeira opção. Deixe o supervisor refazer a escolha clicando 'Reabrir'. Mais rápido e menos dependência de admin.</p></div><p class="refp">divergencias/page.tsx:68-76, divergencias/route.ts:86</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P059</span>Compra chega fora da hora da contagem e some do relatório</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Inventário e acertos de saldo</span></div></div><p class="ln scn"><b>Imagina assim:</b> Você faz contagem às 10:00 da manhã. Uma compra de fornecedor chega às 10:01 (1 minuto depois) com 20 peças de um produto. O sistema não vê essa compra na hora de conferir se as contas batem. No final, aparece uma diferença falsa (o sistema acha que faltam 20 peças quando na verdade chegaram).</p><p class="ln"><b>Hoje:</b> O sistema faz uma 'foto' do estoque na hora da contagem. Qualquer coisa que chegue após essa hora não entra na foto — fica de fora. Quando confere os números, o saldo já foi atualizado com a compra (que chegou depois), mas o sistema trata como se aqueles números não existissem.</p><p class="ln why"><b>Por que importa:</b> Você recebe uma compra minutos depois de contar e aparece uma divergência inexplicável. Cria confusão, perde tempo procurando o erro quando na verdade tudo está certo.</p><div class="decision"><p class="q">Como o sistema deve lidar com compras que chegam logo após a contagem?</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Fechar a contagem mais rápido (menos de 1 minuto) para reduzir a janela de risco</b> — Compras atrasadas entram na próxima contagem. Menos falsos alertas, mas contagem fica 'corrida' e mais chance de operador errar na pressa.</span></li><li class=""><span class="ck"></span><span><b>O sistema lê o histórico de estoque desde o início do dia e recalcula tudo</b> — Mais robusto e certo, mas mais lento. Contagem fica mais precisa independente de quando as compras chegam.</span></li><li class=""><span class="ck"></span><span><b>Avisar claramente que divergências com compras próximas podem ser falsas</b> — Supervisor sabe que precisa desconfiar e investigar se houve compra. Nem sempre é óbvio.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a segunda opção. Reconstruir o histórico desde o início é mais confiável e evita surpresas. Custa um pouco mais de tempo de processamento, mas vale a pena pela precisão.</p></div><p class="refp">inventario-reconciliacao.ts:164-165, inventario.ts:650-658</p></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D126</span>Quando uma diferença é pequena o bastante, o sistema aprova sozinho ou sempre mostra pro supervisor?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Inventário e acertos de saldo</span></div></div><p class="ln scn"><b>Imagina assim:</b> Contagem de um produto caro (custa R$ 500 por unidade) que deveria ter 100 unidades em estoque. Você conta e acha 103 (diferença de +3 unidades). Seu limite de tolerância é 2%. Essa diferença de 3% está acima do limite, mas em dinheiro é só R$ 1.500.</p><p class="ln"><b>Hoje o sistema:</b> O sistema checa dois critérios: (1) se a diferença é menor que 2% E (2) se o valor em dinheiro não passa de R$ 1.000. Se os dois forem verdadeiros, aprova sozinho e você nunca vê. Se qualquer um falhar (neste caso, 3% &gt; 2%), manda pro supervisor revisar.</p><p class="ln why"><b>Por que importa:</b> Você precisa saber se o sistema está confiando em pequenas diferenças sozinho ou se tudo tem que passar por você. Ajuda a definir se precisa revisar tudo ou só as maiores.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Manter como está: sistema aprova automático se for pequeno (menos de 2%) E barato (menos de R$ 1.000)</b> — Supervisor só vê as diferenças importantes. Mais rápido, menos trabalho. Risco: algo pequeno em dinheiro mas grande em quantidade passa silencioso.</span></li><li class=""><span class="ck"></span><span><b>Aumentar a tolerância (por exemplo, 5%) para deixar mais coisas passar automático</b> — Menos avisos pro supervisor, mais confiança no sistema. Risco: erros maiores podem virar 'normais' sem ninguém notar.</span></li><li class=""><span class="ck"></span><span><b>Exigir aprovação de tudo, sem automático</b> — 100% de controle, supervisor vê tudo. Mais trabalho manual, mais lento.</span></li><li class=""><span class="ck"></span><span><b>Usar apenas um critério (só % ou só valor em dinheiro, não os dois)</b> — Mais simples de entender. Ou 'qualquer coisa acima de 2% vai', ou 'qualquer coisa acima de R$ 1.000 vai'. Menos confusão.</span></li></ul><p class="recnote"><b>Recomendo:</b> Mantenha a primeira opção (2% E R$ 1.000), mas mostre claramente na tela quando algo foi aprovado automático. Assim o supervisor sabe o que o sistema aceitou sem precisar pedir permissão.</p></div><p class="refp">inventario.ts:857-867, divergencias/route.ts:22-24</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D127</span>Como o sistema calcula a perda em dinheiro quando um produto não tem custo registrado?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Inventário e acertos de saldo</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um produto novo (SKU-TESTE) chegou apenas como amostra ou teste, nunca foi comprado de verdade. Você tem 100 unidades em estoque, faz contagem e acha 50 (perdeu 50 unidades). O sistema não sabe qual era o custo desse produto.</p><p class="ln"><b>Hoje o sistema:</b> O sistema mostra a divergência de quantidade (-50 unidades) mas o valor em dinheiro fica R$ 0,00 (porque não consegue calcular sem saber o custo). A divergência aparece como 'pendente' (vai pro supervisor), mas sem impacto financeiro registrado.</p><p class="ln why"><b>Por que importa:</b> Você precisa saber se uma perda de 50 unidades é grave ou não. Sem o custo, fica difícil prioritizar. E depois quando o produto recebe custo 'de verdade' (em uma compra), essa divergência antiga não volta a se ajustar.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Registrar o custo manualmente quando contar o produto (operador digita o valor)</b> — Mais preciso. Mas mais trabalho na contagem, e se operador errar no custo, fica tudo errado.</span></li><li class=""><span class="ck"></span><span><b>Deixar R$ 0,00 e avisar que é 'produto sem custo cadastrado', supervisor decide se é grave</b> — Simples. Supervisor sabe que precisa checar a importância desse produto separadamente.</span></li><li class=""><span class="ck"></span><span><b>Bloquear contagem de produtos sem custo (não deixa contar até cadastrar custo)</b> — Nenhuma confusão, mas pode atrasar contagem se houver muitos produtos de teste.</span></li></ul><p class="recnote"><b>Recomendo:</b> Use a segunda opção. O sistema registra a quantidade perdida (50 unidades) e avisa claramente 'custo desconhecido'. Supervisor vê na tela e decide se é importante. Mais simples e menos bloqueios.</p></div><p class="refp">inventario.ts:779-788, 856-867</p></div><h2>Ainda a conferir · 1</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Verificar se é possível abrir uma localização novamente para recontagem (supervisor quer que operador recount uma prateleira).</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Cancelamento de Vendas — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Vendas feitas na mão</p>
+<h1>Cancelamento de Vendas</h1><p class="lead">Quando um vendedor precisa cancelar uma venda que acabou de entrar, o sistema devolve o estoque que estava apartado ou tira o produto que saiu da conta.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">4</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Cancela vendas que saem direto (baixa imediata) — estorna o produto da saída</span></li><li><span class="dot">✓</span><span>Cancela vendas que estão aguardando separação (ainda não foram pegadas) — devolve o estoque apartado</span></li><li><span class="dot">✓</span><span>Bloqueia cancelamento de vendas já em andamento (picadas ou sendo embaladas) — evita confusão</span></li><li><span class="dot">✓</span><span>Impede clicar cancelar duas vezes — a segunda tentativa vê que já foi cancelado e não faz nada</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P077</span>Cancelamento interrompido deixa estoque errado</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um vendedor cancela uma venda que precisa devolver mercadoria de 3 lugares diferentes. O sistema devolve a primeira mercadoria, depois a segunda, mas quando tenta devolver a terceira, a conexão cai. O sistema interrompe.</p><p class="ln"><b>Hoje:</b> A primeira e a segunda mercadoria foram devolvidas pro estoque. A terceira ficou retida (ninguém sabe que precisa devolver). O pedido continua marcado como se estivesse ativo, não como cancelado.</p><p class="ln why"><b>Por que importa:</b> Quando você cancela uma venda, o cliente precisa receber a refação certa do que foi vendido. Se o sistema devolve só 2 de 3 devoluções, o saldo fica estourado — você não sabe quantas peças realmente estão na prateleira. Isso vira a base de todas as outras decisões de venda.</p><div class="decision"><p class="q">O sistema precisa garantir que ou devolve tudo de uma vez (como um bloco único), ou se a conexão cair, ele desfaz as 2 primeiras devoluções também e avisa o vendedor.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Agrupar as 3 devoluções em uma operação indivisível — só marca como cancelado se conseguir devolver as 3 ao mesmo tempo</b> — Se falhar no meio, volta tudo ao estado anterior (de novo a venda está lá, nada foi devolvido). O vendedor tenta de novo. Estoque sempre consistente.</span></li><li class=""><span class="ck"></span><span><b>Se falhar na 3ª devolução, desfazer automaticamente as devoluções 1 e 2 também (tipo um Ctrl+Z)</b> — Mesma garantia acima — o pedido volta inteiro ou nada muda. Estoque seguro.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolher a opção 1 (agrupar como bloco único). É a mais simples e faz o sistema todo andar junto.</p></div><p class="refp">flow-055</p></div><h2>Decisões pra você tomar · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D022</span>Deixar vender com quantidade zero ou sem itens?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido entra no sistema com 0 unidades de um produto ou nenhum produto listado.</p><p class="ln"><b>Hoje o sistema:</b> O sistema não rejeita. Se chegar no banco com quantidade=0, quando o vendedor tentar cancelar, o sistema vai tentar devolver 0 unidades (o que não faz sentido).</p><p class="ln why"><b>Por que importa:</b> Um pedido com zero itens não é um pedido real. Deixar isso passar suja o histórico de vendas, confunde relatórios e pode travar o cancelamento se o sistema exigir que cada item tenha quantidade &gt; 0 pra devolver.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear no momento que o vendedor tenta criar a venda (rejeitar de imediato se vê quantidade=0)</b> — O vendedor recebe um aviso claro: 'adicione pelo menos 1 unidade de um produto'. Nenhum pedido com zero itens entra no sistema.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (sem bloqueio)</b> — Pedidos com zero itens podem entrar. Quando o vendedor tentar desfazer, pode dar erro ou comportamento estranho (0 itens devolvidos, como era 0 mesmo).</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 1. Bloquear na entrada. É mais simples prevenir um pedido furado do que lidar com os problemas dele depois.</p></div><p class="refp">flow-055</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D023</span>Quando o sistema nega um pedido inválido, qual código de erro mostrar?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um vendedor tenta cancelar uma venda com ID que não existe (ou foi apagada).</p><p class="ln"><b>Hoje o sistema:</b> O sistema retorna um código 400 (pedido errado/malformado) — mesma resposta que dá quando os dados enviados estão furados.</p><p class="ln why"><b>Por que importa:</b> Códigos de erro diferentes ajudam o operador e a inteligência do negócio a saber o que aconteceu. Se o sistema sempre responde da mesma forma pra tudo, fica impossível diagnosticar se foi erro do usuário ou se o pedido realmente não existe no banco.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Usar código 400 (continuar como hoje)</b> — Mensagem: 'seu pedido está errado'. É vago. O vendedor não sabe se digitou errado ou se o pedido foi apagado.</span></li><li class=""><span class="ck"></span><span><b>Usar código 404 (Pedido não encontrado)</b> — Mensagem clara: 'esse pedido não existe'. O vendedor sabe: ou o ID é inválido, ou foi deletado. Mais informação útil.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2. Usar 404. Parece pequeno mas torna diagnósticos muito mais rápidos quando algo quebra.</p></div><p class="refp">flow-055</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D108</span>Deixar pedido em estado inválido ou obrigar estar em estado válido?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido está marcado como 'em execução' mas o campo de 'etapa interna de separação' é vazio (ninguém sabe se foi separado ou não).</p><p class="ln"><b>Hoje o sistema:</b> O sistema não valida essa combinação. Permite que um pedido tenha essa mistura confusa de informações. Quando o vendedor cancela, o sistema não sabe se tira estoque de um lugar ou outro — fica ambíguo.</p><p class="ln why"><b>Por que importa:</b> Um pedido deve estar sempre em um estado que faça sentido: ou não foi começado a separar, ou está sendo separado agora, ou foi separado. Não pode ser '?' e '?'. Isso abre brechas pra decisões erradas no cancelamento e dificilmente você consegue auditar o que realmente aconteceu.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (sem validação)</b> — Pedidos confusos entram e saem do sistema. Cancelamentos podem não fazer efeito porque o sistema não sabe qual etapa ele está.</span></li><li class=""><span class="ck"></span><span><b>Forçar que quando um pedido é criado, ele sempre tem um estado + etapa válidos (ex: 'pendente' com etapa 'não iniciada')</b> — Toda vez que o vendedor vê um pedido, ele sabe exatamente onde está. Cancelamento é previsível.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2. Garantir que nunca existe combinação inválida. O investimento inicial é pequeno (validação) mas economiza muito tempo em diagnósticos depois.</p></div><p class="refp">flow-055</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D201</span>Registrar cancelamentos no histórico mesmo se a gravação falhar?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Relatórios e indicadores</span></div></div><p class="ln scn"><b>Imagina assim:</b> O vendedor cancela uma venda com sucesso — o estoque volta, o pedido é marcado como cancelado. Mas o banco de histórico (auditoria) estava indisponível naquele instante, então o registro de 'quem cancelou, quando, por quê' não foi gravado.</p><p class="ln"><b>Hoje o sistema:</b> O sistema cancela a venda e retorna sucesso, mas se o histórico falhar em gravar, falha silenciosamente. O vendedor não vê nenhum aviso. Você sabe que a venda foi cancelada, mas o registro de quem fez (para auditoria) desapareceu.</p><p class="ln why"><b>Por que importa:</b> Histórico é crítico pra compliance, pra entender o que deu errado depois, e pra rastrear quem cancelou (especialmente se for devolução ou fraude). Se desaparecer, você perde a rastreabilidade. Pior: você acha que gravou mas não gravou.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (se falhar em gravar o histórico, falha silenciosamente)</b> — Cancelamentos rápidos, mas histórico pode ter buracos. Auditorias futuras podem não achar o registro.</span></li><li class=""><span class="ck"></span><span><b>Fazer a gravação do histórico ser obrigatória. Se falhar, o cancelamento inteiro falha e o vendedor recebe erro</b> — Mais lento, mas você tem certeza: ou cancelou com histórico, ou nada mudou. Zero buracos de rastreabilidade.</span></li><li class=""><span class="ck"></span><span><b>Manter gravação rápida em paralelo, mas se falhar enviar um alerta visual pra você revisar depois</b> — Cancelamento rápido, e você sabe que teve um problema e pode corrigir manualmente se raro.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2. Histórico não é opcional — se não conseguir gravar, o cancelamento não deveria acontecer. Vale o tempo de espera extra.</p></div><p class="refp">flow-055</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Se um pedido está com estoque apartado mas já passou do prazo (48 horas), o sistema o devolve automaticamente de madrugada. Quando o vendedor tenta cancelar, ele não acha o estoque pra devolver porque já foi automaticamente liberado. Confirmamos que não vai dar erro?</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Alguns pedidos muito antigos foram criados sem usar o novo registro de movimentações. Se o vendedor tentar cancelar um desses, o sistema não consegue listar as movimentações pra devolver. Problema: não vai entrar em pânico? Vai só ignorar que não tem o que devolver?</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

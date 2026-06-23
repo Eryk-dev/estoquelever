@@ -5,7 +5,7 @@ import { getValidTokenByEmpresa } from "@/lib/tiny-oauth";
 import { atualizarLocalizacaoProduto } from "@/lib/tiny-api";
 import { runWithEmpresa } from "@/lib/tiny-queue";
 import { getSessionUser } from "@/lib/session";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import { resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 
@@ -166,8 +166,10 @@ export async function POST(request: NextRequest) {
                 rsParaReemitir.push({ qty: Number(r.quantidade), ttlHoras, pedido_id: r.origem_id });
               }
 
-              // 2. Move saldo via par S+E
-              await inserirMovimentacao({
+              // 2. Move saldo via par S+E. NÃO há transação cobrindo o par: se a
+              // E falhar APÓS a S, o saldo sairia da origem sem entrar no destino
+              // = saldo REAL perdido. Compensamos estornando a S antes de propagar.
+              const movS = await inserirMovimentacao({
                 tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: srcLocId },
                 tipo: "S",
                 qty,
@@ -177,15 +179,26 @@ export async function POST(request: NextRequest) {
                 usuario_id: session.id,
                 motivo: `Mudança de loc — produto ${produtoId} pra ${trimmed}`,
               });
-              await inserirMovimentacao({
-                tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: novaLocId },
-                tipo: "E",
-                qty,
-                origem_tipo: "transferencia_localizacao",
-                origem_id: origemId,
-                origem_detalhes: { contexto: "atualizar_localizacao_produto", origem_loc_id: srcLocId },
-                usuario_id: session.id,
-              });
+              try {
+                await inserirMovimentacao({
+                  tripla: { produto_id: produtoWmsId, galpao_id: galpaoId, localizacao_id: novaLocId },
+                  tipo: "E",
+                  qty,
+                  origem_tipo: "transferencia_localizacao",
+                  origem_id: origemId,
+                  origem_detalhes: { contexto: "atualizar_localizacao_produto", origem_loc_id: srcLocId },
+                  usuario_id: session.id,
+                });
+              } catch (eErr) {
+                // Devolve o saldo à loc origem — sem isso a mudança de loc
+                // apagaria estoque real.
+                await estornarMovimentacao({
+                  mov_id: movS.id,
+                  usuario_id: session.id,
+                  motivo: "Compensação — E da transferência de loc falhou",
+                }).catch(() => {});
+                throw eErr;
+              }
               transferencias++;
 
               // 3. Reemite Rs no destino preservando TTL e pedido_id

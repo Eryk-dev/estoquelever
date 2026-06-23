@@ -7,6 +7,7 @@ import { registrarEventos } from "@/lib/historico-service";
 import { classificarItensParaCancelamento } from "@/lib/wms/cancelamento-parcial";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { estornarLiberacaoReserva } from "@/lib/wms/reservas-picking";
+import { registrarPicksCanceladosParaDevolucao } from "@/lib/wms/devolucoes";
 
 const MAX_MOVS_LOG = 50;
 
@@ -57,7 +58,7 @@ export async function POST(request: NextRequest) {
     try {
       const { data: itensRaw, error: itensErr } = await supabase
         .from("siso_pedido_itens")
-        .select("id, sku, mov_saida_id, quantidade_pega")
+        .select("id, pedido_id, sku, mov_saida_id, quantidade_pega")
         .in("pedido_id", pedido_ids);
       if (itensErr) throw new Error(`falha ao ler itens para cancelamento (D1): ${itensErr.message}`);
       const { pegos } = classificarItensParaCancelamento(
@@ -69,6 +70,23 @@ export async function POST(request: NextRequest) {
         })),
       );
       const itensParaDevolverManual = pegos.map((i) => ({ id: i.id, sku: i.sku }));
+
+      // BUG-12: cria pendência FORTE de devolução por item pego (S viva). Sem
+      // isso a peça saía da prateleira e o saldo nunca voltava (vazamento
+      // silencioso). pedido_id/mov_saida_id vêm do snapshot dos itens.
+      const pedidoIdPorItem = new Map(
+        (itensRaw ?? []).map((i) => [String(i.id), String(i.pedido_id)]),
+      );
+      const devolucoesCriadas = await registrarPicksCanceladosParaDevolucao(
+        pegos
+          .filter((p) => p.mov_saida_id)
+          .map((p) => ({
+            pedido_id: pedidoIdPorItem.get(p.id) ?? pedido_ids[0],
+            mov_saida_id: p.mov_saida_id as string,
+            sku: p.sku,
+            qty: p.quantidade_pega,
+          })),
+      );
 
       const { data: reservasAbertas, error: resQErr } = await supabase
         .from("siso_movimentacoes")
@@ -106,7 +124,9 @@ export async function POST(request: NextRequest) {
         .in("status", ["pendente", "executando", "erro"]);
 
       logger.warn("separacao-cancelar", "Pedido(s) cancelado(s) em separação parcial (D1)", {
-        pedido_ids, reservas_liberadas: reservasLiberadas, itens_devolucao_manual: itensParaDevolverManual.length,
+        pedido_ids, reservas_liberadas: reservasLiberadas,
+        itens_devolucao_manual: itensParaDevolverManual.length,
+        devolucoes_pendentes_criadas: devolucoesCriadas,
       });
 
       return NextResponse.json({
@@ -115,6 +135,7 @@ export async function POST(request: NextRequest) {
         cancelado: true,
         reservas_liberadas: reservasLiberadas,
         itens_para_devolver_manual: itensParaDevolverManual,
+        devolucoes_pendentes_criadas: devolucoesCriadas,
       });
     } catch (err) {
       logger.error("separacao-cancelar", "Erro no cancelar-pedido D1", {

@@ -338,6 +338,7 @@ async function reverseStockExecution(
       .eq("origem_id", String(pedido.id));
     const lista = (reservasAbertas ?? []) as Array<{ id: string }>;
     let liberadas = 0;
+    const naoLiberadas: string[] = [];
     for (const r of lista) {
       try {
         await estornarReservaIndividual({
@@ -347,16 +348,24 @@ async function reverseStockExecution(
         });
         liberadas++;
       } catch (e) {
-        logger.warn(LOG_SOURCE, "falha estornando R individual (segue)", {
-          pedido_id: pedido.id,
-          reserva_id: r.id,
-          error: e instanceof Error ? e.message : String(e),
+        // LOUD: o pedido vai migrar de galpão; uma R não-liberada vira RESERVADO
+        // FANTASMA no galpão origem (saldo travado, escapa de detectarReservasOrfas
+        // que só flaga status=cancelado). Direção conservadora (trava, não vende
+        // dobrado), mas precisa de visibilidade pra limpeza — logError, não warn.
+        naoLiberadas.push(r.id);
+        logger.logError({
+          error: e,
+          source: LOG_SOURCE,
+          message: "Falhou liberar R no encaminhar — reservado fantasma no galpão origem",
+          category: "business_logic",
+          metadata: { pedido_id: pedido.id, reserva_id: r.id },
         });
       }
     }
     logger.info(LOG_SOURCE, `Rs liberadas no encaminhar: ${liberadas}`, {
       pedidoId: pedido.id,
       tentadas: lista.length,
+      nao_liberadas: naoLiberadas.length,
     });
   } catch (e) {
     logger.warn(LOG_SOURCE, "falha liberando Rs (segue com reverse)", {

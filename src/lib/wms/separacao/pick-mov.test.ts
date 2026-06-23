@@ -7,8 +7,15 @@ function fakeDeps(overrides: Partial<PickMovDeps> = {}): PickMovDeps {
     resolverLocalizacaoWms: vi.fn().mockResolvedValue("default-loc-uuid"),
     buscarLocComMaiorSaldoNoGalpao: vi.fn().mockResolvedValue("live-loc-uuid"),
     buscarReservaPorProduto: vi.fn().mockResolvedValue(null),
-    liberarReservaPicking: vi.fn().mockResolvedValue({ id: "L-mov-id" }),
-    inserirMov: vi.fn().mockResolvedValue({ id: "S-mov-id" }),
+    // Espelha wms_pick_item_atomico: com reserva emite L+S (mov_l_id), sem
+    // reserva emite S-only (mov_l_id=null). Ecoa a tripla recebida.
+    pickItemAtomico: vi.fn(async (a) => ({
+      mov_l_id: a.reserva_id ? "L-mov-id" : null,
+      mov_s_id: "S-mov-id",
+      produto_id: a.produto_id,
+      galpao_id: a.galpao_id,
+      localizacao_id: a.localizacao_id,
+    })),
     registrarLinks: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
@@ -22,7 +29,7 @@ describe("pickMovPicking", () => {
       deps,
     );
     expect(result).toBeNull();
-    expect(deps.inserirMov).not.toHaveBeenCalled();
+    expect(deps.pickItemAtomico).not.toHaveBeenCalled();
   });
 
   it("uses the live reservation's loc when an R exists", async () => {
@@ -52,7 +59,7 @@ describe("pickMovPicking", () => {
     expect(result?.movSaidaId).toBe("S-mov-id");
   });
 
-  it("liberates R reservation when present (par L+S)", async () => {
+  it("liberates R reservation when present (par L+S via RPC atômica)", async () => {
     const deps = fakeDeps({
       buscarReservaPorProduto: vi
         .fn()
@@ -62,7 +69,10 @@ describe("pickMovPicking", () => {
       { empresa_origem_id: "e", galpao_id: "g", pedido_id: "p", pedido_numero: "n", item_id: 1, produto_id_tiny: "t", sku: "s", qty: 3, usuario_id: "u" },
       deps,
     );
-    expect(deps.liberarReservaPicking).toHaveBeenCalled();
+    // O par L+S sai pela RPC atômica com a reserva_id da R viva
+    expect(deps.pickItemAtomico).toHaveBeenCalledWith(
+      expect.objectContaining({ reserva_id: "R-mov-id", localizacao_id: "R-loc-uuid" }),
+    );
     expect(result?.movLiberacaoId).toBe("L-mov-id");
     expect(result?.movSaidaId).toBe("S-mov-id");
   });
@@ -92,7 +102,7 @@ describe("pickMovPicking", () => {
       deps,
     );
     expect(result).toBeNull();
-    expect(deps.inserirMov).not.toHaveBeenCalled();
+    expect(deps.pickItemAtomico).not.toHaveBeenCalled();
     expect(deps.resolverProdutoWms).not.toHaveBeenCalled();
   });
 
@@ -124,6 +134,9 @@ describe("pickMovPicking", () => {
     expect(linksArg).toHaveLength(1);
     expect(linksArg[0]).toMatchObject({ tipo_link: "saida", qty: 4 });
     expect(linksArg.find((l: { tipo_link: string }) => l.tipo_link === "liberacao_reserva")).toBeUndefined();
-    expect(deps.liberarReservaPicking).not.toHaveBeenCalled();
+    // S-only: a RPC é chamada com reserva_id=null
+    expect(deps.pickItemAtomico).toHaveBeenCalledWith(
+      expect.objectContaining({ reserva_id: null }),
+    );
   });
 });

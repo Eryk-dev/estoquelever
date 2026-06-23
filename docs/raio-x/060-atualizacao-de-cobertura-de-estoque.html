@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Atualização de cobertura de estoque — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Análise de cobertura</p>
+<h1>Atualização de cobertura de estoque</h1><p class="lead">Todos os minutos, o sistema faz uma fotografia do estoque que você tem, quanto você vende por dia, e quanto tempo o fornecedor demora pra trazer mais — daí marca quais produtos você pode vender sem problema, quais estão perto de faltar, e quais têm risco de desabastecimento.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Estoque das três dimensões (prateleira, galpão, produto) é atualizado toda vez que você recebe mercadoria, transfere ou vende — sem travar ninguém</span></li><li><span class="dot">✓</span><span>Quando você devolve uma entrada por engano, a fotografia não muda na hora, mas fica certa na próxima varredura (até 1 minuto)</span></li><li><span class="dot">✓</span><span>Se dois cliques de 'Atualizar' caem no mesmo segundo, o sistema não se perde — trabalha com os dados que tem</span></li><li><span class="dot">✓</span><span>Vendas e atualizações acontecem ao mesmo tempo que a fotografia é tirada — sem bater números errados</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P079</span>Fornecedor importante não tem tempo de entrega configurado</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Produto Z é marcado como 'fornecedor preferencial', mas ninguém preencheu o campo 'tempo de entrega' na configuração do fornecedor.</p><p class="ln"><b>Hoje:</b> O sistema consulta a configuração do fornecedor preferencial. Quando encontra que o tempo de entrega está vazio, a análise de cobertura diz 'ok' (tudo certo) — mas isso é uma falsa segurança.</p><p class="ln why"><b>Por que importa:</b> Sem saber quanto tempo o fornecedor demora para entregar, o sistema não consegue calcular se a quantidade de estoque é suficiente. Resultado: pedidos esperam mais que o previsto ou estoque acaba sem tempo de repor.</p><div class="decision"><p class="q">Como garantir que fornecedores preferenciais sempre têm tempo de entrega preenchido?</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Forçar o preenchimento: quando marcar um fornecedor como 'preferencial', obrigar a entrada do tempo de entrega (ex: não deixa salvar sem preencher).</b> — Impossível marcar 'preferencial' sem completar a informação. Garante que análise de cobertura sempre tem dados.</span></li><li class=""><span class="ck"></span><span><b>Usar padrão automático: se tempo de entrega não foi preenchido, o sistema assume 7 dias por padrão.</b> — Permite marcar 'preferencial' sem preencher agora, mas usa uma estimativa segura. Se for menor, tudo bem; se for maior, pode gerar aviso.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 1 (forçar preenchimento). Evita armadilhas silenciosas. Quando o gerente de compras marcar um fornecedor como importante, tem que informar o tempo de entrega — é uma pergunta obrigatória, como pedir RG para abrir conta bancária.</p></div><p class="refp">20260520f_mviews.sql:55-59</p></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D298</span>O que fazer com produtos que ninguém vende? Produto com zero saída em 30 dias, mas ainda tem estoque guardado — deveria avisar o dono?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Saldo e disponibilidade de estoque</span></div></div><p class="ln scn"><b>Imagina assim:</b> Produto Y no galpão SP: 50 unidades em estoque, mas nenhuma venda nos últimos 30 dias. O sistema marca como 'sem giro'.</p><p class="ln"><b>Hoje o sistema:</b> O sistema mostra a quantidade (50 un) e o status 'sem giro', mas não toma nenhuma ação automática. Fica ali, ocupando prateleira, até alguém decidir o que fazer.</p><p class="ln why"><b>Por que importa:</b> Produto parado demais vira custo — ocupa espaço, pode vencer validade, ou virou obsoleto. Dinheiro preso. Precisa de uma decisão: vai vender com desconto? vai devolver pro fornecedor? vai descontinuar?</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está: apenas sinalizar 'sem giro' pra o gerente revisar quando tiver tempo.</b> — Sem ação automática. Depende de alguém notar e tomar iniciativa. Risco: produto fica parado meses.</span></li><li class=""><span class="ck"></span><span><b>Enviar alerta após 30 dias sem venda: 'Produto Y parado 1 mês — revisar fornecedor ou descontinuar?'</b> — Aviso proativo no email/dashboard. Gerente tem chance de agir rápido antes de virar problema maior.</span></li><li class=""><span class="ck"></span><span><b>Enviar alerta após 90 dias sem venda: apenas para produtos realmente 'sepultados'.</b> — Menos avisos, mas corre risco de produto ficar muito tempo esquecido.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha opção 2 (alerta após 30 dias). Ajusta o timing conforme experiência: se achar que 30 é cedo, suba pra 45 ou 60 dias. O importante é ter uma rotina que tira esses produtos do esquecimento e força uma decisão de negócio.</p></div><p class="refp">20260520f_mviews.sql:64-76</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D163</span>Quando o tempo de entrega de um fornecedor muda, quanto tempo até o sistema refletir essa mudança?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Produto Z com fornecedor preferencial: hoje o tempo de entrega é 7 dias, estoque cobre 18 dias. Admin atualiza o fornecedor e muda o tempo para 21 dias (mais lento agora). Análise de cobertura deveria mostrar risco (18 dias &lt; 21 dias).</p><p class="ln"><b>Hoje o sistema:</b> O sistema atualiza a informação do fornecedor imediatamente no banco de dados. Mas a análise de cobertura só refaz os cálculos de 1 em 1 minuto (rotina automática do sistema). Nessa janela de tempo, o gerente vê a informação antiga.</p><p class="ln why"><b>Por que importa:</b> Se o gerente quer saber agora se tem risco de desabastecimento após a mudança do fornecedor, fica esperando até 1 minuto. Para a maioria dos casos, 1 minuto é aceitável. Mas se a urgência é imediatamente, gera frustração.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está: atualização a cada 1 minuto. Admin muda fornecedor e aguarda o ciclo seguinte pra ver reflexo no dashboard.</b> — Funciona bem para ajustes não-urgentes. Minimiza carga no sistema. Latência aceitável: &lt;= 1 minuto.</span></li><li class=""><span class="ck"></span><span><b>Recalcular imediatamente após editar fornecedor: quando admin salva uma mudança, o sistema roda a análise de cobertura na hora.</b> — Feedback imediato. Admin vê mudança no dashboard em segundos. Custa um pouco mais de processamento, mas é pontual.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha opção 1 (deixar a cada 1 minuto). 1 minuto não é problema para reposição (que é decisão de horas/dias). Se no futuro o gerente disser 'preciso ver agora', a opção 2 fica pra depois. Por enquanto, simplicidade vence.</p></div><p class="refp">20260520f_mviews.sql:55-59</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D164</span>Se um produto tem vários fornecedores, qual tempo de entrega o sistema usa para calcular cobertura?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Produto X tem 2 fornecedores mapeados: A (preferencial, 10 dias de entrega) e B (backup, tempo não preenchido). Sistema consulta a análise de cobertura.</p><p class="ln"><b>Hoje o sistema:</b> O sistema pega o fornecedor marcado como 'preferencial' (A, com 10 dias) e usa esse tempo. Se acaso o banco retornar múltiplas linhas, o SQL usa DISTINCT para garantir 1 resultado, e pega o primeiro. Se nenhum tempo foi preenchido, status vira 'risco'.</p><p class="ln why"><b>Por que importa:</b> Múltiplos fornecedores podem criar confusão: qual é o real lead time do produto? Qual é o backup? Se não houver uma regra clara, gerente fica na dúvida se a análise de cobertura é confiável.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Forçar 1 fornecedor preferencial por produto: cada produto tem exatamente um fornecedor principal, outros são opcionais/backups (sem afetar análise automática).</b> — Claro e simples. Análise de cobertura usa sempre o mesmo time de entrega. Sem ambiguidade.</span></li><li class=""><span class="ck"></span><span><b>Usar o fornecedor com menor tempo de entrega (mais otimista).</b> — Maximiza a chance de repor rápido. Mas pode ser falso otimismo se fornecedor A fica sem estoque.</span></li><li class=""><span class="ck"></span><span><b>Usar o fornecedor com maior tempo de entrega (mais conservador).</b> — Mais seguro contra atrasos. Mas pode gerar excesso de estoque se outros fornecedores forem mais rápidos.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha opção 1 (forçar 1 preferencial). Simplicidade e clareza. Se gerente quer testar outro fornecedor, alterna o 'preferencial' pra aquele e roda uma análise comparativa. Evita lógicas complexas que ninguém entende depois.</p></div><p class="refp">20260520f_mviews.sql:55-59</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Prateleira removida do sistema: estoque que estava lá não é apagado automaticamente — fica órfão e inflaciona o saldo total quando o sistema soma quantidades. Verificar se existe rotina de limpeza antes de remover uma prateleira.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Prateleira removida: precisamos validar que está vazia (zero unidades) antes de permitir a exclusão — caso contrário, mercadoria desaparece silenciosamente do controle.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

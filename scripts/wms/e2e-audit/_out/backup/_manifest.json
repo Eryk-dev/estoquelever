@@ -1,0 +1,99 @@
+{
+  "staging": "ehbxpbeijofxtsbezwxd",
+  "at": "2026-06-22T22:14:36.139Z",
+  "tables": [
+    {
+      "table": "siso_movimentacoes",
+      "rows": 11444
+    },
+    {
+      "table": "siso_estoque",
+      "rows": 5561
+    },
+    {
+      "table": "siso_custo_medio",
+      "rows": 91
+    },
+    {
+      "table": "siso_pedidos",
+      "rows": 1936
+    },
+    {
+      "table": "siso_pedido_itens",
+      "rows": 2058
+    },
+    {
+      "table": "siso_pedido_item_mov_links",
+      "rows": 3046
+    },
+    {
+      "table": "siso_fila_execucao",
+      "rows": 8945
+    },
+    {
+      "table": "siso_wms_pendencias_guarda",
+      "rows": 14
+    },
+    {
+      "table": "siso_ordens_compra",
+      "rows": 22
+    },
+    {
+      "table": "siso_devolucoes_pendentes",
+      "rows": 129
+    },
+    {
+      "table": "siso_trocas_equivalencia",
+      "rows": 24
+    },
+    {
+      "table": "siso_notas_fiscais",
+      "rows": 1533
+    },
+    {
+      "table": "siso_compras_manuais",
+      "rows": 2
+    },
+    {
+      "table": "siso_compras_manuais_itens",
+      "rows": 2
+    },
+    {
+      "table": "siso_impressoes_log",
+      "rows": 25
+    },
+    {
+      "table": "siso_localizacao_locks",
+      "rows": 83
+    },
+    {
+      "table": "siso_transferencias_galpao",
+      "rows": 0
+    },
+    {
+      "table": "siso_transferencias_galpao_itens",
+      "rows": 0,
+      "skipped": "Could not find the table 'public.siso_transferencias_galpao_itens' in the schema cache"
+    },
+    {
+      "table": "siso_inventario_sessoes",
+      "rows": 4
+    },
+    {
+      "table": "siso_inventario_operadores",
+      "rows": 2
+    },
+    {
+      "table": "siso_inventario_localizacoes",
+      "rows": 186
+    },
+    {
+      "table": "siso_inventario_contagens",
+      "rows": 158
+    },
+    {
+      "table": "siso_inventario_divergencias",
+      "rows": 160
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Desfazer uma realocação dentro do galpão — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Reabastecimento de prateleira</p>
+<h1>Desfazer uma realocação dentro do galpão</h1><p class="lead">Quando o operador percebe que moveu mercadoria pra prateleira errada (realocação dentro do galpão), ele clica em desfazer, e o sistema devolve a quantidade pra prateleira original.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">3</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Se a realocação não foi tocada (nenhuma saída posterior), desfaz limpo; o saldo volta inteiro</span></li><li><span class="dot">✓</span><span>Se alguém clicar duas vezes de nervoso, não conta em dobro (protegido contra duplo clique)</span></li><li><span class="dot">✓</span><span>Se já tinha uma devolução anterior dessa mesma realocação, bloqueia e avisa (não fica fazendo devolução em cima de devolução)</span></li><li><span class="dot">✓</span><span>Cada movimento fica registrado e rastreável — auditor vê o que foi feito, quando e por quem</span></li></ul></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D025</span>Quando alguém quer refazer uma realocação que fez dias ou semanas atrás, o sistema deixa desfazer?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 1: Uma realocação de mercadoria foi feita há 7 dias. O operador percebe que foi um erro. Tenta desfazer hoje.</p><p class="ln"><b>Hoje o sistema:</b> O sistema deixa desfazer. Ele busca todos os movimentos de 7 dias atrás e devolve a mercadoria pro lugar original.</p><p class="ln why"><b>Por que importa:</b> Se não houver limite de tempo, um operador pode tentar refazer uma realocação muito antiga e entrar em conflito com outras movimentações que aconteceram desde então (outro operador já tirou aquela mercadoria, vendeu, etc). Só assim você evita confusão e saldos errados.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar desfazer para sempre</b> — Operador pode refazer até realocações muito antigas. Risco alto: mercadoria pode ter sido vendida ou movida várias vezes desde então.</span></li><li class=""><span class="ck"></span><span><b>Bloquear desfazer após X dias (exemplo: 7 dias)</b> — Operador só consegue refazer erros recentes. Mais seguro, mas se ele descobrir um erro depois o sistema não deixa corrigir.</span></li><li class=""><span class="ck"></span><span><b>Deixar desfazer sempre, mas avisar do risco</b> — Sistema mostra na tela: 'Atenção: essa realocação é de 7 dias atrás. Mercadoria pode ter sido vendida.' Operador clica por sua conta e risco.</span></li></ul><p class="recnote"><b>Recomendo:</b> Se realocações muito antigas causam mais confusão do que ajudam, bloqueie após 7 dias. Se operadores precisam refazer erros descobertos tarde, deixe desfazer sempre com aviso em vermelho na tela. Qual é o padrão hoje no seu dia a dia: precisa-se desfazer realocações antigas?</p></div><p class="refp">movimentacoes.ts:646-680</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D026</span>Quando uma realocação move vários produtos diferentes de uma vez, se der erro no meio do caminho, o que fazer com os que já foram refazidos?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 2: Sistema realoca 3 produtos diferentes em um só comando: 5 unidades do Produto A, 3 unidades do Produto B, 2 unidades do Produto C. Tudo junto. Operador tenta refazer essa realocação em bloco.</p><p class="ln"><b>Hoje o sistema:</b> Sistema tenta refazer um por um. Se o Produto A funciona e o Produto B falha no meio do caminho, o Produto A já foi desfeito mas o Produto B fica pela metade — desfazer do C nunca acontece.</p><p class="ln why"><b>Por que importa:</b> Deixa o estoque inconsistente: alguns produtos voltaram pro lugar original, outros ficaram no lugar errado. Saldos batem errado. Só depois você descobre que parte do desfazer funcionou e outra não.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Desfazer tudo junto (tudo ou nada)</b> — Se qualquer produto falhar, nenhum volta. Mais seguro: ou desfaz completo ou fica como está. Operador sabe exatamente qual é a situação.</span></li><li class=""><span class="ck"></span><span><b>Desfazer um por um (como hoje)</b> — Mais rápido, mas se falhar no meio deixa estoque quebrado. Precisa de reconciliação manual depois.</span></li><li class=""><span class="ck"></span><span><b>Desfazer até falhar, depois pedir confirmação</b> — Sistema desfaz o que consegue e avisa: 'Produto B falhou. Já desfiz A. Quer refazer o resto manualmente?'</span></li></ul><p class="recnote"><b>Recomendo:</b> Use 'tudo ou nada': se um produto falhar, cancela a operação inteira e nada muda. Assim fica claro: ou a realocação inteira se desfaz ou fica tudo como estava. Ninguém descobre depois que ficou meio desfeito.</p></div><p class="refp">migration 20260527 line 48-100, movimentacoes.ts:664-679</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D027</span>O sistema permite refazer uma realocação se a prateleira de destino já foi esvaziada por outro fluxo (venda, separação)?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 3: Sistema realocou 5 unidades para a prateleira A-01-02. Depois um operador faz separação manual e tira 3 unidades de A-01-02 para uma venda. Agora A-01-02 tem só 2 unidades. Depois tenta refazer a realocação inteira.</p><p class="ln"><b>Hoje o sistema:</b> Sistema tenta tirar 5 unidades de A-01-02 pra voltar pra origem. Mas tem só 2. Sistema nega: 'Erro: saldo insuficiente. Não consigo tirar 5 de uma prateleira com 2.'</p><p class="ln why"><b>Por que importa:</b> Significa que a realocação virou realidade: aquelas 5 unidades realmente saíram de lá. Só 2 ainda estão lá, as outras 3 foram vendidas. Refazer a realocação inteira não faz sentido — você não pode devolver pra origem o que já foi vendido.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear refazer: avisar 'não dá, estoque foi usado'</b> — Operador tem que aceitar que o erro virou realidade. Se precisa corrigir, faz ajuste manual depois.</span></li><li class=""><span class="ck"></span><span><b>Refazer parcial: só devolve o que tá lá (2 unidades em vez de 5)</b> — Sistema devolve automaticamente o que consegue. Mas deixa dúvida: e as 3 unidades que faltam, pra onde vão?</span></li><li class=""><span class="ck"></span><span><b>Refazer e deixar saldo negativo temporário</b> — Sistema força: tira 5 de A-01-02, deixando -3. Depois você reconstrói o histórico. Muito confuso.</span></li></ul><p class="recnote"><b>Recomendo:</b> Bloqueie o refazer se não tiver estoque suficiente. Avise: 'Essa realocação virou real: 2 unidades estão em A-01-02, 3 foram vendidas. Você quer refazer só as 2 que restam?' Deixe a escolha com o operador.</p></div><p class="refp">ledger.ts:170-175, migration 20260520b line 97-98</p></div><h2>Ainda a conferir · 3</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Confirmar se o sistema valida que a prateleira de destino existe e está ativa antes de refazer uma realocação. Se alguém deletou ou desativou uma prateleira depois que a realocação foi feita, o desfazer pode quebrar.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Verificar se o sistema bloqueia refazer uma realocação enquanto tem uma contagem de inventário em progresso na prateleira de origem. Se o inventário está contando e simultaneamente o desfazer tira estoque, os números do inventário ficam errados.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Testar o comportamento exato quando tenta refazer uma realocação de uma prateleira que foi deletada do sistema.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

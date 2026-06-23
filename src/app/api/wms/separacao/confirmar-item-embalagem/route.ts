@@ -164,8 +164,13 @@ export async function POST(request: NextRequest) {
         let separacaoGalpaoId: string | null = null;
         let empresaExecId = pedido.empresa_origem_id;
 
-        let pedidoGalpaoId: string | null = null;
-        if (pedido.empresa_origem_id) {
+        // Galpão do pedido: prefere separacao_galpao_id (autoritativo, setado no
+        // roteamento). siso_empresas.galpao_id é o espelho DEPRECADO do 1º
+        // preferencial — empresa opera em N galpões, então o espelho pode
+        // apontar pro galpão errado (etiqueta/job no lugar errado). Só cai nele
+        // se o pedido ainda não tem galpão de separação.
+        let pedidoGalpaoId: string | null = pedido.separacao_galpao_id ?? null;
+        if (!pedidoGalpaoId && pedido.empresa_origem_id) {
           const { data: empresa } = await supabase
             .from("siso_empresas")
             .select("galpao_id")

@@ -1,0 +1,1671 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Movimentações de Estoque — Deep Dive</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --purple: #7e22ce;
+    --purple-bg: #f3e8ff;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 38px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 56px 0 16px; padding-top: 24px; border-top: 1px solid var(--border); }
+  h3 { font-size: 19px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 14px; font-weight: 700; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  p { margin: 0 0 14px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px; }
+  .toc ol { margin: 0; padding-left: 22px; columns: 2; column-gap: 32px; font-size: 14px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 14px 20px; margin: 20px 0; border-radius: 0 8px 8px 0; font-size: 14.5px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-purple { background: var(--purple-bg); border-color: var(--purple); }
+  .callout-cyan { background: var(--cyan-bg); border-color: var(--cyan); }
+  .callout-title { font-weight: 700; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13.5px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+  .badge-purple { background: var(--purple-bg); color: #6b21a8; }
+  .badge-cyan { background: var(--cyan-bg); color: #155e75; }
+
+  .stepper { counter-reset: step; margin: 20px 0; }
+  .stepper-item { position: relative; padding: 14px 16px 14px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 14px; top: 14px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0 0 6px; font-size: 14px; color: var(--zinc-700); }
+  .stepper-item .delta { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; background: var(--code-bg); padding: 6px 10px; border-radius: 6px; display: inline-block; margin-top: 4px; color: var(--zinc-800); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 14px 20px; margin: 10px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 4px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--zinc-700); }
+  .scenario-flow strong { color: var(--text); }
+  .scenario.green { border-left-color: var(--green); }
+  .scenario.red { border-left-color: var(--red); }
+  .scenario.purple { border-left-color: var(--purple); }
+  .scenario.cyan { border-left-color: var(--cyan); }
+
+  .formula { background: #0c4a6e; color: #f0f9ff; padding: 16px 20px; border-radius: 8px; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; margin: 16px 0; line-height: 1.7; }
+  .formula em { color: #7dd3fc; font-style: normal; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 20px 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
+  .card-big { font-size: 28px; font-weight: 700; color: var(--zinc-900); margin-bottom: 4px; }
+  .card-sub { font-size: 13px; color: var(--muted); }
+
+  .delta-table { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
+  .delta-table td { padding: 7px 12px; }
+  .delta-arrow { color: var(--accent); font-weight: 700; }
+  .delta-up { color: var(--green); font-weight: 600; }
+  .delta-down { color: var(--red); font-weight: 600; }
+  .delta-eq { color: var(--muted); font-weight: 500; }
+
+  @media (max-width: 900px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .toc ol { columns: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Movimentações de Estoque — Deep Dive</h1>
+  <p class="subtitle">Como cada operação afeta saldo, reservado, disponível, custo médio e tags de empresa — com diagramas e exemplos reais ponta a ponta.</p>
+  <p class="meta">Validação de fluxo · 2026-05-26 · cobre todos os cenários do dia a dia operacional</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#conceitos">Conceitos fundamentais</a></li>
+    <li><a href="#tipos-movimento">Os 4 tipos de movimento</a></li>
+    <li><a href="#anatomia">Anatomia de um movimento</a></li>
+    <li><a href="#custo-medio">Custo médio: como é calculado</a></li>
+    <li><a href="#recebimento">Cenário: Recebimento (em 2 etapas)</a></li>
+    <li><a href="#recebimento-direto">Cenário: Recebimento direto (entrada na prateleira)</a></li>
+    <li><a href="#venda-nf">Cenário: Venda com NF (marketplace)</a></li>
+    <li><a href="#venda-manual">Cenário: Venda manual (baixa direta vs. separação)</a></li>
+    <li><a href="#separacao-completa">Cenário: Separação completa (checkbox verde)</a></li>
+    <li><a href="#separacao-parcial">Cenário: Separação parcial (qty &lt; esperada)</a></li>
+    <li><a href="#parcial-loc-zerou">Cenário: Parcial com "loc zerou"</a></li>
+    <li><a href="#realocacao">Cenário: Realocação cascateada</a></li>
+    <li><a href="#desfazer-parcial">Cenário: Desfazer parcial (operador errou)</a></li>
+    <li><a href="#reservas">Cenário: Reservas (R → L+S)</a></li>
+    <li><a href="#transferencias">Cenário: Transferências (galpão e localização)</a></li>
+    <li><a href="#inventario">Cenário: Inventário (reconciliação temporal)</a></li>
+    <li><a href="#devolucoes">Cenário: Devoluções (cliente e fornecedor)</a></li>
+    <li><a href="#ajustes">Cenário: Ajustes manuais</a></li>
+    <li><a href="#retroativos">Cenário: Lançamento retroativo</a></li>
+    <li><a href="#estorno">Cenário: Estorno</a></li>
+    <li><a href="#matriz-impacto">Matriz: o que cada movimento afeta</a></li>
+    <li><a href="#tags-empresa">Apuração por empresa (tags em movs)</a></li>
+    <li><a href="#estados">Estados do item ao longo dos fluxos</a></li>
+    <li><a href="#bordas">Casos de borda e cenários alternativos</a></li>
+  </ol>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="resumo">1. Resumo</h2>
+<p>
+O estoque é um <strong>livro-razão imutável</strong>: nada é deletado, tudo é gravado como evento timestamped. Toda vez que algo entra, sai, é reservado ou liberado, gera uma linha nova no histórico — e essa linha carrega o <strong>saldo de antes</strong> e o <strong>saldo de depois</strong>, junto com tags que dizem <em>por que</em> aquilo aconteceu (qual empresa comprou, qual vendeu, de qual fornecedor veio, qual o custo unitário).
+</p>
+<p>
+A posição atual do estoque vive em três dimensões: <strong>produto × galpão × localização</strong>. Empresa não é mais uma "gaveta física" — é apenas uma <em>etiqueta</em> que viaja em cima do movimento, usada na apuração contábil. Custo médio é <strong>global por produto</strong> (uma só linha por SKU), recalculado toda vez que entra mercadoria com nota.
+</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">A regra de ouro</div>
+  Ninguém escreve direto na "foto" do estoque. Todo mundo escreve no <strong>livro-razão</strong>, e a foto é atualizada automaticamente como consequência. Se a foto e o livro discordarem, o livro vence.
+</div>
+
+<div class="grid-3">
+  <div class="card">
+    <div class="card-title">Saldo</div>
+    <div class="card-big">Físico</div>
+    <div class="card-sub">Quanto tem na prateleira agora. Sobe com entrada, desce com saída.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Reservado</div>
+    <div class="card-big">Apartado</div>
+    <div class="card-sub">Quanto está separado para pedidos em andamento. Sobe com R, desce com L ou conversão pra S.</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Disponível</div>
+    <div class="card-big">Vendável</div>
+    <div class="card-sub">Saldo menos reservado. É o que pode ser prometido pra um novo pedido.</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="conceitos">2. Conceitos fundamentais</h2>
+
+<h3>2.1 O que é uma "posição de estoque"</h3>
+<p>
+Uma posição de estoque é uma <strong>tripla</strong>: produto + galpão + localização. Por exemplo: <em>"SKU EW123, galpão CWB, prateleira A-03-02"</em> é uma posição. <em>"SKU EW123, galpão CWB, prateleira B-01-05"</em> é uma posição diferente. <em>"SKU EW123, galpão SP, prateleira A-03-02"</em> é uma terceira posição.
+</p>
+<p>
+Cada posição guarda três números:
+</p>
+
+<table>
+  <thead>
+    <tr><th>Campo</th><th>O que significa</th><th>Como muda</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Saldo</strong></td>
+      <td>Quantas peças estão fisicamente na localização.</td>
+      <td>Entrada soma. Saída subtrai. Reserva e liberação <em>não mexem</em>.</td>
+    </tr>
+    <tr>
+      <td><strong>Reservado</strong></td>
+      <td>Quantas peças estão "apartadas" para pedidos confirmados mas ainda não enviados.</td>
+      <td>Reserva soma. Liberação subtrai. Conversão de reserva em saída subtrai (e o saldo cai junto).</td>
+    </tr>
+    <tr>
+      <td><strong>Disponível</strong></td>
+      <td>Saldo menos reservado. Esse é o número usado para prometer estoque a um pedido novo.</td>
+      <td>Calculado automaticamente — nunca é gravado, é sempre derivado.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.2 Tipos de localização</h3>
+<table>
+  <thead>
+    <tr><th>Tipo</th><th>Função</th><th>Exemplo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><span class="badge badge-info">picking</span></td><td>Prateleira de coleta — origem padrão da separação.</td><td>A-03-02</td></tr>
+    <tr><td><span class="badge badge-neutral">overstock</span></td><td>Estoque reserva — abastece o picking via replenishment.</td><td>OVR-B-12</td></tr>
+    <tr><td><span class="badge badge-warning">recebimento</span></td><td>Doca de entrada — staging temporário para mercadoria recém-chegada.</td><td>RECEBIMENTO</td></tr>
+    <tr><td><span class="badge badge-purple">expedicao</span></td><td>Doca de saída — staging para pedidos prontos.</td><td>EXP-01</td></tr>
+    <tr><td><span class="badge badge-danger">quarentena</span></td><td>Mercadoria isolada — devolução avariada, suspeita, em análise.</td><td>QRT-A</td></tr>
+  </tbody>
+</table>
+
+<h3>2.3 Custo unitário e custo médio</h3>
+<p>
+<strong>Custo unitário</strong> é o que aparece em uma nota fiscal específica de compra — "essa peça veio a R$ 18,50". <strong>Custo médio</strong> é a média ponderada de todo o estoque atual daquele produto, e existe uma única linha por SKU (não por localização, não por empresa). Ele só muda quando entra mercadoria nova com custo informado.
+</p>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="tipos-movimento">3. Os 4 tipos de movimento</h2>
+
+<p>Todo movimento se enquadra em um dos quatro tipos:</p>
+
+<div class="diagram">
+  <div class="diagram-title">Os 4 tipos básicos — efeito em saldo e reservado</div>
+  <pre class="mermaid">
+flowchart LR
+  E["Entrada (E)<br/>saldo ↑<br/>reservado ="]:::entrada
+  S["Saída (S)<br/>saldo ↓<br/>reservado ="]:::saida
+  R["Reserva (R)<br/>saldo =<br/>reservado ↑"]:::reserva
+  L["Liberação (L)<br/>saldo =<br/>reservado ↓"]:::liberacao
+
+  classDef entrada fill:#dcfce7,stroke:#16a34a,color:#166534
+  classDef saida fill:#fee2e2,stroke:#dc2626,color:#991b1b
+  classDef reserva fill:#fef3c7,stroke:#d97706,color:#92400e
+  classDef liberacao fill:#cffafe,stroke:#0891b2,color:#155e75
+  </pre>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Tipo</th>
+      <th>O que faz</th>
+      <th>Quando acontece</th>
+      <th>Afeta custo médio?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-success">E — Entrada</span></td>
+      <td>Soma no saldo da posição.</td>
+      <td>Recebimento de compra, devolução íntegra, ganho de inventário, transferência (chegando), put-away.</td>
+      <td><strong>Sim</strong>, se vier com custo unitário.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">S — Saída</span></td>
+      <td>Subtrai do saldo da posição.</td>
+      <td>Venda com NF, venda manual, perda de inventário, ajuste pra baixo, separação concluída.</td>
+      <td>Não.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">R — Reserva</span></td>
+      <td>Aparta peças do disponível, sem tirar do saldo.</td>
+      <td>Pedido aprovado, separação em andamento.</td>
+      <td>Não.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-cyan">L — Liberação</span></td>
+      <td>Devolve peças do reservado pro disponível.</td>
+      <td>Reserva expirou, pedido cancelado, troca de localização em separação parcial, conversão R→L+S no envio.</td>
+      <td>Não.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Importante</div>
+  Reserva e Liberação <strong>nunca</strong> mexem no saldo físico. Só apartam ou desapartam peças. Quando um pedido sai pra valer (NF emitida), o que acontece é uma <strong>conversão</strong>: uma Liberação (devolve do reservado pro disponível) seguida de uma Saída (tira de verdade do saldo). É o par L+S — sempre andam juntos no envio.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="anatomia">4. Anatomia de um movimento</h2>
+
+<p>Toda linha do livro-razão carrega esses campos. Os obrigatórios estão sempre preenchidos; os opcionais só aparecem quando o tipo do movimento exige.</p>
+
+<h4>Obrigatórios — a "carteira de identidade" do movimento</h4>
+<table>
+  <thead>
+    <tr><th>Campo</th><th>Significado</th><th>Exemplo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Tipo</td><td>E, S, R ou L</td><td>S</td></tr>
+    <tr><td>Origem</td><td>Categoria do evento</td><td>nf_venda, ajuste_manual, inventario_perda, etc.</td></tr>
+    <tr><td>Produto</td><td>Qual SKU está se movendo</td><td>EW123</td></tr>
+    <tr><td>Galpão + Localização</td><td>Onde o movimento aconteceu</td><td>CWB / A-03-02</td></tr>
+    <tr><td>Quantidade</td><td>Quantas peças</td><td>3</td></tr>
+    <tr><td>Saldo anterior</td><td>O que tinha antes</td><td>10</td></tr>
+    <tr><td>Saldo posterior</td><td>O que ficou depois</td><td>7</td></tr>
+    <tr><td>Reservado anterior</td><td>Quanto estava reservado antes</td><td>2</td></tr>
+    <tr><td>Reservado posterior</td><td>Quanto ficou reservado depois</td><td>2</td></tr>
+    <tr><td>Data e hora</td><td>Timestamp do evento</td><td>2026-05-26 14:32:08</td></tr>
+    <tr><td>Quem fez</td><td>Usuário ou worker que disparou</td><td>Operador João</td></tr>
+  </tbody>
+</table>
+
+<h4>Opcionais — só preenchidos quando fazem sentido</h4>
+<table>
+  <thead>
+    <tr><th>Campo</th><th>Quando aparece</th><th>Exemplo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Empresa compradora</td><td>Entradas de NF de compra</td><td>NetAir comprou do fornecedor</td></tr>
+    <tr><td>Empresa vendedora</td><td>Saídas com NF de venda</td><td>NetParts vendeu pro cliente</td></tr>
+    <tr><td>Empresa referência</td><td>Outras movs com vínculo empresarial (inventário, retroativo)</td><td>EasyPeasy fez o ajuste</td></tr>
+    <tr><td>Fornecedor</td><td>Entradas de compra ou devolução a fornecedor</td><td>Multiqualita</td></tr>
+    <tr><td>Custo unitário</td><td>Entradas com nota — usado para recalcular custo médio</td><td>R$ 18,50</td></tr>
+    <tr><td>Custo médio anterior</td><td>Snapshot do custo médio antes da entrada</td><td>R$ 16,20</td></tr>
+    <tr><td>Custo médio posterior</td><td>Snapshot do custo médio depois da entrada</td><td>R$ 17,35</td></tr>
+    <tr><td>Cliente</td><td>Vendas e devoluções</td><td>"João Silva — pedido ML #12345"</td></tr>
+    <tr><td>Motivo</td><td>Ajustes manuais, cancelamentos, estornos</td><td>"Quebra no transporte"</td></tr>
+    <tr><td>Estorno de</td><td>Quando o movimento desfaz outro</td><td>aponta pro id do movimento estornado</td></tr>
+    <tr><td>Observações</td><td>Texto livre</td><td>"Conferido com supervisor"</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="custo-medio">5. Custo médio: como é calculado</h2>
+
+<p>
+Custo médio só muda em <strong>entradas com custo informado</strong>. Saídas, reservas, liberações, ajustes sem custo — nada disso mexe no custo médio. A fórmula é a média ponderada clássica:
+</p>
+
+<div class="formula">
+  novo_custo_medio = ( <em>saldo_atual_global</em> × custo_medio_atual + <em>qty_entrando</em> × custo_unitario ) ÷ ( <em>saldo_atual_global</em> + <em>qty_entrando</em> )
+</div>
+
+<p><strong>Saldo global</strong> = soma de todas as posições (todos os galpões, todas as localizações) daquele produto.</p>
+
+<h3>Exemplo numérico passo a passo</h3>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Estado inicial — SKU EW123</div>
+  Saldo global = 10 peças (CWB tem 6, SP tem 4). Custo médio = <strong>R$ 16,20</strong>.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Entrada 1: chega NF de compra do fornecedor Multiqualita</strong>
+    <p>20 peças do SKU EW123 entram no galpão CWB, doca RECEBIMENTO. Custo unitário na nota: R$ 18,50.</p>
+    <div class="delta">novo custo médio = (10 × 16,20 + 20 × 18,50) ÷ (10 + 20) = (162 + 370) ÷ 30 = <strong>R$ 17,73</strong></div>
+  </div>
+  <div class="stepper-item">
+    <strong>Saída: venda com NF de 5 peças</strong>
+    <p>Cliente comprou no Mercado Livre. 5 peças saem do galpão CWB.</p>
+    <div class="delta">custo médio <strong>continua R$ 17,73</strong> — saídas não mexem no custo. Saldo global cai pra 25.</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Entrada 2: nova compra, agora mais cara</strong>
+    <p>10 peças entram a R$ 22,00 cada.</p>
+    <div class="delta">novo custo médio = (25 × 17,73 + 10 × 22,00) ÷ (25 + 10) = (443,25 + 220) ÷ 35 = <strong>R$ 18,95</strong></div>
+  </div>
+  <div class="stepper-item">
+    <strong>Ajuste manual: perda de 2 peças no inventário</strong>
+    <p>Conferência apontou que faltavam 2 peças. Vira uma saída do tipo "inventario_perda".</p>
+    <div class="delta">custo médio <strong>continua R$ 18,95</strong>. Saldo global cai pra 33.</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Entrada de devolução de cliente (íntegra)</strong>
+    <p>Cliente devolveu 1 peça em perfeito estado. Volta pro estoque. Entrada sem custo unitário (não é compra nova).</p>
+    <div class="delta">custo médio <strong>continua R$ 18,95</strong> — entrada sem custo informado não recalcula. Saldo global sobe pra 34.</div>
+  </div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Por que isso importa</div>
+  Toda entrada com custo recalcula a média e grava o "antes" e o "depois" na própria linha do movimento. Isso permite reconstruir a série histórica do custo médio para qualquer produto — útil pra apuração contábil e análise de margem.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="recebimento">6. Cenário: Recebimento (em 2 etapas)</h2>
+
+<p>
+Quando chega um caminhão na doca, a mercadoria <strong>ainda não foi guardada</strong>. Por isso o recebimento é quebrado em duas etapas: <strong>conferência na doca</strong> (vira saldo na localização "RECEBIMENTO") e <strong>put-away</strong> (operador leva pra prateleira final e bipa o destino).
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Fluxo de recebimento em 2 etapas</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Chega caminhão<br/>20 peças SKU EW123<br/>NF da Multiqualita"] --> B["Etapa 1: conferência na doca<br/>Operador bipa SKU + qty"]
+  B --> C["Entrada (E) no livro-razão<br/>Localização: RECEBIMENTO<br/>Tags: fornecedor, custo, empresa compradora"]
+  C --> D["Recalcula custo médio global<br/>Sistema cria 1 pendência de guarda<br/>Imprime etiquetas (2 por folha)"]
+  D --> E["Mercadoria fica em RECEBIMENTO<br/>Aguarda put-away"]
+  E --> F["Etapa 2: put-away<br/>Operador leva pro corredor<br/>Bipa loc destino A-03-02"]
+  F --> G["Movimento par no livro-razão:<br/>Saída de RECEBIMENTO + Entrada em A-03-02"]
+  G --> H["Pendência de guarda marcada como concluída"]
+
+  style C fill:#dcfce7
+  style G fill:#dcfce7
+  style E fill:#fef3c7
+  </pre>
+</div>
+
+<h3>Exemplo concreto</h3>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Cenário</div>
+  14h32. Chegou a entrega da Multiqualita no galpão CWB: 20 peças do SKU EW123 a R$ 18,50 cada, NF emitida em nome da NetAir. Antes do recebimento: saldo global = 10, custo médio = R$ 16,20.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador João abre a tela de recebimento</strong>
+    <p>Seleciona a NF da Multiqualita. Sistema mostra os SKUs e quantidades esperadas. Ele bipa o SKU EW123 e digita 20.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava a Entrada na doca</strong>
+    <p>Linha nova no livro-razão: tipo E, origem "nf_compra", produto EW123, galpão CWB, localização RECEBIMENTO, qty 20, custo unitário R$ 18,50, empresa compradora NetAir, fornecedor Multiqualita.</p>
+    <div class="delta">saldo da posição (CWB / RECEBIMENTO) sobe de 0 → 20 · reservado fica em 0</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Custo médio global recalcula</strong>
+    <p>Saldo global vai de 10 → 30. Custo médio passa de R$ 16,20 → R$ 17,73. O snapshot do "antes" e "depois" fica gravado na própria linha do movimento.</p>
+    <div class="delta">custo_medio_anterior = 16,20 · custo_medio_posterior = 17,73</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema cria a pendência de guarda</strong>
+    <p>Uma linha no quadro de tarefas: "20 peças EW123 aguardando put-away no CWB". Imprime 10 folhas com 2 etiquetas cada (uma por unidade).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador Maria pega o carrinho e começa o put-away</strong>
+    <p>Pega 20 peças da doca, pega as etiquetas, vai pro corredor A. No tablet, abre a pendência. Bipa a primeira loc destino: A-03-02.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava o par Saída + Entrada</strong>
+    <p>Duas linhas no livro-razão com a mesma origem ("transferencia_localizacao") apontando uma pra outra: Saída de CWB / RECEBIMENTO (qty 20) e Entrada em CWB / A-03-02 (qty 20). Custo médio <strong>não muda</strong> — é só troca de localização.</p>
+    <div class="delta">RECEBIMENTO: 20 → 0 · A-03-02: 0 → 20</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Pendência de guarda fecha</strong>
+    <p>Sistema marca a pendência como concluída, com timestamp e quem guardou. As 20 peças agora estão visíveis pra venda (entram no disponível).</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="recebimento-direto">7. Cenário: Recebimento direto (entrada na prateleira)</h2>
+
+<p>
+Em entregas pequenas, achados, ou lançamentos retroativos, o operador pode <strong>pular a doca</strong> e guardar direto na prateleira. É uma entrada única — não cria pendência, não passa por RECEBIMENTO.
+</p>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Pré-requisito</div>
+  Pra usar entrada direta, <strong>todos os itens precisam ter localização destino preenchida</strong>. Se faltar, o sistema bloqueia e força o caminho de 2 etapas.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador marca "entrada direta" no recebimento</strong>
+    <p>Tela mostra alerta exigindo loc destino em todos os itens. Operador preenche: 20 peças EW123 → CWB / A-03-02.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava 1 Entrada única</strong>
+    <p>Tipo E, origem "nf_compra", produto EW123, galpão CWB, localização A-03-02 (não RECEBIMENTO), qty 20, custo unitário R$ 18,50, fornecedor Multiqualita.</p>
+    <div class="delta">A-03-02: 0 → 20 · RECEBIMENTO: 0 (intocado) · custo médio recalcula igual</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Imprime etiqueta opcional</strong>
+    <p>Operador pode disparar impressão das etiquetas mesmo sem pendência (rota alternativa do mesmo serviço).</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="venda-nf">8. Cenário: Venda com NF (marketplace)</h2>
+
+<p>
+Esse é o fluxo do dia a dia: pedido cai do Mercado Livre ou Shopee, sistema verifica saldo, reserva, separa, embala, expede. A mercadoria <strong>sai de verdade do saldo</strong> só no envio (quando a NF é emitida).
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Fluxo completo: do webhook ao envio</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Chega Pedido #12345<br/>3 itens, comprado da NetAir"] --> B{"Tem saldo<br/>completo?"}
+  B -->|Sim, mesmo galpão| C["Aprova automático"]
+  B -->|Outro galpão tem| D["Sugere transferência<br/>(painel humano)"]
+  B -->|Ninguém tem tudo| E["Vira OC<br/>(painel humano)"]
+  C --> F["Cria Reserva (R)<br/>nas locs sugeridas"]
+  D --> F
+  F --> G["Status: aguardando separação"]
+  G --> H["Operador inicia separação<br/>bipa item por item"]
+  H --> I{"Bipou tudo?"}
+  I -->|Sim| J["Status: separado"]
+  I -->|Parcial| K["Tratamento parcial<br/>(ver seção 11)"]
+  J --> L["Embalagem + etiqueta"]
+  L --> M["NF emitida pelo ERP"]
+  M --> N["Conversão R → L + S<br/>Liberação da reserva<br/>+ Saída do saldo"]
+  N --> O["Pedido expedido"]
+
+  style C fill:#dcfce7
+  style F fill:#fef3c7
+  style N fill:#fee2e2
+  style O fill:#dcfce7
+  </pre>
+</div>
+
+<h3>Exemplo concreto — item único do pedido</h3>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Cenário</div>
+  Pedido #12345 chegou via Mercado Livre, comprado na conta da NetAir, 2 peças do SKU EW123. CWB tem 20 peças em A-03-02, custo médio R$ 17,73. Saldo da posição: 20, reservado: 0, disponível: 20.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Webhook entrega o pedido</strong>
+    <p>Sistema identifica a NetAir pelo CNPJ, verifica saldo no grupo Autopeças (NetAir + NetParts), vê que CWB cobre tudo, marca como auto-aprovação.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Cria Reserva (R)</strong>
+    <p>Linha nova: tipo R, origem "reserva_pedido", produto EW123, CWB / A-03-02, qty 2, empresa referência NetAir, cliente "ML #12345".</p>
+    <div class="delta">saldo: 20 → 20 (intocado) · reservado: 0 → 2 · disponível cai de 20 → 18</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Pedido vai pra fila de separação</strong>
+    <p>Status: aguardando separação. Operador João vê na lista do galpão CWB.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João inicia a separação e bipa o produto</strong>
+    <p>Tablet diz: "Vá pra A-03-02, pegue 2 unidades do EW123". João bipa o código de barras 2 vezes. Checkbox da linha fica verde.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava a Saída no momento do bipe completo</strong>
+    <p>Conversão R → L + S em pares atômicos: Liberação (L) de qty 2 + Saída (S) de qty 2. Origem "nf_venda", empresa vendedora NetAir, cliente "ML #12345".</p>
+    <div class="delta">saldo: 20 → 18 · reservado: 2 → 0 · disponível: 18 → 18 (estável)</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Embalagem confere por bipe</strong>
+    <p>Outro operador bipa cada peça na bancada de embalagem (checklist). Confirma 2 peças. Imprime etiqueta de envio.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Expedição</strong>
+    <p>Status final: expedido. Estoque já está atualizado desde a separação — embalagem e expedição são só conferência e logística, não geram movimento.</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="venda-manual">9. Cenário: Venda manual (baixa direta vs. separação)</h2>
+
+<p>Quando o vendedor lança um pedido manual (não veio de marketplace), ele escolhe entre dois modos:</p>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Modo: separação</div>
+    <p>O pedido entra na fila normal de separação. Cria reserva (R) no momento, e o saldo só cai quando o operador bipar e separar — exatamente igual a um pedido de marketplace.</p>
+    <p><strong>Quando usar:</strong> peça precisa ser separada e embalada por outro operador, ou volume justifica o fluxo formal.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Modo: baixa direta</div>
+    <p>Sai do saldo na hora. Sistema grava uma Saída (S) com origem "venda_manual" no mesmo instante da criação do pedido.</p>
+    <p><strong>Quando usar:</strong> vendedor entregou na mão do cliente no balcão, ou já separou ele mesmo. Pula o fluxo de separação.</p>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Degradação automática</div>
+  Se vendedor pediu "baixa direta" mas <strong>algum item não tem saldo disponível</strong> no galpão escolhido, o pedido inteiro vira "separação" automaticamente. O sistema retorna explicando: "Faltou saldo no SKU XYZ, virou separação". Nunca quebra parcialmente — ou cai tudo, ou nada.
+</div>
+
+<h3>Como o sistema escolhe a localização</h3>
+<p>O vendedor escolhe apenas <strong>galpão</strong>, não localização. Sistema resolve sozinho com essa ordem de preferência:</p>
+
+<table>
+  <thead>
+    <tr><th>Prioridade</th><th>Critério</th><th>Por quê</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1º</td><td>Empresa origem do pedido tem saldo</td><td>Mantém apuração contábil consistente</td></tr>
+    <tr><td>2º</td><td>Localização tipo "picking"</td><td>Já é a prateleira de coleta — não precisa replenishment</td></tr>
+    <tr><td>3º</td><td>Maior disponível</td><td>Esvazia primeiro as posições mais cheias</td></tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="separacao-completa">10. Cenário: Separação completa (checkbox verde)</h2>
+
+<p>O caminho feliz da separação: operador acha a peça, bipa, checkbox fica verde, próxima linha.</p>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Pedido #12345 está em separação</strong>
+    <p>3 itens. Reserva (R) já foi criada na aprovação. Saldo das posições intocado, reservado refletindo as quantidades pedidas.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador bipa o primeiro item completamente</strong>
+    <p>Linha 1: 2 unidades do EW123. Bipa o código de barras 2 vezes. Checkbox da linha fica verde automaticamente quando atinge a qty esperada.</p>
+    <div class="delta">Par L+S grava: reservado 2 → 0 · saldo 20 → 18 · disponível 18 → 18</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Próximas linhas seguem igual</strong>
+    <p>Cada bipe completo gera um par L+S atômico. Custo médio <strong>nunca muda</strong> nas saídas.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Pedido inteiro fica verde</strong>
+    <p>Status muda automaticamente pra "separado". Vai pra embalagem.</p>
+  </div>
+</div>
+
+<h3>E se o operador desmarcar o checkbox?</h3>
+
+<div class="callout callout-purple">
+  <div class="callout-title">Desfazer bipe</div>
+  Operador pode desfazer um bipe antes do pedido ser concluído. Sistema executa um <strong>estorno</strong>: gera um par de movimentos invertidos (Entrada + Reserva) que zera o efeito do par L+S anterior. O reservado volta, o saldo volta. Toda a operação fica registrada no histórico — o estorno não apaga o movimento original, só o anula.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="separacao-parcial">11. Cenário: Separação parcial (qty &lt; esperada)</h2>
+
+<p>Operador chegou na A-03-02 com a expectativa de pegar 5 peças, mas só achou 3. Esse é o cenário "parcial" — o item fica com qty pega menor que a esperada, e o sistema precisa decidir o que fazer com a diferença.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Decisão na separação parcial</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Esperava 5, achou 3<br/>(linha do pedido marcada parcial)"] --> B["Operador abre modal Parcial<br/>e digita qty efetiva = 3"]
+  B --> C{"Marca<br/>'loc zerou'?"}
+  C -->|Sim| D["2 movs: Saída de 3 + Ajuste pra zerar resto<br/>+ busca automática outra loc"]
+  C -->|Não| E["Apenas Saída de 3 — não mexe no resto<br/>+ busca automática outra loc"]
+  D --> F{"Achou loc<br/>com cobertura?"}
+  E --> F
+  F -->|Sim| G["Cria realocação<br/>(linha nova de picking)"]
+  F -->|Não, cascade esgotou| H["Modal: encaminhar ou OC?"]
+  G --> I["Operador bipa loc nova"]
+  H --> J["Supervisor decide"]
+
+  style D fill:#fef3c7
+  style E fill:#fef3c7
+  style H fill:#fee2e2
+  </pre>
+</div>
+
+<h3>Exemplo: parcial sem "loc zerou"</h3>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Cenário</div>
+  Linha do pedido: 5 unidades EW123 em CWB / A-03-02. Sistema acredita que tem 5 (saldo=5, reservado=5). Operador chega lá e só encontra 3 fisicamente.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador bipa 3 vezes</strong>
+    <p>Tablet mostra "3/5". Operador clica em "Parcial" pra confirmar que não vai conseguir mais.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Modal: "Quantas peças efetivas?"</strong>
+    <p>Operador confirma 3. Pergunta: "A localização zerou?" Operador responde <strong>não</strong> — significa que ainda tem peças lá, só que a expectativa estava errada (talvez um erro de cadastro antigo).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava Saída de 3 (par L+S)</strong>
+    <p>Tipo S, origem "nf_venda", qty 3. A reserva original era de 5; o sistema libera só as 3 que saíram. Sobram 2 peças reservadas na posição.</p>
+    <div class="delta">saldo: 5 → 2 · reservado: 5 → 2 (sobraram 2 reservadas, vão pra outra loc)</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema busca automaticamente outra loc com cobertura</strong>
+    <p>Procura no mesmo galpão CWB outra posição com disponível ≥ 2 do EW123, excluindo a A-03-02 que já foi tentada. Acha em A-05-01 com saldo 8, disponível 8.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Cria realocação cascateada</strong>
+    <p>Uma linha nova no pedido (visualmente vinculada à linha original): "2 unidades EW123 — A-05-01". Cria Reserva (R) de 2 em A-05-01. Libera a reserva sobrante em A-03-02.</p>
+    <div class="delta">A-03-02 reservado: 2 → 0 (liberação) · A-05-01 reservado: 0 → 2 (nova reserva)</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador termina a separação na nova loc</strong>
+    <p>Tablet manda: "Vá pra A-05-01, pegue 2 unidades do EW123". Operador bipa. Par L+S grava.</p>
+    <div class="delta">A-05-01 saldo: 8 → 6 · reservado: 2 → 0 · disponível: 6 → 6</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="parcial-loc-zerou">12. Cenário: Parcial com "loc zerou"</h2>
+
+<p>Mesmo cenário do anterior, mas agora operador marca que a localização zerou — ou seja, o saldo cadastrado de 5 estava errado, na verdade tinha só 3.</p>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Diferença</div>
+  Quando marca "loc zerou", o sistema grava <strong>2 movimentos</strong> em vez de 1: a Saída normal de 3 + um Ajuste pra zerar o restante. O ajuste é do tipo "ajuste_pick_zerou" e zera o saldo da posição, com motivo "Operador relatou que loc zerou no picking".
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador bipa 3 e marca "loc zerou"</strong>
+    <p>Modal pergunta a qty efetiva (3) e o checkbox "A localização zerou" fica marcado.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Movimento 1: Saída de 3 (par L+S normal)</strong>
+    <p>Igual ao cenário anterior — Saída de 3 unidades, libera 3 da reserva.</p>
+    <div class="delta">saldo: 5 → 2 · reservado: 5 → 2</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Movimento 2: Ajuste pra zerar resto da loc</strong>
+    <p>Tipo S, origem "ajuste_pick_zerou", qty 2 (o restante). Motivo: "Operador relatou loc vazia no picking — divergência de cadastro". Libera a reserva sobrante junto.</p>
+    <div class="delta">saldo: 2 → 0 · reservado: 2 → 0 · disponível: 0 → 0</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema busca cobertura igual ao cenário anterior</strong>
+    <p>Mesmo fluxo: procura outra loc, cria realocação, operador continua.</p>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Por que importam os 2 movimentos</div>
+  Manter Saída e Ajuste separados deixa a auditoria limpa: a Saída tem cliente e empresa vendedora (foi venda), o Ajuste tem motivo (foi correção de cadastro). No relatório de movs por empresa, só a Saída conta como venda; o Ajuste aparece como ajuste de inventário.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="realocacao">13. Cenário: Realocação cascateada</h2>
+
+<p>
+"Cascade" porque pode acontecer várias vezes seguidas. Operador chegou na A-03-02, deu parcial — sistema indicou A-05-01. Foi pra A-05-01, também deu parcial — sistema indica A-08-02. E assim por diante. Cada tentativa é gravada como uma linha de realocação filha da anterior.
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Cascade de realocação</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Linha original<br/>5 unidades em A-03-02"] --> B["Parcial: 3 pegos<br/>2 faltando"]
+  B --> C["Realocação 1<br/>2 unidades em A-05-01"]
+  C --> D["Parcial: 1 pego<br/>1 faltando"]
+  D --> E["Realocação 2<br/>1 unidade em A-08-02"]
+  E --> F["Bipou os 2<br/>checkbox verde"]
+  F --> G["Cascade encerrou<br/>todas as filhas concluídas"]
+
+  style A fill:#fef3c7
+  style C fill:#fef3c7
+  style E fill:#dcfce7
+  style F fill:#dcfce7
+  </pre>
+</div>
+
+<h3>Quando o cascade esgota</h3>
+
+<p>Sistema sempre <strong>exclui as localizações já tentadas</strong> ao buscar a próxima. Se procurar e não achar nenhuma com cobertura no galpão, dispara modal pro operador decidir:</p>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Encaminhar pra outro galpão</div>
+    <p>Vira transferência. O outro galpão recebe a fila com aviso "preciso enviar 1 unidade EW123 pra atender pedido #12345". Pode demorar dias.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Virar OC (ordem de compra)</div>
+    <p>Item entra na fila do comprador. Sistema sugere fornecedor preferencial, lead time esperado. Pedido fica em "aguardando compra".</p>
+  </div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Detalhe</div>
+  Operador <strong>não</strong> escolhe automaticamente — o supervisor é quem decide. Por isso o sistema mostra o modal em vez de marcar o pedido como pendente sozinho. Decisão humana.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="desfazer-parcial">14. Cenário: Desfazer parcial (operador errou)</h2>
+
+<p>Operador marcou parcial, sistema gerou movimentos, realocação foi criada. Aí ele percebe que errou — talvez tenha confundido o SKU, talvez tenha contado errado. O sistema permite desfazer a operação inteira <strong>antes do pedido ser concluído</strong>.</p>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador pede "Desfazer parcial" na linha</strong>
+    <p>Sistema lista o que foi feito: Saída de 3, eventual Ajuste de 2 (se marcou "loc zerou"), realocação criada.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema gera estornos espelhados</strong>
+    <p>Pra cada movimento, cria um movimento contrário com origem "estorno" e referência ao original. Saída de 3 vira Entrada de 3. Ajuste de 2 vira Entrada de 2. Reserva da realocação é liberada.</p>
+    <div class="delta">A-03-02 saldo volta pro estado anterior · reservado volta · A-05-01 reserva sai</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Linha do pedido reseta</strong>
+    <p>Campos "qty pega" e "parcial" voltam ao estado inicial. A realocação criada é marcada como cancelada (não some — fica no histórico). Operador pode tentar de novo.</p>
+  </div>
+</div>
+
+<div class="callout callout-danger">
+  <div class="callout-title">Não dá pra desfazer depois do envio</div>
+  Se o pedido já foi expedido e a NF emitida, o desfazer parcial não está disponível. A única forma de corrigir é criar um movimento de devolução (ver seção 18) ou ajuste manual com motivo.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="reservas">15. Cenário: Reservas (R → L+S)</h2>
+
+<p>
+Reservas são o coração do sistema. Toda vez que um pedido é aprovado, o estoque das peças que ele vai consumir fica "apartado": não some do saldo físico, mas some do disponível, então ninguém mais pode prometer essas peças pra outro pedido.
+</p>
+
+<h3>Ciclo de vida da reserva</h3>
+
+<div class="diagram">
+  <div class="diagram-title">Estados possíveis de uma reserva</div>
+  <pre class="mermaid">
+flowchart LR
+  A["Pedido aprovado"] --> B["Reserva (R) criada<br/>TTL: 48h"]
+  B --> C{"O que acontece?"}
+  C -->|Pedido enviado| D["Conversão R → L + S<br/>(saldo cai de verdade)"]
+  C -->|Pedido cancelado| E["Liberação (L)<br/>(reservado volta pro disponível)"]
+  C -->|TTL expirou| F["Cleanup automático<br/>gera Liberação (L)"]
+  C -->|Realocação na separação| G["Liberação (L) na loc antiga<br/>+ Reserva (R) na nova"]
+
+  style D fill:#fee2e2
+  style E fill:#cffafe
+  style F fill:#cffafe
+  style G fill:#fef3c7
+  </pre>
+</div>
+
+<h3>Por que a conversão é "par L + S"</h3>
+
+<p>
+Quando o pedido sai, duas coisas precisam acontecer ao mesmo tempo:
+</p>
+<ol>
+  <li><strong>Liberação (L):</strong> a peça não está mais "apartada", está saindo pra valer.</li>
+  <li><strong>Saída (S):</strong> a peça sai do saldo físico.</li>
+</ol>
+<p>
+São <strong>dois movimentos separados no livro-razão</strong>, mas executados na mesma transação. Isso permite que cada um carregue suas próprias tags (a Saída leva empresa vendedora, cliente, NF; a Liberação leva apenas a referência ao pedido).
+</p>
+
+<h3>Exemplo numérico do par L+S</h3>
+
+<table class="delta-table">
+  <thead>
+    <tr>
+      <th>Momento</th>
+      <th>Saldo</th>
+      <th>Reservado</th>
+      <th>Disponível</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Antes da aprovação</td>
+      <td class="delta-eq">20</td>
+      <td class="delta-eq">0</td>
+      <td class="delta-eq">20</td>
+    </tr>
+    <tr>
+      <td>Pedido aprovado → Reserva (R) qty 2</td>
+      <td class="delta-eq">20</td>
+      <td class="delta-up">↑ 2</td>
+      <td class="delta-down">↓ 18</td>
+    </tr>
+    <tr>
+      <td>Envio: Liberação (L) qty 2</td>
+      <td class="delta-eq">20</td>
+      <td class="delta-down">↓ 0</td>
+      <td class="delta-up">↑ 20</td>
+    </tr>
+    <tr>
+      <td>Envio: Saída (S) qty 2</td>
+      <td class="delta-down">↓ 18</td>
+      <td class="delta-eq">0</td>
+      <td class="delta-down">↓ 18</td>
+    </tr>
+    <tr>
+      <td><strong>Resultado final</strong></td>
+      <td class="delta-down"><strong>18</strong></td>
+      <td class="delta-eq"><strong>0</strong></td>
+      <td class="delta-down"><strong>18</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>O que acontece se a reserva expirar</h3>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Reserva foi criada há 48h</strong>
+    <p>Pedido nunca foi separado — talvez cliente desistiu, talvez webhook de cancelamento não chegou.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Cleanup automático roda</strong>
+    <p>Job recorrente varre reservas expiradas. Pra cada uma, gera Liberação (L) com origem "liberacao_reserva" e motivo "TTL expirado".</p>
+    <div class="delta">reservado cai de volta · disponível volta a refletir o saldo físico</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="transferencias">16. Cenário: Transferências (galpão e localização)</h2>
+
+<p>Dois tipos completamente diferentes — apesar do nome parecido:</p>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">Transferência entre galpões</div>
+    <p>Mercadoria sai fisicamente de CWB e vai pra SP. Saída no galpão origem + Entrada no galpão destino, registradas em momentos diferentes (origem na largada, destino no recebimento). Pode levar dias.</p>
+    <p><strong>Status intermediário:</strong> "em trânsito" — a peça já saiu de CWB (saldo caiu) mas ainda não chegou em SP (saldo lá ainda não subiu).</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Transferência entre localizações (replenishment)</div>
+    <p>Mercadoria sai do overstock e vai pro picking, dentro do mesmo galpão. Saída + Entrada gravadas no mesmo instante. Sem status intermediário.</p>
+    <p><strong>Caso comum:</strong> picking esvaziando, sistema sugere replenishment do overstock pra repor o saldo do picking sem chamar comprador.</p>
+  </div>
+</div>
+
+<h3>Fluxo da transferência entre galpões</h3>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador CWB abre transferência</strong>
+    <p>Seleciona destino SP, escolhe 5 peças EW123 da loc A-03-02.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Saída no CWB (largada)</strong>
+    <p>Tipo S, origem "transferencia_galpao". Saldo CWB / A-03-02 cai. Custo médio global <strong>não muda</strong> — mercadoria continua sua, só mudou de endereço.</p>
+    <div class="delta">CWB / A-03-02 saldo: 5 → 0</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Status: em trânsito</strong>
+    <p>Sistema mantém o saldo "no ar". Sob a ótica do saldo global, as 5 peças ainda existem — só não estão visíveis em nenhuma localização ativa. (Internamente fica num registro de transferência aberta.)</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador SP recebe a carga</strong>
+    <p>Abre a transferência pendente no tablet. Bipa a loc destino (B-12-01) ou faz put-away normal.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Entrada no SP (chegada)</strong>
+    <p>Tipo E, origem "transferencia_galpao". Custo médio <strong>continua sem mudar</strong> — não é compra nova.</p>
+    <div class="delta">SP / B-12-01 saldo: 0 → 5</div>
+  </div>
+</div>
+
+<h3>Fluxo do replenishment intra-galpão</h3>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Picking A-03-02 do EW123 está com saldo 2 (curva A, gira rápido). Overstock OVR-B-12 tem 50 peças. Sistema sugere replenishment de 20 peças.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Operador confirma o replenishment</strong>
+    <p>Tablet mostra "Levar 20 EW123 de OVR-B-12 → A-03-02".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava par S + E na mesma transação</strong>
+    <p>Saída de OVR-B-12 (qty 20) + Entrada em A-03-02 (qty 20). Origem "transferencia_localizacao". Custo médio não muda.</p>
+    <div class="delta">OVR-B-12: 50 → 30 · A-03-02: 2 → 22 · saldo global do produto: estável</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="inventario">17. Cenário: Inventário (reconciliação temporal)</h2>
+
+<p>
+Inventário é o momento em que o saldo cadastrado é comparado com o saldo físico contado. A peculiaridade aqui é a <strong>reconciliação temporal</strong>: o operador pode estar contando uma localização <em>enquanto</em> outras movimentações acontecem na mesma loc (pedidos sendo separados, mercadoria sendo guardada). O sistema não pode simplesmente comparar "saldo agora" com "qty contada agora" — ele precisa reconstruir o saldo no <strong>instante exato do bipe</strong>.
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Fluxo do inventário com reconciliação temporal</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Supervisor cria sessão<br/>tipo Cycle Inteligente"] --> B["Sistema sugere pool de locs<br/>(curva A + divergentes + antigas)"]
+  B --> C["Operadores entram na party"]
+  C --> D["Operador puxa próxima loc<br/>(claim hierárquico: rua/prédio)"]
+  D --> E["Bipa todos os SKUs encontrados<br/>(timestamp em cada bipe)"]
+  E --> F{"Loc parecia vazia?"}
+  F -->|Sim| G["Modal: confirma vazia<br/>(distingue de não-visitada)"]
+  F -->|Não| H["Finaliza loc"]
+  G --> H
+  H --> I["Sistema reconcilia temporal:<br/>saldo no instante do 1º bipe<br/>+ movs entre bipe e aprovação"]
+  I --> J{"Bate ou diverge?"}
+  J -->|Bate| K["Status: contada<br/>sem ação adicional"]
+  J -->|Diverge| L["Status: divergente<br/>vai pro relatório do supervisor"]
+  L --> M["Supervisor aprova<br/>ou cancela divergência"]
+  M --> N["Aplicar: gera mov<br/>de perda ou ganho"]
+
+  style I fill:#fef3c7
+  style L fill:#fee2e2
+  style N fill:#dcfce7
+  </pre>
+</div>
+
+<h3>Como a reconciliação temporal funciona</h3>
+
+<div class="callout callout-cyan">
+  <div class="callout-title">Cenário</div>
+  Loc A-03-02 tem saldo cadastrado = 20 às 14h00. Operador inicia contagem às 14h15. Enquanto conta, 14h20 alguém embala um pedido que tinha reserva (par L+S de 2). 14h25 chegou put-away com +5. Operador termina a contagem às 14h30, contou <strong>23 peças fisicamente</strong>. Saldo cadastrado agora = 20 - 2 + 5 = 23.
+</div>
+
+<p>Pergunta: <em>tem divergência?</em></p>
+
+<p><strong>Resposta:</strong> não. O operador contou no momento certo. Mas o sistema não pode simplesmente comparar "23 contadas" com "23 cadastradas agora" — ele tem que reconstruir o saldo <strong>às 14h15 (instante do primeiro bipe)</strong>:</p>
+
+<div class="formula">
+  saldo_esperado = saldo_no_primeiro_bipe + <em>Σ movs entre o primeiro bipe e o último bipe</em>
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Sistema busca o snapshot do saldo no 1º bipe</strong>
+    <p>Vai no livro-razão e pega a primeira movimentação <em>posterior</em> ao 14h15. O campo "saldo anterior" dessa movimentação é exatamente o saldo no instante 14h15 — vale 20.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Soma as movs durante a contagem</strong>
+    <p>14h20: Saída de 2 (par L+S). 14h25: Entrada de 5 (put-away). Soma líquida: -2 + 5 = +3.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Calcula o saldo esperado</strong>
+    <p>20 + 3 = 23.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Compara com o contado</strong>
+    <p>Contado = 23. Esperado = 23. <strong>Sem divergência.</strong></p>
+  </div>
+</div>
+
+<h3>Quando o saldo bate, quando diverge</h3>
+
+<table>
+  <thead>
+    <tr><th>Situação</th><th>Saldo esperado</th><th>Contado</th><th>Resultado</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Tudo certo</td>
+      <td>23</td>
+      <td>23</td>
+      <td><span class="badge badge-success">contada</span></td>
+    </tr>
+    <tr>
+      <td>Peças sumiram</td>
+      <td>23</td>
+      <td>20</td>
+      <td><span class="badge badge-danger">divergente (perda de 3)</span></td>
+    </tr>
+    <tr>
+      <td>Peças apareceram</td>
+      <td>23</td>
+      <td>25</td>
+      <td><span class="badge badge-warning">divergente (ganho de 2)</span></td>
+    </tr>
+    <tr>
+      <td>Loc reportada como vazia</td>
+      <td>23</td>
+      <td>0 (vazia confirmada)</td>
+      <td><span class="badge badge-danger">divergente (perda de 23)</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Aplicação da divergência</h3>
+
+<p>Supervisor aprova as divergências aceitáveis. Sistema gera os movimentos:</p>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Divergência aprovada: perda de 3 peças</strong>
+    <p>Sistema grava 1 Saída tipo S, origem "inventario_perda", qty 3, motivo "Inventário ciclo 2026-05-26", empresa referência (a empresa que conduziu o inventário).</p>
+    <div class="delta">saldo cai. Reservado intocado. Custo médio intocado (saída não mexe).</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Divergência aprovada: ganho de 2 peças</strong>
+    <p>Sistema grava 1 Entrada tipo E, origem "inventario_ganho", qty 2. <strong>Sem custo unitário</strong> — não é compra nova, é mercadoria que apareceu (provavelmente erro de cadastro anterior). Custo médio fica igual.</p>
+    <div class="delta">saldo sobe. Custo médio intocado.</div>
+  </div>
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Cuidado com o "loc vazia"</div>
+  Se operador <em>não bipou nada</em> na loc, sistema não sabe se a loc está vazia <em>ou se ele não visitou ainda</em>. Por isso o modal "loc vazia?" — sem essa confirmação explícita, a loc fica pendente.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="devolucoes">18. Cenário: Devoluções (cliente e fornecedor)</h2>
+
+<p>Devolução é qualquer mercadoria voltando contra o fluxo natural. Tem 4 categorias possíveis, classificadas pelo operador no recebimento:</p>
+
+<table>
+  <thead>
+    <tr><th>Classe</th><th>Quem devolveu</th><th>Estado da peça</th><th>O que vira no estoque</th><th>Afeta custo médio?</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-success">A</span></td>
+      <td>Cliente</td>
+      <td>Íntegra, lacrada, vendável</td>
+      <td>Entrada em loc de picking — disponível pra venda imediata</td>
+      <td>Não (sem custo unitário)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">B</span></td>
+      <td>Cliente</td>
+      <td>Avariada mas recuperável</td>
+      <td>Entrada em QUARENTENA — espera análise/conserto</td>
+      <td>Não</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">C</span></td>
+      <td>Cliente</td>
+      <td>Perda total (quebrou, sumiu, vazou)</td>
+      <td>Sem entrada — registra ocorrência mas mercadoria some</td>
+      <td>Não</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-cyan">D</span></td>
+      <td>Fornecedor (devolução pra ele)</td>
+      <td>Sai do nosso estoque, volta pro fornecedor</td>
+      <td>Saída do estoque com tag de fornecedor</td>
+      <td>Não (saída não mexe)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Exemplo: devolução de cliente íntegra (classe A)</h3>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Chega devolução de cliente</strong>
+    <p>NF de entrada de devolução. Operador verifica fisicamente: peça íntegra, lacrada. Classifica como A.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava Entrada</strong>
+    <p>Tipo E, origem "devolucao_cliente_integra", qty 1, sem custo unitário, com referência ao pedido original e cliente.</p>
+    <div class="delta">saldo da loc de picking: 18 → 19 · custo médio intocado</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Disponível volta imediatamente</strong>
+    <p>Peça já pode ser vendida pra outro pedido.</p>
+  </div>
+</div>
+
+<h3>Exemplo: devolução de cliente avariada (classe B)</h3>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Peça volta amassada</strong>
+    <p>Operador classifica B. Sistema cria Entrada em QUARENTENA com origem "devolucao_cliente_avariada".</p>
+    <div class="delta">QUARENTENA saldo: 0 → 1 · disponível não muda (quarentena não é vendável)</div>
+  </div>
+  <div class="stepper-item">
+    <strong>Análise posterior decide o destino</strong>
+    <p>Pode virar transferência pra picking (se for recuperada), pode virar ajuste de perda (se for descartada), pode virar devolução pra fornecedor.</p>
+  </div>
+</div>
+
+<h3>Exemplo: devolução pra fornecedor (classe D)</h3>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Comprador decide devolver lote inteiro pro fornecedor</strong>
+    <p>Identifica 10 peças avariadas que vieram com defeito. Cria devolução de saída com tag de fornecedor.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema grava Saída</strong>
+    <p>Tipo S, origem "devolucao_fornecedor_enviada", qty 10, fornecedor Multiqualita. Motivo: "Lote com defeito de fábrica".</p>
+    <div class="delta">QUARENTENA saldo: 10 → 0 · custo médio intocado</div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="ajustes">19. Cenário: Ajustes manuais</h2>
+
+<p>Ajuste é a válvula de escape pra correções que não se enquadram em nenhum dos outros fluxos. <strong>Sempre exige motivo</strong>. Pode ser pra cima ou pra baixo.</p>
+
+<table>
+  <thead>
+    <tr><th>Caso</th><th>Direção</th><th>Origem registrada</th><th>Exemplo de motivo</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Achou peça perdida</td><td>Entrada</td><td>ajuste_manual</td><td>"Encontrada atrás da prateleira durante limpeza"</td></tr>
+    <tr><td>Quebra acidental</td><td>Saída</td><td>ajuste_manual</td><td>"Operador deixou cair, peça quebrou"</td></tr>
+    <tr><td>Erro de cadastro antigo</td><td>Saída (ou Entrada)</td><td>ajuste_manual</td><td>"Saldo cadastrado nunca conferiu, ajustando pro real"</td></tr>
+    <tr><td>Reclassificação fiscal</td><td>Entrada (sem custo)</td><td>ajuste_manual</td><td>"SKU mudou, peças realocadas"</td></tr>
+  </tbody>
+</table>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Cuidado</div>
+  Ajuste manual <strong>não recalcula custo médio</strong> nem mesmo quando é entrada — porque não é compra de verdade. Se você precisar corrigir custo, o caminho certo é usar lançamento retroativo (próximo cenário) com custo unitário.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="retroativos">20. Cenário: Lançamento retroativo</h2>
+
+<p>
+Mercadoria entrou ou saiu sem registro no sistema. Talvez foi um achado, talvez uma venda manual que ninguém lançou na época, talvez uma compra antiga que foi esquecida. Lançamento retroativo registra <strong>agora</strong> um evento que aconteceu <strong>antes</strong>.
+</p>
+
+<div class="diagram">
+  <div class="diagram-title">Fluxo do retroativo + reconciliação</div>
+  <pre class="mermaid">
+flowchart TD
+  A["Comprador percebe<br/>compra não registrada<br/>(NF antiga)"] --> B["Lança retroativo<br/>tipo E, qty 10<br/>data: 3 semanas atrás"]
+  B --> C["Sistema grava Entrada<br/>origem: lancamento_retroativo<br/>com timestamp histórico"]
+  C --> D["Pendência de reconciliação<br/>aparece pra revisão"]
+  D --> E{"Reconciliar com<br/>mov real?"}
+  E -->|Sim| F["Marca como reconciliado<br/>vincula movs"]
+  E -->|Não, só registro| G["Fica como mov isolado<br/>(documental)"]
+
+  style C fill:#fef3c7
+  style F fill:#dcfce7
+  </pre>
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Comprador descobre NF antiga não lançada</strong>
+    <p>Compra de 10 peças EW123 a R$ 17,00 que aconteceu 3 semanas atrás, mas nunca virou recebimento no sistema.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Lança retroativo com data histórica</strong>
+    <p>Tipo E, origem "lancamento_retroativo", qty 10, custo unitário R$ 17,00. Data do movimento: 3 semanas atrás.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema avisa: custo médio histórico fica incorreto</strong>
+    <p>Como o movimento é retroativo, recalcular o custo médio "no momento" daquela data alteraria a série histórica. O sistema usa o custo médio <strong>atual</strong> como base e recalcula a partir de hoje, deixando uma observação explícita no histórico.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Pendência de reconciliação aparece</strong>
+    <p>Sistema cria uma pendência: "verifique se essa entrada retroativa não corresponde a alguma outra movimentação que já está no sistema". Operador revisa e decide.</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="estorno">21. Cenário: Estorno</h2>
+
+<p>
+Estorno é o "control+Z" controlado. Não apaga o movimento original — cria um movimento <strong>contrário</strong> que aponta pro original, anulando o efeito numericamente mas preservando o histórico completo. Usado quando alguém errou e precisa reverter.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Mov original</th><th>Mov de estorno</th><th>Efeito</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Entrada (E) qty 10</td><td>Saída (S) qty 10, origem "estorno"</td><td>Saldo volta a -10 · custo médio <em>não desfaz</em> automaticamente (caso manual)</td></tr>
+    <tr><td>Saída (S) qty 5</td><td>Entrada (E) qty 5, origem "estorno"</td><td>Saldo volta a +5</td></tr>
+    <tr><td>Reserva (R) qty 3</td><td>Liberação (L) qty 3, origem "estorno"</td><td>Reservado cai 3</td></tr>
+    <tr><td>Liberação (L) qty 3</td><td>Reserva (R) qty 3, origem "estorno"</td><td>Reservado sobe 3</td></tr>
+  </tbody>
+</table>
+
+<div class="callout callout-danger">
+  <div class="callout-title">Custo médio não estorna automaticamente</div>
+  Se você estorna uma Entrada que recalculou o custo médio, o custo médio <em>não volta sozinho</em> ao valor anterior. Isso é proposital: outras movimentações podem ter usado o custo recalculado como base, e voltar atrás criaria inconsistência histórica. Se precisar corrigir o custo, faça um ajuste manual com observação.
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="matriz-impacto">22. Matriz: o que cada movimento afeta</h2>
+
+<p>Visão consolidada — todas as origens de movimento e o que cada uma muda:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Origem</th>
+      <th>Tipo</th>
+      <th>Saldo</th>
+      <th>Reservado</th>
+      <th>Custo médio</th>
+      <th>Tags típicas</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>nf_compra</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-up">recalcula</td>
+      <td>fornecedor, empresa compradora, custo unitário</td>
+    </tr>
+    <tr>
+      <td>nf_venda</td>
+      <td>S</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>empresa vendedora, cliente</td>
+    </tr>
+    <tr>
+      <td>venda_manual</td>
+      <td>S</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>empresa vendedora, cliente</td>
+    </tr>
+    <tr>
+      <td>reserva_pedido</td>
+      <td>R</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td>empresa referência, pedido</td>
+    </tr>
+    <tr>
+      <td>liberacao_reserva</td>
+      <td>L</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td>empresa referência, motivo (TTL/cancel)</td>
+    </tr>
+    <tr>
+      <td>transferencia_galpao</td>
+      <td>S (origem) + E (destino)</td>
+      <td class="delta-down">↓ ou ↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>galpão origem, galpão destino</td>
+    </tr>
+    <tr>
+      <td>transferencia_localizacao</td>
+      <td>S + E</td>
+      <td class="delta-down">↓ ou ↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>loc origem, loc destino</td>
+    </tr>
+    <tr>
+      <td>ajuste_manual (entrada)</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">= (sem custo)</td>
+      <td>motivo, empresa referência</td>
+    </tr>
+    <tr>
+      <td>ajuste_manual (saída)</td>
+      <td>S</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>motivo, empresa referência</td>
+    </tr>
+    <tr>
+      <td>ajuste_pick_zerou</td>
+      <td>S</td>
+      <td class="delta-down">↓ (zera resto)</td>
+      <td class="delta-down">↓ (libera reservado)</td>
+      <td class="delta-eq">=</td>
+      <td>pedido, operador</td>
+    </tr>
+    <tr>
+      <td>inventario_perda</td>
+      <td>S</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>sessão de inventário, empresa referência</td>
+    </tr>
+    <tr>
+      <td>inventario_ganho</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">= (sem custo)</td>
+      <td>sessão de inventário</td>
+    </tr>
+    <tr>
+      <td>inventario_inicial</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-up">define inicial</td>
+      <td>snapshot do ERP de origem</td>
+    </tr>
+    <tr>
+      <td>devolucao_cliente_integra</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">= (sem custo)</td>
+      <td>cliente, pedido original</td>
+    </tr>
+    <tr>
+      <td>devolucao_cliente_avariada</td>
+      <td>E (em QUARENTENA)</td>
+      <td class="delta-up">↑ na quarentena</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>cliente, motivo</td>
+    </tr>
+    <tr>
+      <td>devolucao_fornecedor_recebida</td>
+      <td>E</td>
+      <td class="delta-up">↑</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-up">recalcula (vem com custo)</td>
+      <td>fornecedor</td>
+    </tr>
+    <tr>
+      <td>devolucao_fornecedor_enviada</td>
+      <td>S</td>
+      <td class="delta-down">↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-eq">=</td>
+      <td>fornecedor, motivo</td>
+    </tr>
+    <tr>
+      <td>lancamento_retroativo</td>
+      <td>E ou S</td>
+      <td class="delta-up">↑ ou ↓</td>
+      <td class="delta-eq">=</td>
+      <td class="delta-up">opcional (se custo informado)</td>
+      <td>data histórica, motivo</td>
+    </tr>
+    <tr>
+      <td>estorno</td>
+      <td>tipo contrário ao original</td>
+      <td class="delta-up">inverte</td>
+      <td class="delta-up">inverte</td>
+      <td class="delta-eq">= (não desfaz)</td>
+      <td>referência ao movimento original</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="tags-empresa">23. Apuração por empresa (tags em movs)</h2>
+
+<p>
+Como empresa não é mais coordenada física, a apuração contábil "quanto cada empresa vendeu / comprou / movimentou" sai dos <strong>relatórios</strong> que filtram movimentos pelas tags. Existem 3 cortes:
+</p>
+
+<div class="grid-3">
+  <div class="card">
+    <div class="card-title">Movs por empresa</div>
+    <p>Filtra todas as movimentações marcadas com determinada empresa (compradora, vendedora ou referência) em um intervalo de datas. Mostra cada movimento individualmente.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Histórico de custo</div>
+    <p>Série temporal do custo médio por produto, montada a partir do "custo médio anterior" → "custo médio posterior" gravados em cada entrada com custo informado.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Saldos por empresa</div>
+    <p>Saldo "virtual" recomposto a partir das movs: soma das entradas marcadas com empresa X menos soma das saídas marcadas com empresa X. Não é coordenada física — é um corte contábil.</p>
+  </div>
+</div>
+
+<h3>Como as tags são preenchidas</h3>
+
+<table>
+  <thead>
+    <tr><th>Tag</th><th>Quando preenche</th><th>Quem aparece</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Empresa compradora</td>
+      <td>Entradas com NF de compra</td>
+      <td>Empresa em cujo CNPJ a NF de entrada foi emitida</td>
+    </tr>
+    <tr>
+      <td>Empresa vendedora</td>
+      <td>Saídas com NF de venda</td>
+      <td>Empresa em cujo CNPJ a NF de saída foi emitida</td>
+    </tr>
+    <tr>
+      <td>Empresa referência</td>
+      <td>Movs sem NF (inventário, ajustes, retroativos)</td>
+      <td>Empresa que conduziu a operação</td>
+    </tr>
+    <tr>
+      <td>Fornecedor</td>
+      <td>Entradas de compra e devoluções a fornecedor</td>
+      <td>Fornecedor envolvido (Multiqualita, Tiger, etc.)</td>
+    </tr>
+    <tr>
+      <td>Cliente</td>
+      <td>Vendas e devoluções de cliente</td>
+      <td>Identificador do pedido + nome do cliente</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="estados">24. Estados do item ao longo dos fluxos</h2>
+
+<p>O item dentro de um pedido passa por essa sequência:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-warning">aguardando_compra</span></td>
+      <td>Item virou OC, aguarda comprador adquirir</td>
+      <td>Aprovação detectou que ninguém tem saldo</td>
+      <td>Comprador recebe a peça e marca recebida</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">aguardando_nf</span></td>
+      <td>Pedido aprovado, NF ainda não foi emitida no ERP</td>
+      <td>Aprovação do pedido</td>
+      <td>Webhook de NF emitida chega</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">aguardando_separacao</span></td>
+      <td>Pronto pra ser separado, na fila do operador</td>
+      <td>NF emitida (ou venda manual modo separação)</td>
+      <td>Operador inicia separação</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">em_separacao</span></td>
+      <td>Operador está bipando os itens</td>
+      <td>Operador clicou "iniciar separação"</td>
+      <td>Todos os itens bipados (vai pra separado) ou conclusão parcial</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">pendente_realocacao</span></td>
+      <td>Short pick sem cobertura no galpão — precisa supervisor</td>
+      <td>Cascade de realocação esgotou e operador escolheu "marcar pendente"</td>
+      <td>Supervisor encaminha pra outro galpão ou converte em OC</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">separado</span></td>
+      <td>Todos os itens bipados, aguarda embalagem</td>
+      <td>Último item recebeu checkbox verde</td>
+      <td>Operador inicia embalagem</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">embalado</span></td>
+      <td>Embalagem confirmada, aguarda expedição</td>
+      <td>Bipe completo na bancada de embalagem</td>
+      <td>Operador clica "expedir"</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-purple">expedido</span></td>
+      <td>Saiu pra entrega</td>
+      <td>Confirmação na expedição</td>
+      <td>Estado final (ou devolução posterior)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<h2 id="bordas">25. Casos de borda e cenários alternativos</h2>
+
+<p>Situações fora do caminho feliz que o sistema precisa tratar:</p>
+
+<div class="scenario red">
+  <div class="scenario-title">Operador bipa um SKU que não estava no pedido</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Pedido pedia EW123, operador bipou TG456 (SKU parecido na prateleira ao lado).<br/><strong>O que o sistema faz:</strong> Rejeita o bipe — o checkbox da linha não progride. Tablet emite som de erro e mostra "SKU não corresponde — esperado EW123".<br/><strong>O usuário vê:</strong> Mensagem de erro vermelha, contador segue 0/N. Nenhum movimento é gravado.</div>
+</div>
+
+<div class="scenario red">
+  <div class="scenario-title">Tenta separar item de pedido cancelado</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Cliente cancelou no marketplace enquanto o pedido estava em separação.<br/><strong>O que o sistema faz:</strong> Webhook de cancelamento chega. Sistema bloqueia novos bipes no pedido e gera Liberação (L) das reservas que ainda não viraram saída. Reservado volta pro disponível.<br/><strong>O usuário vê:</strong> Tablet trava com aviso "pedido cancelado, devolva os itens à prateleira". Lista do operador remove o pedido.</div>
+</div>
+
+<div class="scenario red">
+  <div class="scenario-title">Dois operadores tentam reservar o mesmo saldo ao mesmo tempo</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Loc A-03-02 tem disponível = 3. Dois pedidos chegam simultaneamente, cada um precisando de 2 peças.<br/><strong>O que o sistema faz:</strong> Lock atômico na posição. Primeiro pedido garante reserva de 2 (disponível cai pra 1). Segundo pedido não consegue cobrir as 2 que precisa em A-03-02 — sistema busca outra loc ou marca pra OC.<br/><strong>O usuário vê:</strong> Pedido 1 vai pro caminho normal. Pedido 2 aparece no painel com "estoque parcial — verificar".</div>
+</div>
+
+<div class="scenario red">
+  <div class="scenario-title">Loc estava marcada com saldo, operador chega e está fisicamente vazia</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Cadastro diz saldo 5 na A-03-02. Operador chega, prateleira vazia.<br/><strong>O que o sistema faz:</strong> Operador marca "parcial + loc zerou" com qty efetiva 0. Sistema grava só o ajuste pra zerar (não há Saída — não pegou nada). Busca cobertura em outra loc.<br/><strong>O usuário vê:</strong> Modal de parcial com qty 0, linha do pedido fica esperando a realocação.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Reserva expirou enquanto o pedido estava em "aguardando_nf"</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Pedido foi aprovado, reservas criadas, mas o ERP demorou 50h pra emitir a NF. Reservas têm TTL de 48h.<br/><strong>O que o sistema faz:</strong> Cleanup automático gera Liberações. Quando a NF finalmente chega e o pedido vai pra separação, o sistema <strong>recria as reservas</strong> no instante da transição pra aguardando_separacao.<br/><strong>O usuário vê:</strong> Sem percepção visível — o sistema reconcilia sozinho. Se nesse meio tempo alguém vendeu o saldo pra outro pedido, o item entra como "estoque parcial" na nova verificação.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Bipe duplicado por engano</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Operador bipou o mesmo código duas vezes seguidas (leitor com bug, mão tremeu).<br/><strong>O que o sistema faz:</strong> Aceita o bipe enquanto o contador não passar da qty esperada. Se passar, rejeita o segundo bipe.<br/><strong>O usuário vê:</strong> Contador pula de 2/5 pra 4/5 quando deveria ser 3/5. Operador percebe, clica em "desfazer bipe" e refaz.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Pedido tem kit (produto composto por outros)</div>
+  <div class="scenario-flow"><strong>Situação:</strong> SKU KIT-XYZ é na verdade 3 peças: EW123 + TG456 + LD789.<br/><strong>O que o sistema faz:</strong> Na aprovação, explode o kit. Cria reservas pras 3 peças individuais nas locs delas. Operador bipa as 3 peças, não o "KIT".<br/><strong>O usuário vê:</strong> Tablet mostra 3 linhas separadas, uma pra cada componente. Cliente recebe a NF com o kit consolidado (não as peças individuais).</div>
+</div>
+
+<div class="scenario purple">
+  <div class="scenario-title">Comprador troca SKU na compra (item original esgotado)</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Pedido pede EW123, mas o fornecedor não tem mais. Comprador propõe trocar pelo equivalente EW123-B.<br/><strong>O que o sistema faz:</strong> Quando aprovado, gera 2 movimentos com a mesma origem na separação posterior: Saída do EW123 (qty 0, apenas registro) + Entrada do EW123-B na separação. Tag de "troca de SKU" liga os dois.<br/><strong>O usuário vê:</strong> Linha do pedido mostra o novo SKU. Histórico mantém os dois.</div>
+</div>
+
+<div class="scenario cyan">
+  <div class="scenario-title">Inventário detecta divergência pequena, dentro da tolerância</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Sessão de inventário tem tolerância de 2%. Contado 100, esperado 102 — divergência de 2%.<br/><strong>O que o sistema faz:</strong> Marca como "dentro da tolerância" automaticamente. Não gera ajuste. Fica só registrado pra análise futura.<br/><strong>O usuário vê:</strong> Loc fica verde com observação "divergência 2% — dentro da tolerância". Não precisa aprovação do supervisor.</div>
+</div>
+
+<div class="scenario cyan">
+  <div class="scenario-title">Entrada de devolução chega antes do ajuste de saída original</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Cliente devolveu peça. Devolução chega no sistema antes do estorno da venda original processar.<br/><strong>O que o sistema faz:</strong> Entrada de devolução é gravada normalmente — sobe saldo. O sistema não exige sincronia entre devolução e venda original. A reconciliação acontece no relatório de devoluções, não no momento do movimento.<br/><strong>O usuário vê:</strong> Saldo subiu, peça disponível pra revender. Aviso no relatório se a venda original ainda não foi marcada como devolvida.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Operador encerra inventário antes do pool acabar</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Supervisor pediu pra parar — turno acabou, mas restam 30 locs sem contar.<br/><strong>O que o sistema faz:</strong> Modal: "Subir parcial ou cancelar tudo?". Se subir parcial, locs contadas viram divergências normais; locs não contadas voltam pro pool da próxima sessão. Se cancelar, descarta todas as contagens dessa sessão sem aplicar nenhum movimento.<br/><strong>O usuário vê:</strong> Relatório mostra "sessão encerrada parcial — N locs contadas, M pendentes".</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Transferência entre galpões fica parada em "trânsito" por dias</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Operador CWB deu largada na transferência. Caminhão demorou 4 dias. SP ainda não recebeu.<br/><strong>O que o sistema faz:</strong> Mantém o estado "em trânsito" indefinidamente. Saldo CWB já caiu, SP ainda não subiu. Não há TTL — transferência só fecha com confirmação física.<br/><strong>O usuário vê:</strong> Painel do supervisor mostra "transferências em trânsito > X dias" como alerta. Pode cancelar a transferência (gera estorno) ou aguardar.</div>
+</div>
+
+<div class="scenario green">
+  <div class="scenario-title">Pedido aprovado quando o estoque já não existe (race condition)</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Sistema sugere "própria" baseado em verificação de saldo às 10h00. Operador aprovou às 10h05. Nesse intervalo, outro pedido já consumiu o saldo.<br/><strong>O que o sistema faz:</strong> Frontend desabilita o botão "aprovar como própria" se o saldo live não cobre. Se mesmo assim a aprovação foi disparada com saldo desatualizado, o backend valida no momento da criação da reserva — se faltar saldo, retorna erro e mantém o pedido pendente.<br/><strong>O usuário vê:</strong> Botão "própria" fica cinza com tooltip "saldo insuficiente — verifique no estoque atual". Operador escolhe outra opção (transferência ou OC).</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Custo médio fica negativo ou estranho após operação</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Histórico tem entradas e saídas com timestamps fora de ordem (retroativos misturados). Algumas contas podem dar custo médio inesperado.<br/><strong>O que o sistema faz:</strong> Há validação: custo médio nunca pode ser negativo. Se o cálculo daria negativo, sistema rejeita a operação e exige ajuste manual com observação.<br/><strong>O usuário vê:</strong> Erro explícito: "operação rejeitada — geraria custo médio negativo. Revise os lançamentos retroativos." Pendência aparece no painel pra revisão.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Reconciliação periódica detecta saldo do livro-razão diferente do cache</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Job recorrente compara a soma dos movimentos de cada posição com o saldo atual armazenado na "foto" do estoque. Detectou que estão diferentes — provavelmente um bug ou crash deixou inconsistente.<br/><strong>O que o sistema faz:</strong> Loga a divergência. Job tem modo "fix" que reconstrói a foto a partir do livro-razão (que é a fonte de verdade). Operador é notificado.<br/><strong>O usuário vê:</strong> Alerta no painel do supervisor: "X posições estavam inconsistentes — corrigidas automaticamente". Detalhes ficam no log de auditoria.</div>
+</div>
+
+<div class="callout callout-info" style="margin-top: 48px;">
+  <div class="callout-title">Resumo final</div>
+  Todo movimento gera evidência: <em>quando aconteceu, o que mudou, quem fez, por quê</em>. O livro-razão é a única fonte de verdade — a foto do estoque é uma consequência derivada que pode ser reconstruída a qualquer momento. Custo médio é global por produto, recalculado só em entradas com custo. Empresa virou tag em vez de coordenada física. Reservas dão controle de concorrência sem mexer no saldo. Cada cenário acima foi pensado pra preservar essa coerência mesmo nos casos extremos.
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

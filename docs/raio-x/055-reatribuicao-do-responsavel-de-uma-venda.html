@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Reatribuição do responsável de uma venda — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Vendas feitas na mão</p>
+<h1>Reatribuição do responsável de uma venda</h1><p class="lead">Quando um gerente quer trocar de quem é responsável por um pedido — retirar de um vendedor ou passar pra outro.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">4</div><div class="l">decisões</div></div>
+
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Você consegue remover o responsável (deixar em branco)</span></li><li><span class="dot">✓</span><span>Você consegue colocar um novo responsável em qualquer hora do pedido (antes de separar, durante, depois)</span></li><li><span class="dot">✓</span><span>O nome do novo responsável fica registrado direitinho no histórico do pedido</span></li><li><span class="dot">✓</span><span>Você não consegue atribuir a alguém que não é vendedor, operador ou gerente (o sistema valida o tipo de pessoa)</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P076</span>Atribuição a vendedor que saiu da empresa</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Admin tenta atribuir um pedido a Carlos, que já não trabalha mais aqui (marcado como desligado no sistema).</p><p class="ln"><b>Hoje:</b> O sistema deixa atribuir assim mesmo. Carlos aparece no histórico do pedido como vendedor, mas ele não trabalha mais.</p><p class="ln why"><b>Por que importa:</b> Pode confundir quem vê o relatório depois. 'Por que esse pedido tem Carlos?' Se Carlos deixou de ter acesso, ele não deveria aparecer como opção.</p><div class="decision"><p class="q">Bloquear: antes de atribuir, verificar se o vendedor ainda está ativo na empresa.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Modo 1: Rejeitar atribuição com mensagem</b> — Admin clica em Carlos → sistema mostra 'Carlos está desligado' → atribuição não funciona. Admin escolhe outro.</span></li><li class=""><span class="ck"></span><span><b>Modo 2: Não deixar vendedor inativo aparecer na lista</b> — Admin abre dropdown de vendedores → vê só quem está ativo. Carlos nem aparece.</span></li></ul><p class="recnote"><b>Recomendo:</b> Use o Modo 2 — mais limpo. Quem está desligado não deveria aparecer pra ser escolhido.</p></div><p class="refp">src/app/api/wms/vendas/criar/route.ts:159 vs. src/app/api/wms/vendas/[id]/vendedor/route.ts:66-92</p></div><h2>Decisões pra você tomar · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D279</span>Quando um vendedor sai de licença, outro pode 'pegar' o pedido dele?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Pedido estava com João. João saiu de licença. Maria (que é admin/operadora) reatribui pra Pedro.</p><p class="ln"><b>Hoje o sistema:</b> Sistema permite. O pedido muda de João pra Pedro. O histórico anota que foi Pedro quem mudou. O pedido continua o mesmo, estoque o mesmo — é só um rótulo administrativo.</p><p class="ln why"><b>Por que importa:</b> Depois que reatribui, Pedro vai separar/embalar o pedido. Se Pedro não tem permissão pra fazer essas coisas, o pedido pode ficar travado.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar reatribuir, sem avisar nada</b> — Sistema muda e pronto. Se Pedro não tem permissão, ele descobre quando tentar separar.</span></li><li class=""><span class="ck"></span><span><b>Deixar reatribuir, mas avisar se o novo vendedor não pode separar/embalar</b> — Maria reatribui → a tela mostra aviso: 'Pedro não tem permissão pra separação, revise'. Maria pode desistir ou continuar mesmo assim.</span></li></ul><p class="recnote"><b>Recomendo:</b> Use a opção 2. Aviso sem bloquear — assim Maria sabe que Pedro talvez vá ter problema, mas não trava a reatribuição.</p></div><p class="refp">src/app/api/wms/vendas/[id]/vendedor/route.ts:75-82</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D280</span>Um vendedor pode 'reivindicar' um pedido que não tem dono?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Pedido entrou como venda manual, ninguém atribuiu a ninguém ainda. João (vendedor) abre o detalhe → vê vendedor vazio/em branco → clica 'Editar' → seleciona 'João Silva' → clica 'Salvar'.</p><p class="ln"><b>Hoje o sistema:</b> Sistema rejeita com 'Você não tem permissão'. João vê erro. Só admin/operador consegue atribuir.</p><p class="ln why"><b>Por que importa:</b> Pedido fica sem dono até admin chegar pra atribuir. Demora burocrática desnecessária. Se João já é vendedor, faz sentido ele reivindicar o dele.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Continuar como está — só admin/operador podem atribuir</b> — Pedido espera admin. Mais controle, mais burocracia.</span></li><li class=""><span class="ck"></span><span><b>Permitir auto-reivindicação se o pedido não tem dono ainda</b> — João vê pedido sem dono → clica 'Reivindicar' → sistema atribui a ele. Mais rápido, menos burocracia.</span></li></ul><p class="recnote"><b>Recomendo:</b> Depende de vocês — qual é a cultura da empresa? Se confiam que o vendedor vai reivindicar o certo, permite. Se acha que vai dar confusão, bloqueia.</p></div><p class="refp">src/app/api/wms/vendas/[id]/vendedor/route.ts:56-58</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D233</span>Duplo clique no 'Salvar' gera registro duplicado?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Tarefas automáticas e fila do sistema</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador seleciona novo vendedor, clica 'Salvar'. Rede lenta, aviso não aparece, operador clica de novo (duplo clique).</p><p class="ln"><b>Hoje o sistema:</b> A tela desativa o botão durante o envio, então duplo clique normal não faz nada. MAS se a rede está muito lenta ou se o navegador recarrega, pode enviar duas vezes. Resultado: dois registros no histórico com os mesmos dados.</p><p class="ln why"><b>Por que importa:</b> Relatório fica com duplicata. Se está analisando eventos, vê um mesmo comando duas vezes no mesmo segundo. Confunde quem lê depois.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está</b> — Risco baixo, mas pode acontecer em rede ruim. Histórico pode ter duplicatas ocasionais.</span></li><li class=""><span class="ck"></span><span><b>Adicionar marca que evita repetir duas vezes (código único por submissão)</b> — Mesmo que envie duas vezes, o sistema por tras detecta 'é o mesmo comando' e registra só uma vez. Histórico sempre correto.</span></li></ul><p class="recnote"><b>Recomendo:</b> Implemente a marca que evita repetir — é investimento pequeno, evita confusão futura.</p></div><p class="refp">src/app/api/wms/vendas/[id]/vendedor/route.ts:1-117</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D021</span>E se operador atribui E cancela o pedido ao mesmo tempo?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador abre detalhe do pedido. Clica 'Reatribuir pra Pedro'. Ao mesmo tempo, clica 'Cancelar pedido'. Dois cliques rápidos, quase simultâneos.</p><p class="ln"><b>Hoje o sistema:</b> Sistema processa os dois. Primeiro reatribui (Pedro fica como vendedor), depois cancela (estorno funciona, pedido muda pra cancelado). Pedido fica cancelado COM PEDRO como vendedor. Histórico mostra: 'reatribuído a Pedro' e depois 'cancelado'.</p><p class="ln why"><b>Por que importa:</b> Estoque está seguro (cancelamento funciona). Mas é esquisito — por que reatribuir alguém a um pedido que vai desaparecer? UX confusa.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está — sistema permite ambas as ações</b> — Funciona, mas operador pode confundir. 'Por que atribuí a Pedro se cancelei?'</span></li><li class=""><span class="ck"></span><span><b>A tela avisa: 'Esse pedido será cancelado — tem certeza que quer reatribuir?'</b> — Operador vê aviso, pensa melhor, pode desistir da reatribuição.</span></li><li class=""><span class="ck"></span><span><b>O sistema por tras 'desfaz' reatribuição ao cancelar</b> — Operador reatribui, depois cancela. Sistema volta vendedor pro anterior (ou deixa em branco). Mais automático.</span></li></ul><p class="recnote"><b>Recomendo:</b> Use a opção 2 — aviso na tela. Operador decide se faz mesmo ou não. Simples e não afeta lógica de estoque.</p></div><p class="refp">src/lib/wms/vendas-cancelamento.ts:27-147</p></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

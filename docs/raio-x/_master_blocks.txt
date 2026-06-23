@@ -1,0 +1,138 @@
+### PRIMITIVAS (tabela)
+
+| Primitiva | # | Construir 1x | Reusa |
+|---|--:|---|---|
+| **Envelope de RPC plpgsql transacional para mutações de ledger em lote** | 19 | Um conjunto de RPCs plpgsql que envolvem N mutações (estornos S+L pareados, picks L+S, lote de movs de inventário, set-permissoes delete+ins | wms_inserir_movimentacao (lock pessimista + saldo ant/post + custo médio), wms_pick_item_atomico (padrão FOR U |
+| **Claim atômico (compare-and-set) na row-header + lease com staleness** | 9 | Padrão UPDATE...WHERE status=<esperado> AND lock_por IS NULL RETURNING (compare-and-set no Postgres, sem SELECT FOR UPDATE) para serializar  | recebimento_em_andamento_por (já existe em siso_transferencias_galpao), siso_fila_execucao.atualizado_em (já e |
+| **Liberar/estornar reservas R nos caminhos de cancelamento + all-or-nothing na reserva** | 6 | Wiring consistente: todo caminho de cancelamento (recusar pedido, cancelar item de compra, estornar pedido) chama estornarReservaIndividual/ | estornarReservaIndividual (idempotente via estorno_de=R.id), liberarReserva, wms_reservar_atomico, padrão já v |
+| **Guard de pré-condição/validação na entrada (antes de mutar/transicionar)** | 21 | Padrão único: validar estado/insumos ANTES de escrever (qty>0, qty=0 só com loc_zerou, NF presente p/ nf_venda, sem mistura de galpões de OC | validarCoerencia do ledger (rejeita saldo/reservado inválido), padrão de early-block já em concluir-oc (realoc |
+| **Idempotência por chave + UX de reconexão/duplo-clique + surfacing de erro** | 19 | Mecanismo de idempotency_key (uuid client-gerado, reusado por submissão, regenerado pós-sucesso) + coluna/UNIQUE no banco (siso_movimentacoe | idempotency_key de siso_pedidos (vendas/criar já usa), índice 20260527_idempotency_key_index como template, wm |
+| **Estorno tolerante + lookup robusto de movs + categorização correta no ledger** | 17 | Lookup de movs a estornar com fallback (devolucao_id ausente → data+tipo+NF), estorno parcial/residual via wms_estornar_parcial_movimentacao | estornarMovimentacao/estornarLiberacaoReserva (guard de double-estorno já existe), wms_estornar_parcial_movime |
+| **Enfileiramento durável + retry com backoff + alerta visível** | 8 | Padrão: operações fire-and-forget críticas (transição reconciliador-oc, varredura pós-entrada, persistência de token ML, cancelOcIfEmpty, en | siso_fila_execucao (fila durável + backoff exponencial + claim), registrarEvento (fire-and-forget safe, exceçõ |
+| **Constraint UNIQUE/CHECK no banco como backstop estrutural** | 8 | UNIQUE parcial como backstop: sessão inventário por (galpao,dia), 1 fornecedor preferencial por produto (promover idx existente a UNIQUE), e | idx_pf_preferencial e idx_mov_estorno (já existem como não-únicos — só promover), 20260527_p3_movs_unique_inve |
+| **Invalidação de cache/limpeza de dados derivados na escrita** | 4 | Disparar limpeza/invalidação no momento da escrita: invalidar caches PrintNode (printerCache + printerProdutoCache) no PATCH de api_key/DELE | invalidarCacheImpressora/invalidarCacheImpressoraProduto (já existem, só não chamados), ledger.ts varrerPedido |
+| **Guard de permissão específica no backend (não só na tela)** | 4 | Padrão: rotas que hoje usam o gate genérico (requireWarehouseAccess/requireAuth) passam a exigir a permissão específica da ação via userCan( | userCan/userCanAny (lib/permissions), registry de 38 códigos, guard anti-lockout já existe em roles/[id]/roles |
+| **Visibilidade/observabilidade: registrar erro no histórico, expor estado, snapshot de config, filtros e auditoria** | 17 | Tornar visível o que hoje é silencioso: registrarEvento('erro') nos pontos de falha de separação; sync-tiny lança/retorna erro quando falta  | registrarEvento (type já tem 'erro'), use-inventario-realtime (adicionar tabela divergencias + publication), w |
+| **Won't-fix / already-fixed por decisão de negócio (sem código)** | 4 | Nenhum código: decisões vinculantes do usuário que mantêm o comportamento atual (P092 defere sync marketplace↔WMS; P041 mantém unlink da com | wms_detectar_pedidos_inconsistentes (rotina de acerto que P004 delega), comportamento atual do código já casa  |
+
+### PRs por fase (tabela)
+
+| Fase | Esf | Mig | PR | Problemas |
+|:--:|:--:|:--:|---|---|
+| 1 | S |  | Reclaim de jobs estagnados na fila (timeout 5min volta a pendente) | P145 |
+| 1 | M | ✅ | Lock de recebimento de transferência: cancel respeita/adquire o mutex + timeout 30min (coluna recebimento_em_andamento_em) | P062, P068, P066 |
+| 1 | M |  | Force-unlock 'Tomar de Fulano' na guarda + aviso >30min (iniciada_em) | P127 |
+| 1 | S |  | Aprovar sessão de inventário idempotente (compare-and-set .eq status='revisao') | P160 |
+| 1 | M | ✅ | RPC wms_confirmar_item_embalagem_atomico: soma atômica + dedup por client_request_id (embalagem) | P130, P129, P131 |
+| 1 | S | ✅ | Decremento atômico de quantidade_bipada (desfazer-bip) | P021 |
+| 1 | M | ✅ | RPC wms_set_role_permissoes: replace de permissões tudo-ou-nada + FOR UPDATE serializa edição concorrente | P138, P139 |
+| 1 | M | ✅ | Claim atômico de classify de devolução (compare-and-set status) — base p/ fase 4 | P052 |
+| 2 | S | ✅ | UNIQUE estorno único por estorno_de (promover idx_mov_estorno a UNIQUE) + 23505 idempotente | P106 |
+| 2 | S | ✅ | UNIQUE parcial fornecedor preferencial por produto + disabled no botão | P124, P125 |
+| 2 | S | ✅ | UNIQUE parcial sessão de inventário por (galpão,dia) + 409 amigável | P055 |
+| 2 | M | ✅ | Trigger kit→≥1 componente (cobre sync e escrita direta) | P120 |
+| 2 | M | ✅ | Dedup de recebimento por assinatura NF (UNIQUE parcial) — saldo e custo não dobram | P099, P109 |
+| 2 | L | ✅ | Guard de custo-zero + reversão de custo médio no estorno (recriar wms_inserir_movimentacao) | P108, P110 |
+| 2 | S |  | Upsert no auto-cadastro de fornecedores por prefixo (contagem correta) | P123 |
+| 2 | S | ✅ | Recriar MV siso_cobertura_estoque no shape 3D (reverter regressão 20260605) | P128 |
+| 3 | S |  | Guard backend de permissão específica em /ajuste e /localizacoes/lote | P069, P116 |
+| 3 | M |  | Anti-lockout: recusar desativação do último admin ativo | P136 |
+| 3 | S |  | Cancelar job na fila ao estornar pedido + alinhar status/status_separacao | P008 |
+| 3 | M |  | Liberar reserva R nos caminhos de cancelamento (recusar pedido, cancelar item de compra) | P034, P038, P039 |
+| 3 | M |  | Cancelar pedido em separação parcial: libera só não-pego, preserva pick (decisão de fluxo) | P007 |
+| 3 | M |  | Reserva all-or-nothing no webhook auto-aprovação + dedup R viva por (pedido,produto) | P085, P003 |
+| 4 | M |  | Guard de status da sessão no bipe + reconciliação temporal desde início do dia | P058, P059 |
+| 4 | L | ✅ | RPC wms_estornar_sessao_inventario (tudo-ou-nada) + estorno por divergência individual | P056, P061, P159 |
+| 4 | M | ✅ | RPC wms_contagem_inline_atomica (acerto de prateleira no pick) | P057 |
+| 4 | L | ✅ | RPC wms_classificar_devolucao: movs+status atômicos + preflight quarentena (Classe B bloqueia) | P049, P050, P051, P054 |
+| 4 | M | ✅ | RPC wms_desfazer_recebimento_transferencia atômica + preflight 'quanto dá pra desfazer' | P067, P065 |
+| 4 | M |  | Reverter replenishment com estorno parcial residual | P078 |
+| 4 | M |  | Recebimento all-items tudo-ou-nada (receberItensViaOC para de engolir falha) | P028 |
+| 4 | M |  | Cross-check produto bipado na guarda + escape-hatch manual | P029 |
+| 4 | M |  | Over-receive: categorizar excedente como ganho de inventário | P033 |
+| 4 | M |  | Auto-limpar reserva vencida ao desativar localização | P115 |
+| 5 | L | ✅ | RPC wms_aplicar_sessao_inventario (aplicar tudo-ou-nada) | P060 |
+| 5 | L | ✅ | RPC wms_pick_parcial_atomico (L+S+ajuste do wave) + idempotency token no pick sem-reserva | P019, P072 |
+| 5 | M | ✅ | RPC wms_desmarcar_item_atomico + estorno tolerante (clamp R + status_alerta) — resolve conflito P014/P015 | P014, P015 |
+| 5 | L | ✅ | RPC wms_reverter_cutover_atomico (reversão tudo-ou-nada) | P023 |
+| 5 | L | ✅ | RPCs wms_vender_baixa_direta_atomico + wms_cancelar_venda_atomico | P075, P077 |
+| 5 | M | ✅ | Enqueue durável + atômico da aprovação (RPC wms_aprovar_e_enfileirar) com retry | P005 |
+| 5 | M | ✅ | RPC wms_reconciliar_retroativo (lock + idempotência + estorno parcial) — unifica P150/P151/P152/P147/P148 | P152, P150, P151, P147, P148 |
+| 5 | L | ✅ | Durabilidade do reconciliador OC + varredura pós-entrada (jobs com retry 30s/5min/10min + alerta) | P082, P149 |
+| 5 | M |  | Resolução de pedido-fantasma (R→S se saiu, R→prateleira se cancelado) — rota+UI | P084 |
+| 6 | S |  | Registrar erros de separação no histórico do pedido | P006 |
+| 6 | S |  | Reordenar iniciar: consolida (RPC) antes de marcar em_separacao + reportar já_em_separacao | P012, P153 |
+| 6 | M | ✅ | Guards de pré-condição de separação/compra (qty=0, NF nf_venda, concluir-oc multi-galpão, trocar-sku, voltar-etapa stale) | P017, P074, P031, P036, P154 |
+| 6 | L | ✅ | Validar pedido na chegada (qty=0 rejeita, nomeia item) + kit sem cadastro Tiny (flag, não dropar) | P001, P002, P095 |
+| 6 | L | ✅ | Migração Tiny→ledger da correção de estoque (ajuste auditável, lock, varredura, idempotency, guard 0, deposito) — cabeça do cluster | P086, P089, P166, P164, P165, P184, P087, P090, P091, P093 |
+| 6 | M |  | Guards de compra/devolução: estorno na devolução, bloqueio lançado, status OC, equivalente cria item novo | P040, P047, P046, P045, P035, P155, P053, P070 |
+| 6 | M | ✅ | Sync-tiny: surfacing de erro sem mapeamento + filtro produtos sem mapeamento + kit→não-kit limpa + kit vazio + escolha empresa determinística | P117, P118, P171, P098, P095b, P097, P169, P170 |
+| 6 | S |  | Relatório movs-por-empresa: default 12m + paginação + filtro SQL de empresa + excluir devoluções | P105, P107, P158 |
+| 6 | M | ✅ | Etiqueta/impressão: reimprimir retry 3x + 2 labels + retenção 30d + invalidar cache PrintNode + preview delete conta | P142, P144, P143, P183, P141 |
+| 6 | M | ✅ | Pointwise: cobertura lead default 7d, qty inteira transferência, packing no type/rota/form, sku duplicado 409, reativar vínculo fornecedor, bloquear delete fornecedor/galpão | P079, P162, P173, P174, P178, P179, P133 |
+| 6 | M | ✅ | Frontend idempotency/UX: idempotency key estável (venda nova), botões disabled, surfacing de erro, forms galpão obrigatório | P071, P043, P146, P185, P168, P163, P134, P137, P076 |
+| 6 | M |  | Marcar-item idempotente pós-reconexão (UX) + concluir no-regress + crossdock no-regress | P013, P073, P080 |
+| 6 | L | ✅ | Visibilidade: realtime+Reabrir de divergências, auditoria de produto, contagem de kit, deposito no pedido, insight operador inativo, limpa operador no estorno embalagem | P161, P180, P175, P122, P132, P182 |
+| 6 | M |  | Durabilidade residual: persistência token ML com retry+alerta, cleanup locks órfãos >24h, cancelOcIfEmpty retry+surfacing | P094, P126, P048 |
+| 6 | S |  | Won't-fix / regressão: testes de regressão (P004 acerto, P041 unlink, P042 permite, P092 defer, P119/P135/P177 soft-delete) | P004, P041, P042, P092 |
+
+### CONFLITOS (resoluções)
+
+1. **P014, P015** — Mesmo código (marcar-item desmarcar / estornarLiberacaoReserva). P014 quer desfazimento tudo-ou-nada (RPC com RAISE em qualquer falha → rollback total). P015 quer estorno TOLERANTE (clampar R ao saldo livre + status_alerta) porque a nota de P015 contraria o ledger imutável e respeita_nota=false. Colidem: all-or-nothing estrito vs degradação tolerada no mesmo ponto de estorno-L.
+   → *Resolução:* Implementar UMA RPC wms_desmarcar_item_atomico onde a transação é atômica (P014) MAS o estorno-L usa o caminho tolerante: se recriar a R full violaria a CHECK, recria clampada ao saldo livre e seta status_alerta DENTRO da mesma transação (não falha o desmarque). Confirmar com o user que P015 diverge da letra da nota (estratégia técnica fiel ao ledger vence). Um PR único na fase 5.
+
+2. **P056, P060, P061** — Inventário aplicar (P060) e estornar (P056/P061) tudo-ou-nada compartilham helpers plpgsql de 'lote de contra-movs com preflight'. P061 é o mesmo código de P056 (deps).
+   → *Resolução:* Uma migration com 2 RPCs (wms_aplicar_sessao_inventario, wms_estornar_sessao_inventario) compartilhando o helper de preflight. P056+P061 no mesmo PR (fase 4); P060 na fase 5 (maior blast). P061 effort S porque o trabalho é P056.
+
+3. **P099, P109** — Mesma primitiva e migration (dedup de recebimento por assinatura NF). P109 deps P099.
+   → *Resolução:* Um índice único parcial + captura de 23505 na RPC cobre os dois. Mesmo PR na fase 2.
+
+4. **P108, P104** — Ambos 'custo zero na entrada'. P108 bloqueia no RPC (hard); P104 quer fallback de custo médio nos routes de entrada (não bloquear cego). Risco de dupla-regra conflitante.
+   → *Resolução:* P108 (RPC) é a rede de segurança terminal: bloqueia/aplica custo mínimo SÓ nas origens que recalculam custo. P104 (routes) faz fallback de custo médio histórico ANTES de chamar a RPC. Fazer P108 primeiro (fase 2), P104 depois (fase 6). Não duplicar a lógica de custo médio.
+
+5. **P108, P110** — Ambos tocam o corpo de wms_inserir_movimentacao (guard de custo-zero + reversão de custo médio no estorno). Duas redefinições da RPC colidiriam.
+   → *Resolução:* Unir numa migration só que recria wms_inserir_movimentacao com os dois guards (custo-zero + reversão no estorno). Fase 2, PR único.
+
+6. **P124, P125** — P125 deps P124 (mesma migration UNIQUE serve de backstop de banco). Mesmo arquivo de rota.
+   → *Resolução:* Migration do P124 cobre o backstop de banco do P125. P124 primeiro; P125 adiciona só o disabled no botão. Mesmo PR fase 2.
+
+7. **P138, P139** — Mesma rota e mesma RPC wms_set_role_permissoes. P139 (lock concorrente) sai de graça com SELECT FOR UPDATE da row do role dentro da RPC de P138.
+   → *Resolução:* PR único: a RPC faz FOR UPDATE da row do role (serializa P139) + delete+insert atômico (P138). Nota pede '2º admin vê aviso e espera' → avaliar advisory NOWAIT→409 vs blocking. Fase 1.
+
+8. **P049, P050, P051, P052, P054** — Devoluções: P049/P050 atomicidade movs+status, P052 claim concorrente, P051 preflight quarentena (muda o fluxo da Classe B), P054 lock pessimista. Tudo no mesmo classificarDevolucao. P051 precede (deps de P049).
+   → *Resolução:* Uma RPC wms_classificar_devolucao com: (1º) claim atômico de status (P052), preflight de quarentena ANTES de mover (P051), movs+status na mesma transação (P049/P050/P054). P051 baked na RPC. Remover o branch ajuste_manual que mascara ausência de quarentena. PR único fase 4.
+
+9. **P150, P151, P152, P147, P148** — Mesma função reconciliarRetroativo por 5 ângulos: idempotência (P150/P151/P148), concorrência (P152), estorno parcial (P147). P147 deps P148, P151/P152 deps P150.
+   → *Resolução:* RPC wms_reconciliar_retroativo com lock por lançamento (P152 serializa), checagem de estorno existente (P150/P151/P148 idempotente), e estorno parcial clampado ao disponível (P147). Os 5 num PR único fase 5.
+
+10. **P046, P047** — Mesma rota /compras/itens/[id]/devolver. P047 (guard: bloquear se pedido lançado) tem PRECEDÊNCIA sobre P046 (estorno da saída quando NÃO lançado). Ordem do código importa.
+   → *Resolução:* P047 roda PRIMEIRO (early-return 409 se estoque_lancado). Só se não-lançado, P046 grava o estorno (E) que desfaz a S. Mesmo PR fase 6, P047 antes de P046 no fluxo.
+
+11. **P035, P040, P041, P042** — Cluster compras-utils/checkAndCancelPedidoIfAllTerminal. P035 quer 'compra cancelada → pedido volta a pendente' (deps P034, conflito com P040). P041/P042 são already_fixed por decisão (manter comportamento). P040 bloqueia cancelar item com separação.
+   → *Resolução:* P035 precisa distinguir terminal-por-cancelamento (reentra) de terminal-por-indisponivel (morre) — decisão de produto necessária, confirmar com user. P040 é guard independente. P041/P042 won't-fix. P035 deps P034 (liberação de reserva). Coordenar no mesmo PR de compras (fase 6).
+
+12. **P086, P166, P089, P164, P165, P184, P087, P090, P091, P093** — Cluster da rota tiny/stock/ajustar (correção de estoque). P086/P166 = migração Tiny→ledger (cabeça). P089(desync)/P165(varredura)/P090(reserva descoberto)/P091(deposito)/P093(deposito null) caem de graça com a migração. P164(rejeitar 0)/P184/P087(idempotency) são guards na nova rota. P090 conflita com validarCoerencia (nota: não bloquear, alertar) vs invariante CHECK reservado<=saldo.
+   → *Resolução:* PR único de migração ledger (fase 6): migrar a correção pro /api/wms/ajuste (já ledger-only auditável), o que dissolve desync (P089), aciona varredura (P165), congela deposito (P091/P093), e dá lock+trilha (P166). Guards (P164 rejeita 0, P087/P184 idempotency) entram na nova rota. P090 (não-bloquear reservado>saldo) exige decisão: relaxar invariante ou liberar/realocar R a descoberto como parte do ajuste — flag pro user. ATENÇÃO: rota tiny/stock/ajustar parece SEM CALLERS hoje (dead path) — confirmar antes de investir; o que importa é o PUT connections (P093) e o /api/wms/ajuste.
+
+13. **P178, P179** — Mesmo par fornecedor↔vínculo. P178 reativa vínculo soft-deletado no reimport; P179 bloqueia delete de fornecedor com vínculos ativos. Aparente colisão.
+   → *Resolução:* Não colidem de fato: P179 escolheu BLOQUEAR (não cascade), então fornecedor com vínculos não é deletado; P178 reativa vínculo individual no reimport (ortogonal). Implementar ambos, revisar juntos para consistência da regra soft-delete (alinha P063/P133/P177).
+
+14. **P105, P107, P158** — Mesmo arquivo route.ts (movs-por-empresa). Três fixes independentes que dariam 3 conflitos de merge.
+   → *Resolução:* Um PR único: default 12m + paginação 5k (P105) + filtro SQL de empresa (P107) + excluir origens de devolução da whitelist (P158). Fase 6.
+
+15. **P134, P137** — Mesma regra de bloqueio-vazio (galpão obrigatório para operador) no form de criação (P134) e edição (P137). P137 deps P134.
+   → *Resolução:* Extrair helper pura calcDisabled compartilhada entre criar e editar. P134 primeiro; P137 reusa. Mesmo PR fase 6.
+
+16. **P099, P146, P184** — Idempotency no banco local: P146 (retroativo) e P184 (correção) e P099 (recebimento) todos pediriam coluna idempotency_key em siso_movimentacoes.
+   → *Resolução:* Uma coluna idempotency_key (uuid) + unique partial index em siso_movimentacoes, reusada pelos três caminhos. P099 já usa assinatura NF (índice próprio); P146/P184 compartilham a coluna genérica. Não duplicar infra.
+
+
+### GAPS encaixados
+
+- **P104** → Fase 2 (preflight_guard, M): Entradas podem ser gravadas com custo_unitario 0/null (compras/receber e receber/oc não exigem custo > 0), então o relat
+- **P063** → Fase 4 (soft_delete_block_delete, S): O guard de desativarLocalizacao cobre saldo físico vivo, mas não cobre referências em-voo (transferência em_transito apo
+- **P113** → Fase 4 (preflight_guard, S): Nem o PATCH (troca de tipo) nem o DELETE (desativar) consultam siso_localizacao_locks pra ver se a loc está sob contagem
+- **P081** → Fase 6 (preflight_guard, S): O cross-dock trigger sobrescreve 'em_separacao'→'separado' sem checar o status atual no momento do UPDATE. Um operador s
+- **P088** → Fase 6 (data_visibility_ux, S): A correção é permitida em qualquer etapa (decisão mantida), mas sem feedback de contexto: o operador não sabe se já houv
+- **P121** → Fase 6 (pointwise_bug, S): Validação server existe mas vaza como 500 genérico porque o erro de regra de negócio em upsertComponente é um Error comu
+- **P176** → Fase 6 (atomic_claim_header, M): Nenhuma serialização por produto durante a sincronização. O delete-then-insert da composição do kit não é atômico nem pr

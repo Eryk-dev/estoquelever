@@ -46,6 +46,14 @@ const { pickMovSpy } = vi.hoisted(() => ({
   pickMovSpy: vi.fn(async () => ({ movSaidaId: "mov-s1" })),
 }));
 vi.mock("@/lib/wms/separacao/pick-mov", () => ({ pickMovPicking: pickMovSpy }));
+// O ramo "encontrei" resolve o produto WMS via auto-sync (commit c7cb101) — sem
+// este mock a função real bate no DB e o handler estoura 500 (test drift).
+vi.mock("@/lib/wms/sync-tiny", () => ({
+  resolverProdutoEfetivoComAutoSync: vi.fn(async () => "prod-wms-uuid"),
+}));
+vi.mock("@/lib/compras-oc", () => ({
+  findOrCreateOcAberta: vi.fn(async () => "oc-uuid"),
+}));
 
 // supabase fake: thenable chain que resolve por (tabela, operação, nº da
 // chamada). Updates capturados em `updates` pra asserts de payload.

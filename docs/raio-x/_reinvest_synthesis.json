@@ -1,0 +1,1232 @@
+{
+ "primitives": [
+  {
+   "key": "atomic_rpc_ledger",
+   "name": "Envelope de RPC plpgsql transacional para mutações de ledger em lote",
+   "problem_ids": [
+    "P014",
+    "P019",
+    "P021",
+    "P023",
+    "P056",
+    "P057",
+    "P060",
+    "P061",
+    "P067",
+    "P072",
+    "P075",
+    "P077",
+    "P130",
+    "P138",
+    "P139",
+    "P049",
+    "P050",
+    "P054",
+    "P152"
+   ],
+   "build_once": "Um conjunto de RPCs plpgsql que envolvem N mutações (estornos S+L pareados, picks L+S, lote de movs de inventário, set-permissoes delete+insert, classify de devolução, etc.) numa única transação BEGIN/EXCEPTION com SELECT...FOR UPDATE da row-âncora (pedido/sessão/role/transferência/devolução) + preflight de coerência + RAISE em qualquer falha = rollback all-or-nothing. Inventario aplicar/estornar compartilham um helper de 'lote de contra-movs com preflight'. Embalagem (P129/130/131) compartilha wms_confirmar_item_embalagem_atomico (soma atômica + dedup por client_request_id).",
+   "reused_infra": "wms_inserir_movimentacao (lock pessimista + saldo ant/post + custo médio), wms_pick_item_atomico (padrão FOR UPDATE da R + guard idempotência), wms_confirmar_guarda_atomico/wms_desfazer_guarda_atomico (espelho), wms_estornar_parcial_movimentacao, wms_acumular_qty_pega (UPDATE += delta atômico). idempotência por estorno_de já viva no worker-wms."
+  },
+  {
+   "key": "atomic_claim_header",
+   "name": "Claim atômico (compare-and-set) na row-header + lease com staleness",
+   "problem_ids": [
+    "P062",
+    "P068",
+    "P080",
+    "P127",
+    "P160",
+    "P145",
+    "P176",
+    "P066",
+    "P052"
+   ],
+   "build_once": "Padrão UPDATE...WHERE status=<esperado> AND lock_por IS NULL RETURNING (compare-and-set no Postgres, sem SELECT FOR UPDATE) para serializar transições e force-unlock; colunas de lease (recebimento_em_andamento_em, sincronizando_em) com staleness configurável (30min/5min) para auto-liberar locks órfãos; reclaim de jobs 'executando' estagnados na fila (atualizado_em < now()-5min → pendente).",
+   "reused_infra": "recebimento_em_andamento_por (já existe em siso_transferencias_galpao), siso_fila_execucao.atualizado_em (já escrito no claim), claim atômico de receberTransferencia/processQueue (precedente), iniciada_por de guarda. status 'separado' como marcador idempotente (crossdock já usa)."
+  },
+  {
+   "key": "reserva_wiring_cancel",
+   "name": "Liberar/estornar reservas R nos caminhos de cancelamento + all-or-nothing na reserva",
+   "problem_ids": [
+    "P007",
+    "P085",
+    "P039",
+    "P034",
+    "P008",
+    "P038"
+   ],
+   "build_once": "Wiring consistente: todo caminho de cancelamento (recusar pedido, cancelar item de compra, estornar pedido) chama estornarReservaIndividual/liberarReserva para as R vivas do pedido; cancelar também o job na fila (status='cancelado'). No webhook auto-aprovação: reserva all-or-nothing (qualquer item falha → throw → retry, sem enfileirar lancar_estoque) + dedup idempotente de R viva por (pedido,produto).",
+   "reused_infra": "estornarReservaIndividual (idempotente via estorno_de=R.id), liberarReserva, wms_reservar_atomico, padrão já vivo em webhook/tiny cancel + vendas-cancelamento + equivalente/confirmar (liberam R). Loop de /pedidos/[id]/liberar-reservas como template."
+  },
+  {
+   "key": "preflight_guard",
+   "name": "Guard de pré-condição/validação na entrada (antes de mutar/transicionar)",
+   "problem_ids": [
+    "P012",
+    "P017",
+    "P074",
+    "P081",
+    "P154",
+    "P058",
+    "P070",
+    "P113",
+    "P001",
+    "P093",
+    "P031",
+    "P036",
+    "P097",
+    "P035",
+    "P040",
+    "P047",
+    "P029",
+    "P065",
+    "P090",
+    "P051",
+    "P104"
+   ],
+   "build_once": "Padrão único: validar estado/insumos ANTES de escrever (qty>0, qty=0 só com loc_zerou, NF presente p/ nf_venda, sem mistura de galpões de OC, compra não-ativa antes de trocar SKU, produto bipado bate com loc na guarda, custo>0 na entrada, lead default conservador, status de sessão/loc, sem-cobertura-quarentena). Reordenar iniciar (consolida antes de marcar). Preflight de 'quanto dá pra desfazer' com 409 estruturado.",
+   "reused_infra": "validarCoerencia do ledger (rejeita saldo/reservado inválido), padrão de early-block já em concluir-oc (realocacoes_pendentes), wmsErrorResponse (4xx vs 5xx), siso_localizacao_locks, escape-hatch de confirmação manual do inventário."
+  },
+  {
+   "key": "frontend_idempotency_ux",
+   "name": "Idempotência por chave + UX de reconexão/duplo-clique + surfacing de erro",
+   "problem_ids": [
+    "P013",
+    "P073",
+    "P129",
+    "P131",
+    "P153",
+    "P087",
+    "P146",
+    "P184",
+    "P003",
+    "P071",
+    "P168",
+    "P043",
+    "P125",
+    "P163",
+    "P185",
+    "P162",
+    "P134",
+    "P137",
+    "P076"
+   ],
+   "build_once": "Mecanismo de idempotency_key (uuid client-gerado, reusado por submissão, regenerado pós-sucesso) + coluna/UNIQUE no banco (siso_movimentacoes.idempotency_key compartilhada) tratando 23505 como no-op; botões desabilitados durante mutation (disabled=isPending/isFetching); ler body JSON de erro pra surfaçar mensagem da API; reconciliação de tela ao voltar online; helper pura calcDisabled para forms (galpão obrigatório).",
+   "reused_infra": "idempotency_key de siso_pedidos (vendas/criar já usa), índice 20260527_idempotency_key_index como template, wms_pick_item_atomico (caminho com reserva já idempotente), realtime hooks (invalidate query), ErrorBanner genérico (prop opcional retrocompatível)."
+  },
+  {
+   "key": "estorno_ledger_lookup",
+   "name": "Estorno tolerante + lookup robusto de movs + categorização correta no ledger",
+   "problem_ids": [
+    "P015",
+    "P132",
+    "P059",
+    "P086",
+    "P089",
+    "P147",
+    "P148",
+    "P155",
+    "P078",
+    "P159",
+    "P150",
+    "P151",
+    "P033",
+    "P046",
+    "P084",
+    "P053",
+    "P110"
+   ],
+   "build_once": "Lookup de movs a estornar com fallback (devolucao_id ausente → data+tipo+NF), estorno parcial/residual via wms_estornar_parcial_movimentacao, guard de double-estorno (estorno_de existente → no-op), estorno tolerante (clampar R ao saldo livre + status_alerta quando full violaria CHECK), categorização do excedente (over-receive → ajuste_manual 'achado'), reversão de custo médio no estorno, migração de ajuste Tiny→ledger (origem ajuste_manual com trilha), limpar embalagem_operador_id no estorno, resolução de pedido-fantasma (R→S ou R→prateleira).",
+   "reused_infra": "estornarMovimentacao/estornarLiberacaoReserva (guard de double-estorno já existe), wms_estornar_parcial_movimentacao (testada em realoc-fix-pack), /api/wms/ajuste → ajustarEstoque (ledger-only auditável já existe), siso_custo_medio.custo_medio_anterior por mov, detector wms_detectar_pedidos_inconsistentes (padrão C)."
+  },
+  {
+   "key": "durable_enqueue_retry",
+   "name": "Enfileiramento durável + retry com backoff + alerta visível",
+   "problem_ids": [
+    "P082",
+    "P142",
+    "P126",
+    "P094",
+    "P048",
+    "P005",
+    "P149",
+    "P028"
+   ],
+   "build_once": "Padrão: operações fire-and-forget críticas (transição reconciliador-oc, varredura pós-entrada, persistência de token ML, cancelOcIfEmpty, enqueue de lancar_estoque, recebimento all-items) passam a (a) retentar 2-3x com backoff curto ou (b) enfileirar job durável em siso_fila_execucao com schedule custom (30s/5min/10min, NÃO 1h) + handler no worker; após N falhas, registrarEvento de alerta visível na home; cleanup de locks órfãos >24h no recovery.",
+   "reused_infra": "siso_fila_execucao (fila durável + backoff exponencial + claim), registrarEvento (fire-and-forget safe, exceções na home), recoveryInventario (cron 5min já roda via inventario/cleanup), detectarRecebimentoOrfao (painel já existe). Relaxar CHECK chk_fila_tipo p/ novos tipos."
+  },
+  {
+   "key": "db_constraint_unique",
+   "name": "Constraint UNIQUE/CHECK no banco como backstop estrutural",
+   "problem_ids": [
+    "P055",
+    "P124",
+    "P120",
+    "P106",
+    "P123",
+    "P099",
+    "P109",
+    "P108"
+   ],
+   "build_once": "UNIQUE parcial como backstop: sessão inventário por (galpao,dia), 1 fornecedor preferencial por produto (promover idx existente a UNIQUE), estorno único por estorno_de (promover idx a UNIQUE), dedup de recebimento por assinatura NF (chave_acesso+produto+galpão), kit→≥1 componente (trigger), guard de custo-zero na RPC de inserir mov; rota mapeia 23505 → 409 amigável. Upsert no auto-cadastro de fornecedores (TOCTOU→onConflict).",
+   "reused_infra": "idx_pf_preferencial e idx_mov_estorno (já existem como não-únicos — só promover), 20260527_p3_movs_unique_inventario_divergencia (template de unique-idempotência), wms_inserir_movimentacao (corpo onde entra o guard de custo), siso_fornecedores.nome UNIQUE (já existe). Dedup de dados em staging antes do CREATE UNIQUE."
+  },
+  {
+   "key": "cache_invalidation",
+   "name": "Invalidação de cache/limpeza de dados derivados na escrita",
+   "problem_ids": [
+    "P165",
+    "P183",
+    "P169",
+    "P128"
+   ],
+   "build_once": "Disparar limpeza/invalidação no momento da escrita: invalidar caches PrintNode (printerCache + printerProdutoCache) no PATCH de api_key/DELETE de conta; apagar composição de kit ao virar não-kit; varredura de pedidos parados ao corrigir saldo 0→positivo (cai de graça se migrar pro ledger); recriar MV siso_cobertura_estoque no shape 3D (reverter regressão 20260605).",
+   "reused_infra": "invalidarCacheImpressora/invalidarCacheImpressoraProduto (já existem, só não chamados), ledger.ts varrerPedidosAfetadosPorEntrada+reconciliarEntradaEstoque (dispara em toda mov E), 20260520f_mviews.sql:38-88 (shape 3D canônico já escrito), wms_refresh_cobertura."
+  },
+  {
+   "key": "permission_backend_guard",
+   "name": "Guard de permissão específica no backend (não só na tela)",
+   "problem_ids": [
+    "P069",
+    "P076",
+    "P116",
+    "P136"
+   ],
+   "build_once": "Padrão: rotas que hoje usam o gate genérico (requireWarehouseAccess/requireAuth) passam a exigir a permissão específica da ação via userCan(session, '<perm>') → 403; anti-lockout (recusar desativar último admin ativo); filtro de visibilidade (vendedor inativo some do dropdown). Curl sem perm rejeitado.",
+   "reused_infra": "userCan/userCanAny (lib/permissions), registry de 38 códigos, guard anti-lockout já existe em roles/[id]/roles (perda de role admin) como template, requireWarehouseAccess (manter onde inline é intencional, ex. criar loc on-the-fly)."
+  },
+  {
+   "key": "data_visibility_ux",
+   "name": "Visibilidade/observabilidade: registrar erro no histórico, expor estado, snapshot de config, filtros e auditoria",
+   "problem_ids": [
+    "P006",
+    "P088",
+    "P161",
+    "P180",
+    "P091",
+    "P098",
+    "P117",
+    "P118",
+    "P171",
+    "P141",
+    "P002",
+    "P095",
+    "P122",
+    "P175",
+    "P105",
+    "P182",
+    "P170"
+   ],
+   "build_once": "Tornar visível o que hoje é silencioso: registrarEvento('erro') nos pontos de falha de separação; sync-tiny lança/retorna erro quando falta mapeamento (P117/P118/P171 = 1 fix em sync-tiny.ts:54-60); filtro 'sem mapeamento' na aba produtos; badge sem_cadastro_tiny no kit; realtime de divergências + botão Reabrir; preview de impacto antes de deletar conta PrintNode; auditoria de edição de produto + bloqueio de campos sincronizados; relatório com default 12m + paginação + filtro SQL de empresa; snapshot de deposito no pedido; sync determinístico por empresa-preferida; estado calmo 'operador saiu'.",
+   "reused_infra": "registrarEvento (type já tem 'erro'), use-inventario-realtime (adicionar tabela divergencias + publication), wmsErrorResponse (4xx surfacing), siso_pedidos.deposito_id (já existe, só escrever), siso_produto_empresas (NOT EXISTS p/ filtro), .single→404→ErrorBanner (P182 já não crasha)."
+  },
+  {
+   "key": "wont_fix_decision",
+   "name": "Won't-fix / already-fixed por decisão de negócio (sem código)",
+   "problem_ids": [
+    "P092",
+    "P041",
+    "P042",
+    "P004"
+   ],
+   "build_once": "Nenhum código: decisões vinculantes do usuário que mantêm o comportamento atual (P092 defere sync marketplace↔WMS; P041 mantém unlink da compra; P042 permite cancelar recebido; P004 won't-fix re-check, conta com rotina de acerto). Documentar a decisão; opcional teste de regressão.",
+   "reused_infra": "wms_detectar_pedidos_inconsistentes (rotina de acerto que P004 delega), comportamento atual do código já casa com a decisão."
+  }
+ ],
+ "phases": [
+  {
+   "n": 1,
+   "title": "Fundações atômicas: claim de header + envelope de RPC transacional + reclaim de fila",
+   "objetivo": "Construir os tijolos reusados por quase todo o resto: compare-and-set na row-header, lease com staleness, reclaim de jobs estagnados, e o padrão de RPC plpgsql tudo-ou-nada (validado primeiro nos casos de menor blast). Sem essas primitivas, os fixes de domínio viram remendos não-atômicos.",
+   "problem_ids": [
+    "P145",
+    "P062",
+    "P068",
+    "P066",
+    "P127",
+    "P160",
+    "P052",
+    "P021",
+    "P130",
+    "P129",
+    "P131",
+    "P138",
+    "P139"
+   ],
+   "rationale": "Claim atômico (P062/P068/P066/P127/P160/P052) e reclaim de fila (P145) são pré-requisitos de serialização que muitos domínios reusam. P130/P129/P131 (embalagem) é o caso de RPC atômica + idempotency-key de MENOR blast — prova o padrão wms_confirmar_item_embalagem_atomico antes dos casos de alto blast. P138/P139 (set-permissoes) é uma RPC atômica isolada e de baixo risco que valida o envelope delete+insert+FOR UPDATE. P021 (desfazer-bip) é decremento atômico trivial que estabelece o idiom UPDATE...GREATEST(...).",
+   "depends_on_phases": [],
+   "effort": "M"
+  },
+  {
+   "n": 2,
+   "title": "Backstops estruturais no banco: UNIQUE/CHECK + guard de custo + invalidação de MV",
+   "objetivo": "Estabelecer as constraints de banco que servem de rede de segurança para os fixes de domínio (idempotência de recebimento, preferencial único, estorno único, sessão única, kit→componente, custo-zero) e reverter a regressão da MV de cobertura. Constraints primeiro para que os fixes de app possam confiar no backstop e mapear 23505→409.",
+   "problem_ids": [
+    "P106",
+    "P124",
+    "P125",
+    "P055",
+    "P120",
+    "P099",
+    "P109",
+    "P108",
+    "P110",
+    "P123",
+    "P128"
+   ],
+   "rationale": "db_constraint_unique é fundação independente de app-logic e deve preceder os fixes que dependem dela (P125 deps P124; P109 deps P099; P110 deps P108). P128 (MV regression) é fix de banco que destrava o dashboard de cobertura — independente mas pertence à camada DB. P108/P110 tocam o corpo de wms_inserir_movimentacao (custo) — agrupar numa migration só evita redefinições conflitantes. Dedup de dados em staging precede os CREATE UNIQUE.",
+   "depends_on_phases": [],
+   "effort": "L"
+  },
+  {
+   "n": 3,
+   "title": "Permissões backend + wiring de liberação de reserva no cancelamento",
+   "objetivo": "Fechar gaps de autorização (curl bypassa tela) e garantir que todo caminho de cancelamento libere a reserva R e cancele o job na fila. Domínios de baixo blast com efeito de segurança/integridade imediato.",
+   "problem_ids": [
+    "P069",
+    "P116",
+    "P136",
+    "P008",
+    "P034",
+    "P038",
+    "P039",
+    "P007",
+    "P085"
+   ],
+   "rationale": "permission_backend_guard (P069/P116/P136) é cirúrgico e de baixo risco. reserva_wiring_cancel (P008/P034/P038/P039) reusa estornarReservaIndividual já vivo — wiring consistente em paths irmãos. P007 (cancelar parcial) e P085 (reserva all-or-nothing no webhook, blast high mas mesma família) fecham o cluster de reservas. P085 vem por último na fase por ser o de maior blast (caminho de auto-aprovação).",
+   "depends_on_phases": [
+    1
+   ],
+   "effort": "M"
+  },
+  {
+   "n": 4,
+   "title": "Domínio de menor blast: inventário, devoluções, transferências, replenishment (RPCs atômicas + guards)",
+   "objetivo": "Aplicar o envelope de RPC atômica (fase 1) e os guards (preflight) aos domínios operacionais isolados, do menor pro maior blast dentro do grupo. Estorno tolerante e lookup robusto de movs.",
+   "problem_ids": [
+    "P058",
+    "P059",
+    "P159",
+    "P056",
+    "P061",
+    "P057",
+    "P051",
+    "P049",
+    "P050",
+    "P054",
+    "P067",
+    "P078",
+    "P065",
+    "P115",
+    "P028",
+    "P029",
+    "P033"
+   ],
+   "rationale": "Inventário (P056/P061/P060 aplicar/estornar — P060 fica na fase 5 por ser aplicar com maior blast; aqui estorno+contagem-inline+granularidade), devoluções (P049/P050/P051/P052/P054 — RPC wms_classificar_devolucao com claim, P051 preflight precede), transferências/replenishment (P067/P078/P065/P028) e guarda (P029) são domínios fechados que reusam a RPC da fase 1 e os guards. Blast contido a um módulo. P033 (over-receive categorização) e P115 (cleanup reserva vencida na desativação) completam.",
+   "depends_on_phases": [
+    1,
+    2
+   ],
+   "effort": "L"
+  },
+  {
+   "n": 5,
+   "title": "Domínio crítico de maior blast: ledger central, cutover, vendas, pick parcial, aplicar inventário, durabilidade",
+   "objetivo": "Aplicar atomicidade e durabilidade aos caminhos quentes de alto volume (~500 ped/dia): reversão de cutover, pick parcial, baixa/cancelamento de venda, aplicar sessão de inventário, enqueue durável da aprovação, varredura pós-entrada, reconciliador OC. Por último entre os ledger porque blast=high e tocam o coração do estoque.",
+   "problem_ids": [
+    "P060",
+    "P019",
+    "P014",
+    "P015",
+    "P023",
+    "P072",
+    "P075",
+    "P077",
+    "P005",
+    "P082",
+    "P149",
+    "P152",
+    "P150",
+    "P151",
+    "P147",
+    "P148",
+    "P084"
+   ],
+   "rationale": "P019 (pick parcial atômico, blast high), P023 (reversão cutover, chamado por 4 fluxos), P014/P015 (desmarcar atômico + estorno tolerante — conflito a resolver), P072 (idempotency token no pick sem-reserva), P075/P077 (vendas atômicas), P005 (enqueue durável da aprovação, caminho crítico). Reconciliação retroativo (P150/P151/P152 — RPC com lock unifica os três) e P147/P148 (estorno parcial+guard). P082/P149 (durabilidade reconciliador/varredura) deps fila da fase 1. P084 (resolução pedido-fantasma) reusa estorno_ledger_lookup. Todos blast med/high → por último.",
+   "depends_on_phases": [
+    1,
+    2,
+    4
+   ],
+   "effort": "L"
+  },
+  {
+   "n": 6,
+   "title": "Bugs pontuais, UX, idempotência de frontend e visibilidade",
+   "objetivo": "Fechar os fixes de menor risco e alto valor percebido: registrar erros no histórico, surfacing de erro de sync, filtros e auditoria, idempotência de frontend (botões/keys), realtime de divergências, relatórios, e os pointwise bugs. Por último porque não bloqueiam fundações e muitos são cirúrgicos.",
+   "problem_ids": [
+    "P006",
+    "P012",
+    "P017",
+    "P074",
+    "P001",
+    "P093",
+    "P031",
+    "P036",
+    "P070",
+    "P090",
+    "P104",
+    "P035",
+    "P040",
+    "P047",
+    "P046",
+    "P053",
+    "P155",
+    "P132",
+    "P086",
+    "P089",
+    "P091",
+    "P165",
+    "P183",
+    "P169",
+    "P142",
+    "P143",
+    "P144",
+    "P158",
+    "P107",
+    "P105",
+    "P162",
+    "P173",
+    "P174",
+    "P121",
+    "P178",
+    "P179",
+    "P133",
+    "P163",
+    "P185",
+    "P168",
+    "P071",
+    "P043",
+    "P146",
+    "P184",
+    "P087",
+    "P125b",
+    "P153",
+    "P073",
+    "P080",
+    "P117",
+    "P118",
+    "P171",
+    "P095",
+    "P002",
+    "P122",
+    "P098",
+    "P170",
+    "P175",
+    "P141",
+    "P161",
+    "P180",
+    "P182",
+    "P088",
+    "P126",
+    "P094",
+    "P048",
+    "P134",
+    "P137",
+    "P076",
+    "P163b"
+   ],
+   "rationale": "Cluster final: preflight guards de baixo blast (P012/P017/P074/P001/P093/P031/P036/P070/P090/P104/P035/P040/P047), pointwise bugs (P142/P143/P144/P158/P107/P173/P174/P121/P178/P179/P133/P169), frontend idempotency/UX (P013 já parcial→aqui o UX; P153/P163/P185/P168/P071/P043/P146/P184/P087/P162/P134/P137/P076), data_visibility (P006/P117/P118/P171/P095/P002/P122/P098/P170/P175/P141/P161/P180/P182/P088/P132/P086/P089/P091/P155/P046/P053/P084-ui), cache (P165/P183/P169), durable leftovers (P126/P094/P048). Muitos compartilham change_site (sync-tiny, relatorio, tiny/stock/ajustar) → coalescer em PRs. Migração Tiny→ledger (P086/P089/P091/P165/P166) é a cabeça que arrasta P164/P184/P087/P093/P090 — ver conflitos.",
+   "depends_on_phases": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "effort": "L"
+  }
+ ],
+ "prs": [
+  {
+   "phase": 1,
+   "title": "Reclaim de jobs estagnados na fila (timeout 5min volta a pendente)",
+   "problem_ids": [
+    "P145"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 1,
+   "title": "Lock de recebimento de transferência: cancel respeita/adquire o mutex + timeout 30min (coluna recebimento_em_andamento_em)",
+   "problem_ids": [
+    "P062",
+    "P068",
+    "P066"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 1,
+   "title": "Force-unlock 'Tomar de Fulano' na guarda + aviso >30min (iniciada_em)",
+   "problem_ids": [
+    "P127"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 1,
+   "title": "Aprovar sessão de inventário idempotente (compare-and-set .eq status='revisao')",
+   "problem_ids": [
+    "P160"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 1,
+   "title": "RPC wms_confirmar_item_embalagem_atomico: soma atômica + dedup por client_request_id (embalagem)",
+   "problem_ids": [
+    "P130",
+    "P129",
+    "P131"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 1,
+   "title": "Decremento atômico de quantidade_bipada (desfazer-bip)",
+   "problem_ids": [
+    "P021"
+   ],
+   "needs_migration": true,
+   "effort": "S"
+  },
+  {
+   "phase": 1,
+   "title": "RPC wms_set_role_permissoes: replace de permissões tudo-ou-nada + FOR UPDATE serializa edição concorrente",
+   "problem_ids": [
+    "P138",
+    "P139"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 1,
+   "title": "Claim atômico de classify de devolução (compare-and-set status) — base p/ fase 4",
+   "problem_ids": [
+    "P052"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 2,
+   "title": "UNIQUE estorno único por estorno_de (promover idx_mov_estorno a UNIQUE) + 23505 idempotente",
+   "problem_ids": [
+    "P106"
+   ],
+   "needs_migration": true,
+   "effort": "S"
+  },
+  {
+   "phase": 2,
+   "title": "UNIQUE parcial fornecedor preferencial por produto + disabled no botão",
+   "problem_ids": [
+    "P124",
+    "P125"
+   ],
+   "needs_migration": true,
+   "effort": "S"
+  },
+  {
+   "phase": 2,
+   "title": "UNIQUE parcial sessão de inventário por (galpão,dia) + 409 amigável",
+   "problem_ids": [
+    "P055"
+   ],
+   "needs_migration": true,
+   "effort": "S"
+  },
+  {
+   "phase": 2,
+   "title": "Trigger kit→≥1 componente (cobre sync e escrita direta)",
+   "problem_ids": [
+    "P120"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 2,
+   "title": "Dedup de recebimento por assinatura NF (UNIQUE parcial) — saldo e custo não dobram",
+   "problem_ids": [
+    "P099",
+    "P109"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 2,
+   "title": "Guard de custo-zero + reversão de custo médio no estorno (recriar wms_inserir_movimentacao)",
+   "problem_ids": [
+    "P108",
+    "P110"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 2,
+   "title": "Upsert no auto-cadastro de fornecedores por prefixo (contagem correta)",
+   "problem_ids": [
+    "P123"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 2,
+   "title": "Recriar MV siso_cobertura_estoque no shape 3D (reverter regressão 20260605)",
+   "problem_ids": [
+    "P128"
+   ],
+   "needs_migration": true,
+   "effort": "S"
+  },
+  {
+   "phase": 3,
+   "title": "Guard backend de permissão específica em /ajuste e /localizacoes/lote",
+   "problem_ids": [
+    "P069",
+    "P116"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 3,
+   "title": "Anti-lockout: recusar desativação do último admin ativo",
+   "problem_ids": [
+    "P136"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 3,
+   "title": "Cancelar job na fila ao estornar pedido + alinhar status/status_separacao",
+   "problem_ids": [
+    "P008"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 3,
+   "title": "Liberar reserva R nos caminhos de cancelamento (recusar pedido, cancelar item de compra)",
+   "problem_ids": [
+    "P034",
+    "P038",
+    "P039"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 3,
+   "title": "Cancelar pedido em separação parcial: libera só não-pego, preserva pick (decisão de fluxo)",
+   "problem_ids": [
+    "P007"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 3,
+   "title": "Reserva all-or-nothing no webhook auto-aprovação + dedup R viva por (pedido,produto)",
+   "problem_ids": [
+    "P085",
+    "P003"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Guard de status da sessão no bipe + reconciliação temporal desde início do dia",
+   "problem_ids": [
+    "P058",
+    "P059"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "RPC wms_estornar_sessao_inventario (tudo-ou-nada) + estorno por divergência individual",
+   "problem_ids": [
+    "P056",
+    "P061",
+    "P159"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 4,
+   "title": "RPC wms_contagem_inline_atomica (acerto de prateleira no pick)",
+   "problem_ids": [
+    "P057"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "RPC wms_classificar_devolucao: movs+status atômicos + preflight quarentena (Classe B bloqueia)",
+   "problem_ids": [
+    "P049",
+    "P050",
+    "P051",
+    "P054"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 4,
+   "title": "RPC wms_desfazer_recebimento_transferencia atômica + preflight 'quanto dá pra desfazer'",
+   "problem_ids": [
+    "P067",
+    "P065"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Reverter replenishment com estorno parcial residual",
+   "problem_ids": [
+    "P078"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Recebimento all-items tudo-ou-nada (receberItensViaOC para de engolir falha)",
+   "problem_ids": [
+    "P028"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Cross-check produto bipado na guarda + escape-hatch manual",
+   "problem_ids": [
+    "P029"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Over-receive: categorizar excedente como ganho de inventário",
+   "problem_ids": [
+    "P033"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 4,
+   "title": "Auto-limpar reserva vencida ao desativar localização",
+   "problem_ids": [
+    "P115"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 5,
+   "title": "RPC wms_aplicar_sessao_inventario (aplicar tudo-ou-nada)",
+   "problem_ids": [
+    "P060"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 5,
+   "title": "RPC wms_pick_parcial_atomico (L+S+ajuste do wave) + idempotency token no pick sem-reserva",
+   "problem_ids": [
+    "P019",
+    "P072"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 5,
+   "title": "RPC wms_desmarcar_item_atomico + estorno tolerante (clamp R + status_alerta) — resolve conflito P014/P015",
+   "problem_ids": [
+    "P014",
+    "P015"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 5,
+   "title": "RPC wms_reverter_cutover_atomico (reversão tudo-ou-nada)",
+   "problem_ids": [
+    "P023"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 5,
+   "title": "RPCs wms_vender_baixa_direta_atomico + wms_cancelar_venda_atomico",
+   "problem_ids": [
+    "P075",
+    "P077"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 5,
+   "title": "Enqueue durável + atômico da aprovação (RPC wms_aprovar_e_enfileirar) com retry",
+   "problem_ids": [
+    "P005"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 5,
+   "title": "RPC wms_reconciliar_retroativo (lock + idempotência + estorno parcial) — unifica P150/P151/P152/P147/P148",
+   "problem_ids": [
+    "P152",
+    "P150",
+    "P151",
+    "P147",
+    "P148"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 5,
+   "title": "Durabilidade do reconciliador OC + varredura pós-entrada (jobs com retry 30s/5min/10min + alerta)",
+   "problem_ids": [
+    "P082",
+    "P149"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 5,
+   "title": "Resolução de pedido-fantasma (R→S se saiu, R→prateleira se cancelado) — rota+UI",
+   "problem_ids": [
+    "P084"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Registrar erros de separação no histórico do pedido",
+   "problem_ids": [
+    "P006"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 6,
+   "title": "Reordenar iniciar: consolida (RPC) antes de marcar em_separacao + reportar já_em_separacao",
+   "problem_ids": [
+    "P012",
+    "P153"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 6,
+   "title": "Guards de pré-condição de separação/compra (qty=0, NF nf_venda, concluir-oc multi-galpão, trocar-sku, voltar-etapa stale)",
+   "problem_ids": [
+    "P017",
+    "P074",
+    "P031",
+    "P036",
+    "P154"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Validar pedido na chegada (qty=0 rejeita, nomeia item) + kit sem cadastro Tiny (flag, não dropar)",
+   "problem_ids": [
+    "P001",
+    "P002",
+    "P095"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 6,
+   "title": "Migração Tiny→ledger da correção de estoque (ajuste auditável, lock, varredura, idempotency, guard 0, deposito) — cabeça do cluster",
+   "problem_ids": [
+    "P086",
+    "P089",
+    "P166",
+    "P164",
+    "P165",
+    "P184",
+    "P087",
+    "P090",
+    "P091",
+    "P093"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 6,
+   "title": "Guards de compra/devolução: estorno na devolução, bloqueio lançado, status OC, equivalente cria item novo",
+   "problem_ids": [
+    "P040",
+    "P047",
+    "P046",
+    "P045",
+    "P035",
+    "P155",
+    "P053",
+    "P070"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Sync-tiny: surfacing de erro sem mapeamento + filtro produtos sem mapeamento + kit→não-kit limpa + kit vazio + escolha empresa determinística",
+   "problem_ids": [
+    "P117",
+    "P118",
+    "P171",
+    "P098",
+    "P095b",
+    "P097",
+    "P169",
+    "P170"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Relatório movs-por-empresa: default 12m + paginação + filtro SQL de empresa + excluir devoluções",
+   "problem_ids": [
+    "P105",
+    "P107",
+    "P158"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  },
+  {
+   "phase": 6,
+   "title": "Etiqueta/impressão: reimprimir retry 3x + 2 labels + retenção 30d + invalidar cache PrintNode + preview delete conta",
+   "problem_ids": [
+    "P142",
+    "P144",
+    "P143",
+    "P183",
+    "P141"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Pointwise: cobertura lead default 7d, qty inteira transferência, packing no type/rota/form, sku duplicado 409, reativar vínculo fornecedor, bloquear delete fornecedor/galpão",
+   "problem_ids": [
+    "P079",
+    "P162",
+    "P173",
+    "P174",
+    "P178",
+    "P179",
+    "P133"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Frontend idempotency/UX: idempotency key estável (venda nova), botões disabled, surfacing de erro, forms galpão obrigatório",
+   "problem_ids": [
+    "P071",
+    "P043",
+    "P146",
+    "P185",
+    "P168",
+    "P163",
+    "P134",
+    "P137",
+    "P076"
+   ],
+   "needs_migration": true,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Marcar-item idempotente pós-reconexão (UX) + concluir no-regress + crossdock no-regress",
+   "problem_ids": [
+    "P013",
+    "P073",
+    "P080"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Visibilidade: realtime+Reabrir de divergências, auditoria de produto, contagem de kit, deposito no pedido, insight operador inativo, limpa operador no estorno embalagem",
+   "problem_ids": [
+    "P161",
+    "P180",
+    "P175",
+    "P122",
+    "P132",
+    "P182"
+   ],
+   "needs_migration": true,
+   "effort": "L"
+  },
+  {
+   "phase": 6,
+   "title": "Durabilidade residual: persistência token ML com retry+alerta, cleanup locks órfãos >24h, cancelOcIfEmpty retry+surfacing",
+   "problem_ids": [
+    "P094",
+    "P126",
+    "P048"
+   ],
+   "needs_migration": false,
+   "effort": "M"
+  },
+  {
+   "phase": 6,
+   "title": "Won't-fix / regressão: testes de regressão (P004 acerto, P041 unlink, P042 permite, P092 defer, P119/P135/P177 soft-delete)",
+   "problem_ids": [
+    "P004",
+    "P041",
+    "P042",
+    "P092"
+   ],
+   "needs_migration": false,
+   "effort": "S"
+  }
+ ],
+ "conflicts": [
+  {
+   "ids": [
+    "P014",
+    "P015"
+   ],
+   "description": "Mesmo código (marcar-item desmarcar / estornarLiberacaoReserva). P014 quer desfazimento tudo-ou-nada (RPC com RAISE em qualquer falha → rollback total). P015 quer estorno TOLERANTE (clampar R ao saldo livre + status_alerta) porque a nota de P015 contraria o ledger imutável e respeita_nota=false. Colidem: all-or-nothing estrito vs degradação tolerada no mesmo ponto de estorno-L.",
+   "resolution": "Implementar UMA RPC wms_desmarcar_item_atomico onde a transação é atômica (P014) MAS o estorno-L usa o caminho tolerante: se recriar a R full violaria a CHECK, recria clampada ao saldo livre e seta status_alerta DENTRO da mesma transação (não falha o desmarque). Confirmar com o user que P015 diverge da letra da nota (estratégia técnica fiel ao ledger vence). Um PR único na fase 5."
+  },
+  {
+   "ids": [
+    "P056",
+    "P060",
+    "P061"
+   ],
+   "description": "Inventário aplicar (P060) e estornar (P056/P061) tudo-ou-nada compartilham helpers plpgsql de 'lote de contra-movs com preflight'. P061 é o mesmo código de P056 (deps).",
+   "resolution": "Uma migration com 2 RPCs (wms_aplicar_sessao_inventario, wms_estornar_sessao_inventario) compartilhando o helper de preflight. P056+P061 no mesmo PR (fase 4); P060 na fase 5 (maior blast). P061 effort S porque o trabalho é P056."
+  },
+  {
+   "ids": [
+    "P099",
+    "P109"
+   ],
+   "description": "Mesma primitiva e migration (dedup de recebimento por assinatura NF). P109 deps P099.",
+   "resolution": "Um índice único parcial + captura de 23505 na RPC cobre os dois. Mesmo PR na fase 2."
+  },
+  {
+   "ids": [
+    "P108",
+    "P104"
+   ],
+   "description": "Ambos 'custo zero na entrada'. P108 bloqueia no RPC (hard); P104 quer fallback de custo médio nos routes de entrada (não bloquear cego). Risco de dupla-regra conflitante.",
+   "resolution": "P108 (RPC) é a rede de segurança terminal: bloqueia/aplica custo mínimo SÓ nas origens que recalculam custo. P104 (routes) faz fallback de custo médio histórico ANTES de chamar a RPC. Fazer P108 primeiro (fase 2), P104 depois (fase 6). Não duplicar a lógica de custo médio."
+  },
+  {
+   "ids": [
+    "P108",
+    "P110"
+   ],
+   "description": "Ambos tocam o corpo de wms_inserir_movimentacao (guard de custo-zero + reversão de custo médio no estorno). Duas redefinições da RPC colidiriam.",
+   "resolution": "Unir numa migration só que recria wms_inserir_movimentacao com os dois guards (custo-zero + reversão no estorno). Fase 2, PR único."
+  },
+  {
+   "ids": [
+    "P124",
+    "P125"
+   ],
+   "description": "P125 deps P124 (mesma migration UNIQUE serve de backstop de banco). Mesmo arquivo de rota.",
+   "resolution": "Migration do P124 cobre o backstop de banco do P125. P124 primeiro; P125 adiciona só o disabled no botão. Mesmo PR fase 2."
+  },
+  {
+   "ids": [
+    "P138",
+    "P139"
+   ],
+   "description": "Mesma rota e mesma RPC wms_set_role_permissoes. P139 (lock concorrente) sai de graça com SELECT FOR UPDATE da row do role dentro da RPC de P138.",
+   "resolution": "PR único: a RPC faz FOR UPDATE da row do role (serializa P139) + delete+insert atômico (P138). Nota pede '2º admin vê aviso e espera' → avaliar advisory NOWAIT→409 vs blocking. Fase 1."
+  },
+  {
+   "ids": [
+    "P049",
+    "P050",
+    "P051",
+    "P052",
+    "P054"
+   ],
+   "description": "Devoluções: P049/P050 atomicidade movs+status, P052 claim concorrente, P051 preflight quarentena (muda o fluxo da Classe B), P054 lock pessimista. Tudo no mesmo classificarDevolucao. P051 precede (deps de P049).",
+   "resolution": "Uma RPC wms_classificar_devolucao com: (1º) claim atômico de status (P052), preflight de quarentena ANTES de mover (P051), movs+status na mesma transação (P049/P050/P054). P051 baked na RPC. Remover o branch ajuste_manual que mascara ausência de quarentena. PR único fase 4."
+  },
+  {
+   "ids": [
+    "P150",
+    "P151",
+    "P152",
+    "P147",
+    "P148"
+   ],
+   "description": "Mesma função reconciliarRetroativo por 5 ângulos: idempotência (P150/P151/P148), concorrência (P152), estorno parcial (P147). P147 deps P148, P151/P152 deps P150.",
+   "resolution": "RPC wms_reconciliar_retroativo com lock por lançamento (P152 serializa), checagem de estorno existente (P150/P151/P148 idempotente), e estorno parcial clampado ao disponível (P147). Os 5 num PR único fase 5."
+  },
+  {
+   "ids": [
+    "P046",
+    "P047"
+   ],
+   "description": "Mesma rota /compras/itens/[id]/devolver. P047 (guard: bloquear se pedido lançado) tem PRECEDÊNCIA sobre P046 (estorno da saída quando NÃO lançado). Ordem do código importa.",
+   "resolution": "P047 roda PRIMEIRO (early-return 409 se estoque_lancado). Só se não-lançado, P046 grava o estorno (E) que desfaz a S. Mesmo PR fase 6, P047 antes de P046 no fluxo."
+  },
+  {
+   "ids": [
+    "P035",
+    "P040",
+    "P041",
+    "P042"
+   ],
+   "description": "Cluster compras-utils/checkAndCancelPedidoIfAllTerminal. P035 quer 'compra cancelada → pedido volta a pendente' (deps P034, conflito com P040). P041/P042 são already_fixed por decisão (manter comportamento). P040 bloqueia cancelar item com separação.",
+   "resolution": "P035 precisa distinguir terminal-por-cancelamento (reentra) de terminal-por-indisponivel (morre) — decisão de produto necessária, confirmar com user. P040 é guard independente. P041/P042 won't-fix. P035 deps P034 (liberação de reserva). Coordenar no mesmo PR de compras (fase 6)."
+  },
+  {
+   "ids": [
+    "P086",
+    "P166",
+    "P089",
+    "P164",
+    "P165",
+    "P184",
+    "P087",
+    "P090",
+    "P091",
+    "P093"
+   ],
+   "description": "Cluster da rota tiny/stock/ajustar (correção de estoque). P086/P166 = migração Tiny→ledger (cabeça). P089(desync)/P165(varredura)/P090(reserva descoberto)/P091(deposito)/P093(deposito null) caem de graça com a migração. P164(rejeitar 0)/P184/P087(idempotency) são guards na nova rota. P090 conflita com validarCoerencia (nota: não bloquear, alertar) vs invariante CHECK reservado<=saldo.",
+   "resolution": "PR único de migração ledger (fase 6): migrar a correção pro /api/wms/ajuste (já ledger-only auditável), o que dissolve desync (P089), aciona varredura (P165), congela deposito (P091/P093), e dá lock+trilha (P166). Guards (P164 rejeita 0, P087/P184 idempotency) entram na nova rota. P090 (não-bloquear reservado>saldo) exige decisão: relaxar invariante ou liberar/realocar R a descoberto como parte do ajuste — flag pro user. ATENÇÃO: rota tiny/stock/ajustar parece SEM CALLERS hoje (dead path) — confirmar antes de investir; o que importa é o PUT connections (P093) e o /api/wms/ajuste."
+  },
+  {
+   "ids": [
+    "P178",
+    "P179"
+   ],
+   "description": "Mesmo par fornecedor↔vínculo. P178 reativa vínculo soft-deletado no reimport; P179 bloqueia delete de fornecedor com vínculos ativos. Aparente colisão.",
+   "resolution": "Não colidem de fato: P179 escolheu BLOQUEAR (não cascade), então fornecedor com vínculos não é deletado; P178 reativa vínculo individual no reimport (ortogonal). Implementar ambos, revisar juntos para consistência da regra soft-delete (alinha P063/P133/P177)."
+  },
+  {
+   "ids": [
+    "P105",
+    "P107",
+    "P158"
+   ],
+   "description": "Mesmo arquivo route.ts (movs-por-empresa). Três fixes independentes que dariam 3 conflitos de merge.",
+   "resolution": "Um PR único: default 12m + paginação 5k (P105) + filtro SQL de empresa (P107) + excluir origens de devolução da whitelist (P158). Fase 6."
+  },
+  {
+   "ids": [
+    "P134",
+    "P137"
+   ],
+   "description": "Mesma regra de bloqueio-vazio (galpão obrigatório para operador) no form de criação (P134) e edição (P137). P137 deps P134.",
+   "resolution": "Extrair helper pura calcDisabled compartilhada entre criar e editar. P134 primeiro; P137 reusa. Mesmo PR fase 6."
+  },
+  {
+   "ids": [
+    "P099",
+    "P146",
+    "P184"
+   ],
+   "description": "Idempotency no banco local: P146 (retroativo) e P184 (correção) e P099 (recebimento) todos pediriam coluna idempotency_key em siso_movimentacoes.",
+   "resolution": "Uma coluna idempotency_key (uuid) + unique partial index em siso_movimentacoes, reusada pelos três caminhos. P099 já usa assinatura NF (índice próprio); P146/P184 compartilham a coluna genérica. Não duplicar infra."
+  }
+ ],
+ "already_fixed": [
+  "P073",
+  "P080",
+  "P041",
+  "P042",
+  "P119",
+  "P135",
+  "P177"
+ ],
+ "quick_wins": [
+  "P145",
+  "P160",
+  "P021",
+  "P006",
+  "P012",
+  "P017",
+  "P058",
+  "P069",
+  "P116",
+  "P008",
+  "P106",
+  "P123",
+  "P128",
+  "P164",
+  "P158",
+  "P173",
+  "P174",
+  "P163",
+  "P185",
+  "P071",
+  "P143",
+  "P148",
+  "P150",
+  "P132",
+  "P124",
+  "P055"
+ ],
+ "dag_notes": "ORDEM CRÍTICA: (1) Fundações atômicas primeiro — atomic_claim_header (P062/P068/P066/P127/P160/P052/P145) e o envelope de RPC plpgsql validado nos casos de menor blast (P130/P129/P131 embalagem; P138/P139 permissoes; P021 desfazer-bip) antes dos casos quentes. supabase-js NÃO tem transação multi-statement client-side — TODA atomicidade tudo-ou-nada exige RPC plpgsql; isso é o gargalo arquitetural que define needs_migration na maioria das fases 4-5. (2) db_constraint_unique é fundação independente que muitos fixes reusam como backstop: P124→P125, P099→P109, P108→P110, P055, P106, P120. Promover idx_mov_estorno e idx_pf_preferencial a UNIQUE (já existem não-únicos). Dedup de dados em STAGING antes de cada CREATE UNIQUE (produtos com >1 preferencial, sessões duplicadas) senão o CREATE falha. (3) DEPS explícitas dos achados: P061→P056, P109→P099, P110→P108, P125→P124, P139→P138, P137→P134, P151/P152→P150, P147→P148, P049/P050/P052→P051(preflight precede), P035→P034, P046→P047(precedência de guard na mesma rota), P087/P088/P089/P090/P091/P165/P166→P086(migração ledger), P184→P146+P166, P002→P095, P137→P134, P149→P145(reusa infra de retry/reclaim), P028 família all-items. (4) wms_inserir_movimentacao é tocada por P108 (guard custo-zero) E P110 (reversão custo médio no estorno) — UMA migration recria a RPC com os dois, senão redefinições conflitam. (5) Migração Tiny→ledger (P086/P166 cabeça) ARRASTA 8 problemas e dissolve desync/varredura/deposito; MAS a rota tiny/stock/ajustar parece DEAD PATH (sem callers) — confirmar com user antes de investir; o caminho real de ajuste já é /api/wms/ajuze (ledger-only auditável). (6) Already_fixed (P073/P080/P041/P042/P119/P135/P177) NÃO entram no plano de mudança, só testes de regressão para travar a invariante. (7) blast_radius high (P019/P023/P085/P056/P060/P075/P099/P108/P110/P049/P050/P005/P054) sempre por último dentro de cada domínio. (8) P004/P092/P041/P042 won't-fix por decisão vinculante do user — respeita_nota=true mesmo com bug aberto.\""
+}

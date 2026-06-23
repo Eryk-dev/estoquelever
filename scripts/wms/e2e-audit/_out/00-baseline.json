@@ -1,0 +1,49 @@
+{
+  "staging": "ehbxpbeijofxtsbezwxd",
+  "at": "2026-06-22T22:12:56.163Z",
+  "counts": {
+    "siso_movimentacoes": 11443,
+    "siso_estoque": 5561,
+    "siso_custo_medio": 91,
+    "siso_pedidos": 1935,
+    "siso_pedido_itens": 2057,
+    "siso_fila_execucao": 8945,
+    "siso_wms_pendencias_guarda": 14,
+    "siso_inventario_sessoes": 4,
+    "siso_transferencias_galpao": 0,
+    "siso_ordens_compra": 22,
+    "siso_devolucoes_pendentes": 129,
+    "siso_trocas_equivalencia": 24,
+    "siso_notas_fiscais": 1533,
+    "siso_pedido_item_mov_links": 3046,
+    "siso_compras_manuais": 2,
+    "siso_impressoes_log": 25,
+    "siso_localizacao_locks": 83,
+    "siso_webhook_logs": 8166,
+    "siso_logs": 873499,
+    "siso_erros": 14071
+  },
+  "baseline": {
+    "I1_ledger_vs_cache": {
+      "violacoes": 0,
+      "amostra": []
+    },
+    "I8_reservado_vs_ledger": {
+      "violacoes": 0,
+      "amostra": []
+    },
+    "I2_disponivel": {
+      "violacoes": 0,
+      "amostra": []
+    },
+    "estoque_sem_loc": {
+      "linhas": 0,
+      "amostra": []
+    }
+  },
+  "watermark": {
+    "id": "36e2ed3c-517a-4cf1-bbf5-c9bc0b2e3e39",
+    "criado_em": "2026-06-22T22:08:05.420343+00:00"
+  },
+  "preexisting_test_produtos": []
+}

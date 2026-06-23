@@ -19,6 +19,7 @@ import { logger } from "./logger";
 import { estornarReservaIndividual } from "./wms/reservas";
 import { cancelarTrocasPendentesDoPedido } from "./wms/trocas-equivalencia";
 import { classificarItensParaCancelamento } from "./wms/cancelamento-parcial";
+import { registrarPicksCanceladosParaDevolucao } from "./wms/devolucoes";
 import { registrarEvento } from "./historico-service";
 
 export interface CancelamentoResult {
@@ -172,6 +173,20 @@ export async function handlePedidoCancelamento(params: {
       if (!currentTags.includes("cancelado_com_picks")) {
         cancelUpdate.separacao_tags = [...currentTags, "cancelado_com_picks"];
       }
+      // BUG-12: pendência FORTE de devolução por item pego (S rastreável via
+      // mov_saida_id) → worklist + retorno ao estoque ao classificar 'integro'.
+      // Itens lançados sem marker per-item (S de cutover, mov_saida_id null)
+      // não entram aqui — só o caminho de pick rastreável.
+      await registrarPicksCanceladosParaDevolucao(
+        baseDevolucao
+          .filter((i) => i.mov_saida_id)
+          .map((i) => ({
+            pedido_id: pedidoId,
+            mov_saida_id: i.mov_saida_id as string,
+            sku: i.sku ?? null,
+            qty: Number(i.quantidade_pega ?? i.quantidade_pedida ?? 0),
+          })),
+      );
     }
     // --- End CST-02 ---
 

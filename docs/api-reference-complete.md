@@ -5217,6 +5217,12 @@ RPC `wms_encerrar_troca_atomico` (libera R de troca + fecha). Origem ROTEAMENTO 
 
 Troca o substituto sugerido de uma troca PENDENTE por outro equivalente (operador no modal escolhe entre as opções). Valida regra/saldo em TS (`resolverRealocacao` no galpão da troca) → RPC `wms_trocar_substituto_atomico` move a R `reserva_troca` do substituto antigo pro novo (L antiga + R nova, atômico — sem R órfã). A troca segue pendente; operador aprova depois.
 
+### POST /api/wms/trocas/[id]/desfazer
+
+**Auth:** `vendas.aprovar_troca` · **Body:** nenhum (`[id]` = troca id)
+
+Desfaz uma troca de equivalência **APLICADA** (`status='aprovada'`, item com `produto_wms_substituto_id`) num pedido **reaberto e NÃO-picado** — sai do beco-sem-saída (BUG-A 2026-06-23): solicitarTroca/trocarSubstituto/rejeitar travavam após reabrir um pedido com troca aplicada. Via RPC `wms_desfazer_troca_aplicada_atomico`: libera a R do substituto, limpa `produto_wms_substituto_id`/`troca_equivalencia_id` do item (volta a resolver pro original) e fecha a troca `status='desfeita'`. Depois o operador re-roteia o original OU solicita nova troca (3º SKU) — o guard de `solicitarTroca` volta a passar. Erros: `409 TROCA_NAO_APLICADA` (sem substituto), `409 ITEM_JA_PICADO`, `409 PEDIDO_ESTADO_INVALIDO` (não reaberto), `404 TROCA_NAO_ENCONTRADA`.
+
 ### GET /api/wms/trocas/equivalentes
 
 **Query:** `sku`, `galpao_id`

@@ -212,7 +212,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 | `siso_pedidos` | Pedidos. `id` é **text** (Tiny). `sugestao`/`decisao_final`, `status`+`status_separacao`, `empresa_origem_id`, `separacao_galpao_id`, `separacao_tags[]`. |
 | `siso_pedido_itens` | Itens. ⚠ `produto_id` = **tiny_produto_id**, não uuid WMS. `quantidade_pega`, `separacao_parcial`, `mov_saida_id`. |
 | `siso_estoque` / `siso_movimentacoes` / `siso_custo_medio` | Ledger 3D (acima). |
-| `siso_produtos` | Catálogo unificado. `sku UNIQUE`, `eh_kit`, fiscal. |
+| `siso_produtos` | Catálogo unificado. `sku UNIQUE`, `eh_kit`, fiscal. `oem text[]` (cross): **sempre normalizado — só alfanumérico, UPPERCASE** (sem espaço/traço/barra/ponto), via `normalizarOem` (`cross/equivalencias-core.ts`), aplicado na escrita (PATCH `/cross/produtos/[sku]/oem` + import `scripts/import-aca-cross.py`). |
 | `siso_produto_empresas` | N:N produto↔empresa com `tiny_produto_id`. **Bridge Tiny→WMS.** |
 | `siso_localizacoes` | Locs por galpão. `UNIQUE(galpao_id, codigo)`, `tipo ∈ picking/overstock/recebimento/expedicao/quarentena/packing`. Auto-seed `DEFAULT-PICKING`/`QUARENTENA`/`RECEBIMENTO`. |
 | `siso_galpoes` / `siso_empresas` / `siso_empresa_galpoes_preferenciais` | Hierarquia. ⚠ `siso_empresas.galpao_id` DEPRECADA. |
@@ -281,7 +281,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 3. **Não existe `WMS_AS_SOURCE`/`flags.ts`** — o caminho WMS é permanente; `webhook-processor`/`execution-worker` sempre delegam pros `-wms`. `WMS_AS_SOURCE` no `.env.example` está **stale**.
 4. **`cutover.ts` NÃO é feature-flag** — é o backstop que flipa `estoque_lancado` quando o pedido atinge `separado/embalado/expedido` e reverte (estorno + recria R) no retrocesso. **NF não é mais pré-condição** (2026-05-28) — o S sai no pick, atômico.
 5. **`inserirMovimentacao` emite apenas `logger.warn` (não lança erro) se faltar `nota_fiscal_id`** em movs de origem NF (relaxado em 2026-05-27 — `ledger.ts ~154`). Enforcement real fica nos webhook handlers (`nf-webhook-handler`, `webhook-processor`) onde a NF realmente existe. Ainda assim, chamar `upsertNotaFiscal()` antes garante observabilidade correta.
-6. **`pickMovPicking` não é idempotente nem atômico** — guardar via `mov_saida_id` antes, ou usar a RPC `wms_pick_item_atomico` (caminho de `marcar-item`).
+6. **`pickMovPicking` agora delega o par L+S à RPC atômica `wms_pick_item_atomico`** (2026-06-22, fix BUG-06/07) — atômico + serializado por `FOR UPDATE` na R (rejeita double-tap com "reserva já liberada") + seta `origem_id=pedido` na S. Idempotente no ramo COM reserva; o ramo SEM reserva (OC "bipa onde achou") ainda não passa `idempotency_key` — guardar via `mov_saida_id` cobre só retry sequencial, não corrida.
 7. **`live-stock.ts` / `galpoes-com-saldo.ts` lêem `siso_estoque` (live).** `siso_pedido_item_estoques` foi **dropada** — não conflate com snapshot.
 8. **Todas as chamadas Tiny devem rodar dentro de `runWithEmpresa(empresaId, …)`** (AsyncLocalStorage carrega o contexto pro rate-limit e pro stub).
 9. **TTL de reserva é inconsistente por design:** `reservas.ts` default 48h, mas pick-cascade/aprovar/webhook usam 30 dias (`24*30`).

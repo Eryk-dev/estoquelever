@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compras Preditivo — Radar do Comprador — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Compras Preditivo — Radar do Comprador</h1>
+  <p class="subtitle">O sistema diz o que comprar, quanto e quando. O comprador aprova num clique.</p>
+  <p class="meta">Validação de fluxo · 2026-05-18 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Hoje o comprador só fica sabendo que precisa comprar quando o pedido do cliente já bateu sem estoque. A nova tela "Reposição" muda isso: toda noite o sistema olha as vendas dos últimos meses, calcula quanto cada peça vende por dia e com que regularidade, soma o tempo que cada fornecedor leva pra entregar, e marca quais SKUs vão entrar em ruptura antes da próxima chegada. Quando isso acontece, antes de mandar comprar, ele primeiro vê se a empresa irmã do grupo tem o item em outro CNPJ (vira empréstimo) ou se existe peça equivalente com OEM compatível em estoque. Se nada disso resolve, sugere uma compra com qty pronta. Pela manhã, o comprador abre a tela e vê tudo ranqueado por urgência: o que vai zerar primeiro fica no topo, com explicação completa do "por quê" daquele número. Um clique aprova.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Trocar compra reativa (descobrir falta quando o cliente já reclamou) por compra preditiva (saber com 7+ dias de antecedência o que vai faltar e quanto pedir), sem tirar a decisão final do comprador.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal</h2>
+<p>O fluxo tem duas metades: o que o sistema faz sozinho durante a madrugada e o que o comprador faz pela manhã.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Caminho feliz · da venda do cliente até a aprovação da compra</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Cliente compra no marketplace<br/>venda entra no histórico] --> B[Toda noite às 00h30<br/>sistema analisa últimos 90 dias]
+  B --> C{Como esse SKU<br/>se comporta?}
+  C -->|Vende todo dia| D[Calcula média diária<br/>e variação típica]
+  C -->|Vende às vezes| E[Calcula tamanho típico<br/>e intervalo entre vendas]
+  D --> F[Aplica folga por classe ABC<br/>A=98%, B=95%, C=90% de proteção]
+  E --> F
+  F --> G[Compara saldo atual<br/>com ponto de pedido]
+  G --> H{Vai zerar antes<br/>da entrega chegar?}
+  H -->|Não, folgado| I[Confortável<br/>não sugere nada]
+  H -->|Sim| J{Empresa irmã<br/>tem disponível?}
+  J -->|Sim| K[Sugere pegar emprestado<br/>antes de comprar]
+  J -->|Não| L[Sugere compra<br/>do fornecedor preferencial]
+  K --> M[Manhã: comprador abre Reposição<br/>vê ranking por urgência]
+  L --> M
+  M --> N[Clica em 'Por quê?'<br/>vê explicação completa]
+  N --> O[Aprova, ajusta qty<br/>ou rejeita]
+  O --> P[Pedido sai pro fornecedor<br/>ou reserva é criada]
+
+  style I fill:#dcfce7
+  style K fill:#cffafe
+  style L fill:#fef3c7
+  style P fill:#dcfce7
+  </pre>
+</div>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Vamos seguir o ciclo completo de um SKU real ao longo de 24h:</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Filtro de ar Toyota Corolla, código <strong>19FILTRO123</strong>, vendido pela <strong>NetAir</strong> em <strong>Galpão CWB</strong>. Curva A (top 20% do giro). Saldo no fim do dia: 12 unidades. Fornecedor preferencial: <strong>Tiger</strong>, leva 7 dias pra entregar. Comprador: <strong>João</strong>.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>23h45 — Última venda do dia</strong>
+    <p>Cliente compra 1 unidade no Mercado Livre. Pedido #87432 é registrado. Saldo de 19FILTRO123 em CWB cai de 13 pra 12. Essa venda entra no histórico de movimentação que o sistema vai consultar.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h30 — Sistema acorda pra análise diária</strong>
+    <p>Sistema começa a processar os 487 SKUs ativos. Pra cada um, busca todas as vendas e empréstimos dos últimos 90 dias. Pro 19FILTRO123 encontra 96 saídas distribuídas em 30 dias úteis.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h31 — Classifica o perfil de demanda</strong>
+    <p>Faltou só em 2 dos últimos 30 dias e a média semanal é 22 unidades. Sistema classifica como <strong>perfil regular</strong> (vende constante) e escolhe o método de previsão apropriado.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h31 — Calcula a demanda diária esperada</strong>
+    <p>Aplicando suavização exponencial sobre os 30 dias: média projetada de <strong>3.2 unidades/dia</strong> com variação típica de ±1.1 unidades. Sistema também marca a confiança como "Alta" — tem 42 dias de dados acumulados.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h31 — Aplica a folga da classe A</strong>
+    <p>Como é Curva A (item crítico), o sistema usa folga de 98% de proteção. Calcula que precisa de 7 unidades de estoque de segurança pra absorver picos de demanda durante os 7 dias do lead time da Tiger.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h31 — Define o ponto de pedido</strong>
+    <p>Demanda esperada durante o lead time (7 dias × 3.2/dia = 22.4) somada à folga de segurança (7) dá <strong>ponto de pedido = 29 unidades</strong>. Esse é o gatilho: quando o saldo bate 29, é hora de comprar.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h32 — Verifica situação real do estoque</strong>
+    <p>Saldo atual: 12. Reservado em pedidos abertos: 6. Nenhuma OC emitida pra Tiger ainda. Saldo efetivo = 12 − 6 + 0 = <strong>6 unidades</strong>. Bem abaixo do ponto de pedido de 29.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h32 — Calcula a urgência</strong>
+    <p>Com 6 unidades efetivas e vendendo 3.2/dia, vai zerar em ~2 dias. Tiger leva 7 dias. Folga = −5 dias (vai zerar 5 dias antes da entrega chegar). Score de urgência: <strong>80 — Crítico</strong>.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h33 — Procura alternativas antes de sugerir compra</strong>
+    <p>Primeira pergunta: a NetParts em CWB tem o mesmo item? Sim, mas só 4 unidades disponíveis — insuficiente pra cobrir o déficit. Segunda pergunta: tem peça equivalente via OEM compartilhado com cobertura folgada? Não, os dois equivalentes encontrados também estão em ruptura.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>00h33 — Define a sugestão final</strong>
+    <p>Ação recomendada: <strong>Comprar 50 unidades da Tiger</strong>. A qty é calculada pra cobrir até 2× o ponto de pedido (58 unidades), respeita o pedido mínimo da Tiger (10) e o múltiplo de compra (5). Custo estimado: R$ 1.250,00. Sugestão salva na lista do dia.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>07h00 — João abre a tela "Reposição"</strong>
+    <p>Aba Reposição mostra 23 SKUs precisando de atenção, ordenados por urgência. 19FILTRO123 está no topo, com badge vermelho "Crítico 80", ação primária "Comprar 50 da Tiger". João vê de relance que essa é a prioridade.</p>
+  </div>
+
+  <div class="stepper-item">
+    <strong>07h02 — Clica em "Por quê?" e aprova</strong>
+    <p>Drawer abre mostrando o sparkline das vendas, perfil regular, demanda 3.2/dia ± 1.1, ponto de pedido 29, dias até zerar (2), folga negativa (−5), alternativas descartadas. João concorda, clica "Aprovar". Sistema gera o pedido de compra de 50 unidades pra Tiger e registra a aprovação pra aprendizado futuro.</p>
+  </div>
+</div>
+
+<h2 id="estados">4. Estados e transições</h2>
+<p>Cada sugestão de reposição passa pelos seguintes estados ao longo do ciclo:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-success">Confortável</span></td>
+      <td>Saldo cobre tranquilamente até a próxima entrega chegar. Sistema não exibe na tela por padrão.</td>
+      <td>Cálculo noturno: dias até zerar &gt; 3× lead time</td>
+      <td>Saldo cai abaixo do limiar OU demanda média sobe</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Médio</span></td>
+      <td>Vai zerar entre 1.5× e 3× o lead time. Tem tempo de planejar, ainda não é prioridade.</td>
+      <td>Cálculo noturno: folga entre 1.5× e 3× lead time</td>
+      <td>Comprador aprova/rejeita OU urgência muda no próximo cálculo</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Alto</span></td>
+      <td>Vai zerar entre 1× e 1.5× lead time. Precisa comprar essa semana pra evitar ruptura.</td>
+      <td>Folga vs lead time cai pra essa faixa</td>
+      <td>Comprador aprova → vira pedido de compra OU empréstimo</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Crítico</span></td>
+      <td>Vai zerar antes da entrega chegar. Ruptura iminente mesmo se comprar agora.</td>
+      <td>Folga vs lead time fica negativa (saldo + em trânsito não cobre o lead time)</td>
+      <td>Comprador aprova compra urgente + sistema sinaliza empréstimo se disponível</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Aguardando aprovação</span></td>
+      <td>Sugestão criada e não-vista pelo comprador. Aparece na lista todo dia.</td>
+      <td>Sistema gera sugestão no cálculo noturno</td>
+      <td>Comprador toma ação (aprova/edita/rejeita/adia)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Aprovada — Compra</span></td>
+      <td>Comprador aprovou. Pedido de compra foi gerado e enviado pro fornecedor.</td>
+      <td>Comprador clica "Aprovar" na sugestão de compra</td>
+      <td>Pedido é recebido (passa pra fluxo de Recebimento)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Aprovada — Empréstimo</span></td>
+      <td>Comprador aceitou pegar emprestado da empresa irmã. Reserva foi criada.</td>
+      <td>Comprador clica "Aprovar" na sugestão de empréstimo</td>
+      <td>Item é transferido contabilmente entre empresas (reserva vira saída)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Adiada</span></td>
+      <td>Comprador disse "vejo depois". Sugestão some por 7 dias e só volta se piorar.</td>
+      <td>Comprador clica "Adiar 7 dias"</td>
+      <td>Passam 7 dias OU urgência sobe pra Crítico (volta antes)</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Rejeitada</span></td>
+      <td>Comprador discordou da sugestão. Não aparece de novo até a situação mudar.</td>
+      <td>Comprador clica "Rejeitar" e dá motivo (opcional)</td>
+      <td>Urgência sobe uma faixa OU saldo cai a ponto de gerar nova sugestão</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O que acontece quando o caminho feliz é interrompido por situações reais do dia-a-dia:</p>
+
+<div class="scenario">
+  <div class="scenario-title">Empresa irmã tem o item — vira empréstimo no lugar de compra</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> NetAir CWB está pra zerar o SKU EW123 em 3 dias. Mesma peça, NetParts CWB tem 30 unidades disponíveis e cobertura folgada (gira pouco lá).<br/>
+    <strong>O que o sistema faz:</strong> Antes de sugerir comprar, percebe que empresa irmã do mesmo grupo tem estoque. Verifica que existe regra de empréstimo permitindo. Substitui a ação primária por "Pegar 25 emprestado da NetParts".<br/>
+    <strong>O usuário vê:</strong> Linha aparece com badge azul "Empréstimo disponível" no lugar de "Comprar". Clicando em "Por quê?", o drawer explica que NetParts tem folga e empréstimo evita capital novo. Botão de aprovar gera uma reserva entre as duas empresas.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">SKU recém-cadastrado, ainda sem histórico suficiente</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Comprador cadastrou ontem o filtro novo MK7777. Saldo: 0. Não tem nenhuma venda histórica registrada porque nunca foi vendido ainda.<br/>
+    <strong>O que o sistema faz:</strong> Não consegue calcular demanda nem ponto de pedido — não tem base. Filtra esse SKU da lista de Reposição.<br/>
+    <strong>O usuário vê:</strong> Banner no topo da tela informa: "142 SKUs ainda sem dados suficientes — vão aparecer conforme vendas acontecerem". MK7777 não aparece na lista até ter pelo menos 14 dias de movimentação.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Modo aprendizagem ativo no primeiro mês</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Sistema foi ligado há 12 dias. Maioria dos SKUs tem só esse tanto de histórico — não dá pra confiar 100% na variação calculada ainda.<br/>
+    <strong>O que o sistema faz:</strong> Calcula tudo normalmente, mas com folga reduzida em 30% pra ser conservador (porque a variação ainda é instável). Marca a confiança da sugestão como "Baixa" ou "Média".<br/>
+    <strong>O usuário vê:</strong> Banner amarelo no topo: "Modo aprendizagem ativo até 17/06. Sugestões parciais — sistema ainda está aprendendo seu padrão de vendas". Coluna "Confiança" mostra "Baixa" pros SKUs com menos dados. Comprador pode usar normalmente, sabendo que precisa olhar com mais cuidado.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Comprador ajusta a quantidade pra menos que o sugerido</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Sistema sugere comprar 50 unidades de LD-X450. Comprador conhece o produto e sabe que o fornecedor LDRU está prometendo desconto pra pedido de 30 só essa semana.<br/>
+    <strong>O que o sistema faz:</strong> Permite edição inline da quantidade. Comprador muda pra 30. Sistema marca a linha com badge "Ajustada" e registra que sugeriu 50, foi aprovado 30 — esse sinal alimenta análise futura de acurácia do modelo.<br/>
+    <strong>O usuário vê:</strong> Campo numérico fica editável, custo total recalcula em tempo real (R$ 720 em vez de R$ 1.200). Após aprovar, pedido vai pra LDRU com 30 e sistema aprende que ajustes de qty pra baixo são comuns nesse SKU.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Já tem pedido de compra em trânsito — sistema não duplica</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Há 3 dias o comprador aprovou comprar 100 unidades de GAUSS GB-002. Pedido foi emitido pro fornecedor e ainda não chegou. Saldo hoje é baixo (5), mas tem 100 vindo.<br/>
+    <strong>O que o sistema faz:</strong> No cálculo de saldo efetivo soma "em trânsito" (100). Vê que daqui a poucos dias o saldo vai subir. Recalcula a urgência considerando isso e baixa pra "Médio" ou tira da lista de prioridades.<br/>
+    <strong>O usuário vê:</strong> GB-002 não aparece mais no topo do ranking, ou aparece com urgência menor. No drawer de "Por quê?", linha "Em trânsito: 100 unidades (pedido emitido há 3 dias)" deixa claro por que a urgência caiu.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Modelo erra muito — métrica revela o problema</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Nas últimas 4 semanas, comprador rejeitou 40% das sugestões marcadas como "Crítico". Quase sempre o motivo foi "fornecedor já tinha sido contatado por fora".<br/>
+    <strong>O que o sistema faz:</strong> Acumula essas rejeições no audit trail de aprovações. Painel de Insights mostra taxa de rejeição alta + acurácia do forecast caindo. Sinal de que algo está sistematicamente errado (provavelmente um fornecedor com lead time desatualizado).<br/>
+    <strong>O usuário vê:</strong> Card "Taxa de aprovação por urgência" no dashboard de Insights mostra Crítico em 60% (deveria ser &gt;90%). Conversa com o time, descobre que LDRU mudou o prazo de entrega de 14 pra 7 dias mês passado e ninguém atualizou. Atualiza o lead time, sugestões voltam a fazer sentido na semana seguinte.
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

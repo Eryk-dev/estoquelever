@@ -1,0 +1,848 @@
+[
+ {
+  "id": "P009",
+  "title": "[CONFERIR — pode não ser bug] Estorno do pedido: o estoque volta e o pedido vira cancelado",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Cancelamento e devolução de pedido ao estoque",
+  "file": "src/app/api/wms/pedidos/[id]/estornar/route.ts",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta / so conferir se sobra marca interna apos estorno (raio-x: provavelmente nao e bug)",
+  "today": "Lendo o código real: o estorno desfaz cada saída e cada reserva do pedido (o estoque volta pro monte) SEM apagar nada — fica registrada a saída E a reversão, lado a lado. Depois marca o pedido como cancelado. Importante: NÃO existe status 'aguardando saída' (foi termo inventado na análise) e este botão NÃO cancela nota fiscal nenhuma. Pelo código, isto parece estar correto.",
+  "why": "Por que importa: O saldo volta certo e a trilha fica completa (saída + reversão registradas). Provavelmente NÃO é um bug. Só valeria mexer se sobrar alguma marca interna de 'estoque já lançado' que não é limpa após o estorno — isso precisa ser conferido antes de tratar como problema.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Resetar para 'aguardando saída' e deixar novo lançamento acontecer",
+    "detail": "Sistema fica em estado conhecido. Mas perde registro de 'tentou sair, foi cancelado, saiu de novo'."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como 'cancelado' mas registrar explicitamente que saída foi revertida",
+    "detail": "Trilha fica clara, mas operador pode ficar confuso com status."
+   }
+  ],
+  "question": "Quando cancela pedido que já saiu, voltar o estado pra 'aguardando saída' (como se a nota fiscal nunca tivesse sido emitida) e marcar que a saída foi desfazida."
+ },
+ {
+  "id": "P010",
+  "title": "Um item é marcado por 2 operadores ao mesmo tempo",
+  "severity": "grave",
+  "tema": "Estoque apartado pros pedidos (reservas)",
+  "flow": "Painel de Separação de Pedidos",
+  "file": "src/lib/wms/reservas-picking.ts:177-187, ledger.ts:114-179",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "NÃO FAZER NADA",
+  "today": "O sistema usa um travamento (lock pessimista) na prateleira para evitar isso. Quando o primeiro operador clica, o sistema trava a prateleira. O segundo clique falha com 'saldo insuficiente' OU (se for muito rápido) acaba separando de uma prateleira diferente.",
+  "why": "Por que importa: Se sair 2 vezes, o estoque saldo fica errado. Na próxima reposição, o galpão vai ficar desorientado: 'mas a gente já contou essas peças'.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Fazer um teste simulando 2 operadores clicando no mesmo item simultaneamente",
+    "detail": "Se passar, o sistema está seguro. Se falhar, há um buraco na segurança que causa perda de estoque."
+   },
+   {
+    "rec_marked": false,
+    "label": "Adicionar alarme/log: se um operador tenta marcar item já marcado, registrar e avisar",
+    "detail": "Mais visibilidade sobre tentativas de dupla marcação — ajuda a rastrear erros."
+   }
+  ],
+  "question": "Confirmar que o travamento funciona mesmo com 2 cliques simultâneos (teste com carga)"
+ },
+ {
+  "id": "P011",
+  "title": "Item com quantidade zero bloqueia o pedido na separação",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Iniciar a separação de pedidos",
+  "file": "rpc 20260529_consolidar",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "não é possível acontecer; não se preocupar com pedido de item 0 unidades",
+  "today": "O sistema consolida os itens e o item com quantidade zero some da lista. O operador não consegue marcar esse item como separado porque ele não aparece. A separação fica travada e não consegue ser concluída.",
+  "why": "Por que importa: A onda de picking fica presa. O operador não consegue avançar e o pedido não sai da bancada de separação.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Bloquear na entrada: o sistema recusa iniciar a separação se encontrar um item com qty=0",
+    "detail": "Operador precisa resolver a quantidade zero antes de começar. Mais bloqueios na entrada, menos problemas depois."
+   },
+   {
+    "rec_marked": false,
+    "label": "Permitir entrar, mas ignorar no checklist: item com qty=0 não precisa ser marcado como separado",
+    "detail": "Operador consegue terminar a separação mesmo com o item fantasma. Menos bloqueios, mas pode gerar confusão sobre quais itens realmente foram separados."
+   }
+  ],
+  "question": "O sistema deveria recusar pedidos que têm itens com quantidade zero quando a separação começa, OU ignorar esses itens no checklist de conclusão."
+ },
+ {
+  "id": "P016",
+  "title": "Pedido sem empresa ou galpão definido — operador não consegue marcar nada",
+  "severity": "grave",
+  "tema": "Para onde o pedido vai (roteamento e galpão)",
+  "flow": "Marcar itens como separados (com scanner ou checkbox)",
+  "file": "src/app/api/wms/separacao/marcar-item/route.ts:94-100",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "não mexer; nunca aconteceu e o sistema antigo não tinha essa trava",
+  "today": "Operador abre o checklist pra separar. Tenta marcar qualquer item. Sistema nega: não conseguimos dar baixa no estoque porque faltam informações desse pedido. Operador fica preso.",
+  "why": "Por que importa: Pedido não sai da separação. Operador não consegue resolver sozinho — precisa de supervisor.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Validar antes (quando o pedido entra no sistema). Não deixa ir pra separação se faltam dados.",
+    "detail": "Problema aparece cedo, supervisor ajusta no começo; operador nunca vê a confusão"
+   },
+   {
+    "rec_marked": false,
+    "label": "Manter a validação agora (na separação), mas com mensagem mais clara que diga ao supervisor o que está faltando",
+    "detail": "Operador entende que precisa escalar, mas supervisor recebe aviso detalhado"
+   }
+  ],
+  "question": "Quando descobrir que dados estão faltando — agora na separação, ou antes?"
+ },
+ {
+  "id": "P018",
+  "title": "Operador clica duas vezes no mesmo botão por acaso",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Separação de pedidos em prateleiras (quando não tem quantidade completa)",
+  "file": null,
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "DESCARTADO: fica so a transacao P019. Backend do parcial ja tem claim atomico (Pass A) que previne dobro-contagem; debounce de UI dispensavel.",
+  "today": "Quando o operador clica duas vezes muito rápido no botão 'Parcial' (por acaso ou porque o celular travou um segundo), às vezes o sistema já detém a primeira clicada e devolve erro 409. MAS se a segunda clicada chegar um pouco depois, o sistema não vê que já processou, e a quantidade que o operador digitou acaba sendo contada duas vezes no mesmo item. O estoque sai duas vezes.",
+  "why": "Por que importa: Se um operador pega 3 unidades mas clica duas vezes, pode sair 6 da contagem. Você vende para dois clientes da mesma coisa que não existe.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Criar um ID único para cada clique (token) e rejeitar qualquer segundo clique com o mesmo token",
+    "detail": "À prova de clique duplo. Operador clica 10 vezes, sistema só conta uma. Mais seguro."
+   },
+   {
+    "rec_marked": false,
+    "label": "Desabilitar o botão por 2 segundos depois do primeiro clique",
+    "detail": "Simples de entender. Operador vê o botão cinzento. Mas não funciona se o celular travou e a resposta demorou."
+   }
+  ],
+  "question": "Garantir que segundo clique não duplica a contagem"
+ },
+ {
+  "id": "P020",
+  "title": "Quantidade errada quando cancela o mesmo item escaneado duas vezes",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Desfazer ou voltar etapas da separação",
+  "file": "desfazer-bip/route.ts:121-126, cutover.ts:76-94",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "não fazer nada",
+  "today": "Quantidade voltaria para 2 conforme esperado. MAS o sistema ja tinha baixado o estoque (lançamento após nota fiscal). O desfazer não recoloca o estoque no saldo — fica zerado.",
+  "why": "Por que importa: O produto existe fisicamente na embalagem (3 unidades), mas o sistema acha que não tem nada em estoque. Se outro pedido chegar, o sistema oferecerá como disponível um produto que está fisicamente bloqueado em outro lugar. Quando auditar depois, encontrará a conta errada.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Desfazer também reverte a baixa de estoque (volta o saldo para quanto era antes)",
+    "detail": "Estoque sempre consistente. Mas a auditoria fica mais complexa — haver que rastrear quando estoque voltou."
+   },
+   {
+    "rec_marked": false,
+    "label": "Desfazer só volta a quantidade no pedido, nao toca estoque (deixa zerado)",
+    "detail": "Auditoria simples. Mas operador tem que chamar supervisor pra estoque bater. Operador nao consegue corrigir sozinho."
+   },
+   {
+    "rec_marked": false,
+    "label": "Sistema avisa antes que estoque ja foi baixado, nao deixa desfazer (força cancelamento do pedido inteiro se errou)",
+    "detail": "Evita a confusao, força procedimento claro. Mas operador perde flexibilidade pra corrigir pequeno erro."
+   }
+  ],
+  "question": "Como desfazer quando ja baixou estoque?"
+ },
+ {
+  "id": "P022",
+  "title": "Item desaparece quando dois operadores mexem ao mesmo tempo (cancelamento concorrente)",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Desfazer ou voltar etapas da separação",
+  "file": "desfazer-parcial/route.ts:36-52",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "não fazer nada",
+  "today": "Sistema procura o item pro Operador A desfazer. Não acha (foi deletado pelo cancelamento). Código presume que nao achar = nao tem nada pra estornar, então continua. Fica um registro órfão (quantidade vazia). Não emite aviso.",
+  "why": "Por que importa: Sistema não aviou que falhou. Operador A acha que funcionou. Depois, quando auditar, aparece um item \"fantasma\" no banco — quantidade vazia, ninguém sabe por quê. Pode confundir reconcialiação de estoque.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Travar o pedido enquanto alguém estiver mexendo nele (ninguém mais consegue cancelar ou alterar até primeiro operador terminar)",
+    "detail": "Protege contra confusão. Pero pode travar pedido se primeiro operador ficar idle."
+   },
+   {
+    "rec_marked": false,
+    "label": "Checar antes de desfazer se pedido ainda existe e tem a etapa correta. Se foi cancelado, avisar o operador com mensagem clara",
+    "detail": "Operador sabe o que aconteceu. Mensagem clara. Mas já perdeu tempo mexendo."
+   },
+   {
+    "rec_marked": false,
+    "label": "Impedir que cancelem pedido enquanto tem separação pendente (força recomeçar do zerado antes de cancelar)",
+    "detail": "Evita a sobreposição. Bem claro. Mas inflexível."
+   }
+  ],
+  "question": "Como evitar que dois operadores estraguem o pedido ao mesmo tempo?"
+ },
+ {
+  "id": "P024",
+  "title": "Dados corruptos impedem devolução do estoque",
+  "severity": "grave",
+  "tema": "Cancelar e desfazer",
+  "flow": "Cancelamento de Separação",
+  "file": "cancelar/route.ts:83-90",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como está",
+  "today": "Sistema tenta devolver o estoque, procura o registro, não encontra e ignora. Continua o cancelamento como se estivesse ok. Estoque daquele item nunca volta.",
+  "why": "Por que importa: Estoque fica desaparecido. Vendedor vê quantidade errada. Pode prometer ao cliente o que não tem.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Continuar ignorando o erro",
+    "detail": "Estoque se perde silenciosamente"
+   },
+   {
+    "rec_marked": false,
+    "label": "Parar o cancelamento, mostrar erro, exigir que admin corrija",
+    "detail": "Nada se perde; precisa investigação manual"
+   }
+  ],
+  "question": "Sistema deveria parar e avisar quando encontra um dado quebrado, em vez de fingir que cancelou."
+ },
+ {
+  "id": "P025",
+  "title": "Sistema aceita quantidade zero no formulário de embalagem",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Embalagem de pedidos e impressão de etiqueta",
+  "file": "page.tsx:40-42; RPC linha 86",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como está",
+  "today": "O navegador força quantidade >= 1, mas o servidor aceita sem reclamar. Se alguém enviar -1 ou 0 direto, o sistema não falha: apenas não muda nada (no caso de zero) ou até diminui a quantidade (no caso de negativo).",
+  "why": "Por que importa: Abre brecha de segurança. Alguém externo consegue manipular dados da embalagem sem o sistema avisar que algo está errado. O saldo fica inconsistente e ninguém fica sabendo.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Adicionar validação no servidor: se quantidade <= 0, devolve erro 400",
+    "detail": "Formulário fica seguro. Qualquer tentativa de contorno falha com mensagem clara."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como está (apenas a tela valida)",
+    "detail": "Continua vulnerável a ataques diretos. Risco cresce se a comunicação entre sistemas tiver acesso público."
+   }
+  ],
+  "question": "O servidor deve rejeitar qualquer quantidade que não seja positiva"
+ },
+ {
+  "id": "P026",
+  "title": "Dois cliques no mesmo instante expedem o pedido duas vezes",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Marcar pedido como enviado",
+  "file": "route.ts:115-155",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como está",
+  "today": "O operador clica em 'Enviar' duas vezes rapidinho (ou o sistema recebe duas solicitações ao mesmo tempo). A primeira muda o pedido de 'pronto pra enviar' para 'enviado'. A segunda clique também retorna sucesso, mas não faz nada — o pedido já estava 'enviado'. O operador não sabe que o segundo clique não funcionou, só vê dois sucessos.",
+  "why": "Por que importa: O pedido já saiu na primeira vez. Se o operador acha que enviou duas vezes, ele pode reenviar para o mesmo cliente (e pagar frete de novo, ou gerar confusão no rastreamento). A gente não registra que falhou, então fica silencioso.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Desabilitar botão de envio enquanto a primeira requisição tá processando",
+    "detail": "Operador só consegue clicar uma vez; segundo clique não sai pro servidor"
+   },
+   {
+    "rec_marked": false,
+    "label": "Devolver erro se tentarem enviar um pedido que já está 'enviado'",
+    "detail": "Segundo clique avisa: 'Esse pedido já foi enviado', operador sabe que falhou"
+   }
+  ],
+  "question": "Bloquear o segundo clique antes que chegue ao servidor, ou devolver erro claro quando acontecer"
+ },
+ {
+  "id": "P027",
+  "title": "Admin não consegue voltar um pedido já enviado",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Marcar pedido como enviado",
+  "file": "src/lib/wms/cutover.ts:21-29",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como está",
+  "today": "Admin tenta mover o pedido de 'enviado' de volta para 'pronto pra enviar' (desfazer a expedição), mas o sistema não deixa. A lista de etapas aceitas só tem 'separado', 'embalado' — não inclui 'enviado'. Operador ou admin fica preso, não consegue desfazer.",
+  "why": "Por que importa: Às vezes precisa voltar (cliente quer cancelar depois que marcamos como enviado, ou marcamos errado). Sem isso, admin tem que mexer direto no banco de dados ou ligar pra TI.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Adicionar 'enviado' na lista de etapas reversiveis",
+    "detail": "Admin consegue clicar 'Voltar' de um pedido enviado e ele volta pra 'pronto pra enviar'"
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como tá (sem reverter enviado)",
+    "detail": "Admin continua sem poder desfazer; tem que contornar manualmente"
+   }
+  ],
+  "question": "Incluir 'enviado' na lista de etapas que podem ser desfeitas"
+ },
+ {
+  "id": "P030",
+  "title": "Dois operadores clicam 'encontrei' no mesmo produto ao mesmo tempo",
+  "severity": "grave",
+  "tema": "Recebimento e guarda de mercadoria",
+  "flow": "Validação do estoque quando precisa de compra",
+  "file": "route.ts:66-84, route.ts:390-403",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como está",
+  "today": "Operador A clica, carrega o item (5 unidades, nenhum registro de quem pegou). Operador B clica no mesmo segundo, também carrega o item (5 unidades, sem saber que A já pegou). Ambos confirmam. O sistema registra 2 movimentações de saída (uma para A, uma para B). O saldo total desce 10 unidades (5+5), mas o sistema só marca que o item foi pego uma vez. Matemática errada.",
+  "why": "Por que importa: Estoque fica errado. O sistema acha que tem menos mercadoria do que realmente tem. Pode causar cancelamento de vendas 'sem estoque' ou devoluções erradas depois.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Ao começar a processar o item, sistema trava pra só um operador mexer",
+    "detail": "Segundo operador recebe aviso 'operador X já está processando este item'. Precisa esperar. Sem risco de duplicação."
+   },
+   {
+    "rec_marked": false,
+    "label": "Ao confirmar, sistema valida se ninguém mexeu no item no meio-tempo",
+    "detail": "Se detectar mudança, pede pro operador carregar de novo. Mais lento, mas seguro."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como agora",
+    "detail": "Cliques simultâneos continuam dobrando a contagem de mercadoria"
+   }
+  ],
+  "question": "Sistema não bloqueia a linha antes de deixar dois operadores mexer no mesmo item"
+ },
+ {
+  "id": "P032",
+  "title": "Recebimento fica preso quando produto não está cadastrado",
+  "severity": "grave",
+  "tema": "Recebimento e guarda de mercadoria",
+  "flow": "Recebimento de compras de fornecedor com conferência",
+  "file": "route.ts:223-266",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "não fazer nada; recebimento pressupõe produto cadastrado; sistema já barra endereço inválido",
+  "today": "O sistema tenta gravar o recebimento mas bate uma error. Marca o pedido com um aviso. As 10 unidades NÃO ficam registradas no sistema. O pedido fica travado e não avança. O operador vê o aviso na tela de compras.",
+  "why": "Por que importa: O saldo nunca é atualizado. A mercadoria chegou de verdade, mas o sistema não sabe disso. Qualquer pessoa que consultar a quantidade disponível vai ver que ainda falta comprar.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Deixar tentando: operador tenta novamente quando o cadastro estiver pronto",
+    "detail": "A mercadoria fica parada no galpão. Demora pra contar no sistema."
+   },
+   {
+    "rec_marked": false,
+    "label": "Guardar as 10 unidades numa caixa de 'em dúvida' e depois que tudo estiver certo, colocar na prateleira e registrar",
+    "detail": "Mercadoria não some, mas aparece em um lugar estranho na contagem. Precisa de um ajuste depois."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar registrado que tentou mas falhou, pra o gerente saber que aquelas 10 unidades estão lá e precisam de ajuste manual",
+    "detail": "Ninguém esquece, mas o sistema fica desalinhado. Inventário bate depois de um ajuste manual."
+   }
+  ],
+  "question": "Depois que o produto chegar e o recebimento falhar, como recuperar? Esperar concerto? Registrar manualmente?"
+ },
+ {
+  "id": "P037",
+  "title": "Mudança de SKU é registrada mas histórico falha e fica sem anotação",
+  "severity": "grave",
+  "tema": "Tarefas automáticas e fila do sistema",
+  "flow": "Trocar um produto em uma compra (antes de fazer a encomenda)",
+  "file": "route.ts:186-199 e 213",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "REBAIXADO a no-op: codigo atual ja registra evento fire-and-forget safe (nao quebra). Sintoma da ficha nao existe. Fix real da rota = P036.",
+  "today": "O dado é mudado no banco. Depois o sistema tenta registrar a mudança no histórico — se isso falha, lança erro. O operador vê 'erro ao salvar'. Mas o dado já estava gravado antes do erro. Próxima vez que tenta, a lógica confunde porque o dado já mudou. Auditoria fica sem registro do que aconteceu e quem fez.",
+  "why": "Por que importa: Sem histórico, você não consegue rastrear quem mudou o quê e quando. Se depois aparece um problema (compra errada, mercadoria divergente), você fica sem prova de quando e como aconteceu. Cria risco de compra duplicada ou perdida.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Fazer tudo em uma só transação (tudo ou nada)",
+    "detail": "Se histórico falha, a mudança do SKU é desfeita. Operador vê erro e tenta novamente do zero. Garante que mudança sempre tem histórico. Um pouco mais lento mas seguro."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar falha em background e deixar operador tentar novamente",
+    "detail": "Aceita a mudança mesmo que histórico falhe. Em segundo plano, o sistema tenta registrar de novo. Mais rápido pro operador mas fica o risco de perder o registro."
+   }
+  ],
+  "question": "Garantir que mudança e histórico são feitos juntos (transação): se histórico falha, desfaz a mudança. Ou ao menos deixa a mudança por último."
+ },
+ {
+  "id": "P044",
+  "title": "Devolvendo item de um pedido que já saiu: estoque fica bloqueado pra nada",
+  "severity": "grave",
+  "tema": "Compras de fornecedor",
+  "flow": "Devolver um item de compra de fornecedor",
+  "file": "src/app/api/wms/compras/itens/[itemId]/devolver/route.ts:1-92",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "isso não vai acontecer; deixar como está",
+  "today": "O sistema deixa fazer. O item volta pra 'aguardando compra'. Mas o estoque que foi separado pra vender continua marcado como 'apartado pra esse pedido'. Fica uma quantidade presa, bloqueada, que não pode ser usada pra nada.",
+  "why": "Por que importa: Perde quantidade disponível à toa. O cliente pode ter cancelado o pedido ou mudou o requisito, e você traz de volta uma coisa que não consegue vender, enquanto o seu estoque fica menor.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Impedir devolução se o pedido não está mais em 'pendente'",
+    "detail": "Garante que você só devolve compra pra fornecedor enquanto o pedido ainda está sendo planejado, não durante execução."
+   },
+   {
+    "rec_marked": false,
+    "label": "Permitir devolução, mas liberar automaticamente o estoque bloqueado do cliente",
+    "detail": "Operador tem flexibilidade, mas o estoque volta a ficar disponível pra vender pra outro."
+   }
+  ],
+  "question": "Verificar se o pedido já saiu da fase de 'pendente' antes de deixar devolver. Se saiu, precisa liberar o estoque bloqueado."
+ },
+ {
+  "id": "P064",
+  "title": "Transferência perde um item no meio da operação de recebimento",
+  "severity": "grave",
+  "tema": "Recebimento e guarda de mercadoria",
+  "flow": "Recebimento de transferência entre galpões",
+  "file": "src/lib/wms/transferencias.ts:353-378",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — caso de borda raro demais (registro digital sumindo durante recebimento)",
+  "today": "O sistema registra SKU A com sucesso (aproveita 100 unidades, prateleira P1). Tenta registrar SKU B: o banco de dados volta 'esse produto não existe mais aqui'. O sistema pula pra SKU C, registra com sucesso. A transferência inteira é marcada como 'recebida e guardada', mas SKU B ficou órfão — ninguém sabe que entrou. Próxima vez que alguém olha o saldo de SKU B, o sistema mostra 'ainda em trânsito' mesmo a transferência estar completa.",
+  "why": "Por que importa: Se a transferência é marcada como recebida, você acredita que tem a mercadoria. Mas tem um vazio: SKU B está no galpão fisicamente (chegou), mas a transferência não 'fechou' direito. Quando fizer uma venda, pode vender a mesma caixa duas vezes (uma vez pelo saldo sem transferência, uma vez pelo saldo transferido) — e a separação fica impossível.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Solução rápida: antes de guardar cada item, o sistema verifica se o item ainda existe e lança erro se sumiu. Operador vê 'SKU B desapareceu', tenta de novo.",
+    "detail": "Problema evitado nessa operação, mas deixa o risco aberto: se alguém deletar itens enquanto o sistema trabalha, pode haver confusão. Aumenta avisos de erro pro operador."
+   },
+   {
+    "rec_marked": true,
+    "label": "Solução robusta (recomendada): usar uma operação tudo-ou-nada — o sistema trata os 3 itens como 'tudo junto'. Se um falhar, os outros voltam atrás também. Transferência só muda de etapa se os 3 passarem.",
+    "detail": "Zero risco de estado intermediário. Se SKU B falhar, SKU A e C voltam — operador tenta de novo do zero. Mais seguro, mas talvez mais lento (alguns ms a mais)."
+   }
+  ],
+  "question": "Precisamos garantir que a transferência só é marcada como completa se TODOS os itens forem guardados com sucesso, não alguns. Se um falhar, tudo volta como estava."
+ },
+ {
+  "id": "P083",
+  "title": "Pedido pronto pro envio mas estoque não foi descontado do sistema",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Reconciliação de pedidos quando entra estoque novo",
+  "file": "route.ts:38 + migration 20260530:43-57 + execution-worker-wms.ts:198",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta / nao priorizar — com baixa no pique nao deve acontecer (so manter alerta atual)",
+  "today": "O sistema detecta isso quando faz a varredura de pedidos (a cada 10min): procura pedidos que tem a nota fiscal de venda mas o estoque não foi lançado como saída. Quando acha, marca como erro tipo 'saída sem desconto'.",
+  "why": "Por que importa: Seu estoque fica errado. Se o sistema diz que você tem 100 unidades, mas 15 já saíram no pedido, você acha que tem 100 e vende de novo aquelas 15 — sobrevenda.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Revisar se o pedido 123 foi realmente embalado e despachado",
+    "detail": "Se foi: sistema marca como 'estoque descontado', números ficam corretos. Se não foi: sistema desfaz tudo, volta o estoque pro monte."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como está (não correto, vai dar problema no saldo)",
+    "detail": "Seu estoque fica com 100 quando deveria ter 85. Próximos pedidos podem sobrevender — criará dívida com cliente."
+   }
+  ],
+  "question": "Aquele pedido foi separado errado (sistema não marcou que o estoque saiu) ou houve falha na automação quando o pedido atingiu essa etapa. O operador (ou um gerente) precisa validar manualmente se o pedido REALMENTE saiu. Se sim, corrige o sistema pra registrar corretamente."
+ },
+ {
+  "id": "P096",
+  "title": "Imagens apagadas no Tiny (produto tinha 3, agora tem 0)",
+  "severity": "grave",
+  "tema": "Integração com a loja (Tiny / marketplace)",
+  "flow": "Sincronização de produtos com o Tiny",
+  "file": null,
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta (referencia velha de imagem apos apagar fotos no Tiny)",
+  "today": "O sistema limpa as 3 imagens da base. Mas ao mesmo tempo, guarda uma referência velha apontando pra uma foto que já não existe. Duas tabelas ficam desincronizadas — uma vazia, outra apontando pra nada.",
+  "why": "Por que importa: Quando alguém tentar carregar a página do produto (na loja ou no app), vai tentar mostrar foto de um link quebrado. Sistema fica confuso sem saber se existe imagem ou não.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Deixar como está (duas tabelas em desacordo)",
+    "detail": "Relatórios de produto retornam dados conflitantes. Foto não abre mas sistema acha que existe."
+   },
+   {
+    "rec_marked": false,
+    "label": "Quando limpar as imagens, limpar também a referência antiga",
+    "detail": "Dados ficam consistentes. Se Tiny diz 'sem fotos', você limpa tudo mesmo."
+   },
+   {
+    "rec_marked": false,
+    "label": "Pedir confirmação ao operador antes de apagar imagens",
+    "detail": "Operador decide se foi acidente ou intencional. Mais seguro, menos automático."
+   }
+  ],
+  "question": "Limpar tudo ou manter a referência velha?"
+ },
+ {
+  "id": "P100",
+  "title": "Quando duas compras chegam em preços diferentes, o custo fica errado",
+  "severity": "grave",
+  "tema": "Custo e preço das peças",
+  "flow": "Custo médio do produto",
+  "file": "20260520b_rpc_inserir_movimentacao.sql:104",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — nao priorizar custo medio (media final sem rastreio de vendas no meio)",
+  "today": "O sistema calcula a média corretamente no papel: (10 × 15,50 + 5 × 20) ÷ 15 = R$ 17,00. Mas o sistema só lembra dessa média — não acompanha que você pode ter vendido 2 unidades entre a primeira e segunda compra. Se vendeu, a conta estava errada desde o começo.",
+  "why": "Por que importa: O custo registrado é usado para calcular quanto você ganhou em cada venda. Se está errado, seus lucros no relatório não batem com a realidade. Você acha que ganhou menos (ou mais) do que realmente ganhou.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Refazer todas as contas do começo (do dia que o produto entrou no estoque)",
+    "detail": "Custoso, mas fica 100% correto. Muito lento pra fazer toda hora."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como está, mas avisar no relatório que esse custo pode estar aproximado",
+    "detail": "Rápido, mas você nunca sabe se o custo é de verdade ou só um palpite."
+   }
+  ],
+  "question": "O sistema precisa lembrar exatamente o que você tinha, quando vendeu, e aí sim refazer a conta."
+ },
+ {
+  "id": "P101",
+  "title": "Descobrir uma compra de 3 meses atrás desfaz o custo de tudo",
+  "severity": "grave",
+  "tema": "Custo e preço das peças",
+  "flow": "Custo médio do produto",
+  "file": "20260526_custo_medio_ajuste_manual.sql:178-206",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — nao priorizar custo medio em lancamento retroativo",
+  "today": "O sistema pega o saldo que você TEM HOJE (por exemplo, 20 unidades em junho) e refaz a conta como se essa compra de março fosse a mais recente. Resultado: calcula um custo médio que mistura produtos de março com produtos que você já vendeu entre março e junho. Fica completamente errado.",
+  "why": "Por que importa: Se você descobre que faltou registrar compras antigas, o sistema não consegue corrigir. O custo fica bagunçado pra frente.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Quando você digita uma compra atrasada, o sistema avisa que vai recalcular tudo e você confirma",
+    "detail": "Seguro — você sabe que algo mudou. Mas pode ser lento se tiver muitas compras."
+   },
+   {
+    "rec_marked": false,
+    "label": "Não permitir registrar compras anteriores a um certo período (por exemplo, últimos 30 dias)",
+    "detail": "Evita o problema, mas você fica travado se descobrir uma compra antiga de verdade."
+   }
+  ],
+  "question": "O sistema precisa recalcular a média respeitando a DATA de cada compra, não só a quantidade que existe hoje."
+ },
+ {
+  "id": "P102",
+  "title": "Desfazer uma entrada não corrige o custo",
+  "severity": "grave",
+  "tema": "Custo e preço das peças",
+  "flow": "Custo médio do produto",
+  "file": "src/lib/wms/ledger.ts:363-417",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — nao priorizar custo medio ao desfazer entrada (custo-fantasma)",
+  "today": "O sistema remove as 10 unidades do saldo — volta a zero. Mas o custo R$ 15,50 fica gravado como se ainda tivesse o produto. Se depois você recebe 5 unidades de novo a R$ 20, a conta da média fica estranho (mistura um saldo que sumiu com um saldo novo).",
+  "why": "Por que importa: Você fica com um 'custo fantasma': o sistema lembra de um preço de um produto que não existe mais no estoque. Depois quando compra de novo, a conta fica torta.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Voltar o custo pro valor antes dessa entrada chegar",
+    "detail": "Correto e seguro. Você volta pra situação anterior."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar o custo em branco (nenhum custo) quando saldo fica zero",
+    "detail": "Limpo, mas você perde a história de quanto custava antes."
+   }
+  ],
+  "question": "Quando você desfaz uma entrada, o sistema deveria desfazer também o custo que foi guardado por causa daquela entrada."
+ },
+ {
+  "id": "P103",
+  "title": "Produto grátis ou devolvido não baixa o custo",
+  "severity": "grave",
+  "tema": "Custo e preço das peças",
+  "flow": "Custo médio do produto",
+  "file": "20260520b_rpc_inserir_movimentacao.sql:89",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — nao priorizar custo medio em devolucao custo-zero",
+  "today": "O sistema recebe 5 unidades de custo zero. Mas como o custo é zero, acha que é inválido e ignora. O saldo sobe pra 15 unidades, mas o custo médio continua R$ 15,50 — como se todas as 15 fossem caras. Deveria ser (10 × 15,50 + 5 × 0) ÷ 15 = R$ 10,33.",
+  "why": "Por que importa: Você está inflando o custo. Parece que o produto é mais caro do que realmente é. Lucro aparenta ser menor.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Aceitar custo zero e recalcular a média automaticamente",
+    "detail": "Correto — R$ 10,33 no exemplo. Você vê o custo real."
+   },
+   {
+    "rec_marked": false,
+    "label": "Colocar um custo mínimo (R$ 0,01) pra evitar zero",
+    "detail": "Funciona, mas é gambiarrinha — o preço de verdade ainda é zero."
+   }
+  ],
+  "question": "O sistema deveria aceitar custo zero quando vem de devolução de cliente ou achado, e refazer a conta da média."
+ },
+ {
+  "id": "P111",
+  "title": "Sistema mostra 20 unidades de um produto, Tiny mostra 30 — perdi 10 na conta",
+  "severity": "grave",
+  "tema": "Integração com a loja (Tiny / marketplace)",
+  "flow": "Conferência de estoque entre WMS e Tiny",
+  "file": "reconciliacao-tiny.ts:110-128; ledger.ts:44-63",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta / resolver junto da sync marketplace<->WMS futura (P092)",
+  "today": "Você vê no relatório de reconciliação que um produto tem 20 unidades no seu sistema mas 30 em Tiny. A diferença = -10. Exemplo: Produto \"Parafuso M4\", você contou 20 peças, Tiny mostra 30. Três causas possíveis: (1) você vendeu 10 peças em Tiny mas o aviso não chegou ao seu sistema; (2) Tiny recebeu 10 peças de um fornecedor mas seu sistema ainda não viu; (3) alguém adicionou 10 peças direto em Tiny sem avisar você.",
+  "why": "Por que importa: Se não resolver, você anuncia 20 peças pra vender, cliente compra 15 — sobram só 5. Vende mais do que tem. Promessa não cumprida = cliente insatisfeito, devolução, prejuízo.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Esperar 1 hora (se foi sincronização atrasada, resolve sozinha)",
+    "detail": "Sem trabalho agora, mas pode dar falsa sensação de segurança se a falha for real."
+   },
+   {
+    "rec_marked": false,
+    "label": "Corrigir manualmente no seu sistema — digitar que são mesmo 30 (ou quanto acredita ser o valor certo)",
+    "detail": "Rápido, mas se foi aviso atrasado, você errou de novo e piora a bagunça."
+   },
+   {
+    "rec_marked": false,
+    "label": "Corrigir em Tiny (se entende que Tiny está errado)",
+    "detail": "Só faz sentido se você tem certeza de onde está o erro. Depois sincronizar."
+   }
+  ],
+  "question": "Alguém precisa investigar cada caso: era atraso? erro de sistema? ou alguém mexeu sem avisar?"
+ },
+ {
+  "id": "P112",
+  "title": "Relatório só mostra os primeiros 50 produtos — os outros 150 não aparecem",
+  "severity": "grave",
+  "tema": "Relatórios e indicadores",
+  "flow": "Conferência de estoque entre WMS e Tiny",
+  "file": "reconciliacao-tiny.ts:70-76; page.tsx:74",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "noop / deixar como esta (limite de 50 produtos no relatorio de sync)",
+  "today": "O relatório de sincronização roda, mas só analisa os primeiros 50 (ou 100, dependendo da configuração). Se o produto #101 tem problema de sincronização, você nunca vê — parece que está tudo certo, mas não está. Exemplo: \"Parafuso M4\" é o produto #103, tem diferença de -5 peças. Relatório só analisa até #50. Você acha que está tudo sincronizado, mas na verdade perdeu 5 peças.",
+  "why": "Por que importa: Problemas escondidos virão à tona só quando vender demais ou falar com cliente. Quando é tarde.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Aumentar limite para 500 — analisa todos na primeira rodada",
+    "detail": "Rápido se não tiver muitos produtos. Relatório fica lento se tiver milhares."
+   },
+   {
+    "rec_marked": false,
+    "label": "Adicionar aviso visual — 'Atenção: analisamos 50 de 200. Aumentar?' — operador escolhe",
+    "detail": "Operador sabe que está vendo só um pedaço. Escolhe aumentar se achar necessário."
+   },
+   {
+    "rec_marked": false,
+    "label": "Paginar — relatório mostra 50, depois 'Próxima página', sempre mostrando qual é o total",
+    "detail": "Mais trabalho pro operador, mas vê tudo eventualmente."
+   }
+  ],
+  "question": "Aumentar o limite de produtos analisados ou avisar ao operador que o relatório está incompleto"
+ },
+ {
+  "id": "P114",
+  "title": "Prateleira de recebimento usada errado na separação",
+  "severity": "grave",
+  "tema": "Etapas do pedido (separação, embalagem, envio)",
+  "flow": "Importação em lote de prateleiras",
+  "file": "roteamento.ts — buscarLinha() não filtra por tipo",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "CORRECAO DO USER: pode separar de prateleira de recebimento normalmente — NAO bloquear, nao e erro",
+  "today": "Nada bloqueia. Sistema deixa separar de onde não deveria — prateleira de recebimento é só pra guardar produtos que chegam.",
+  "why": "Por que importa: Confunde o operador, mistura fluxos. Produto que deveria estar em quarentena aparece no pedido. Separa a partir de prateleira errada.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Adicionar validação no sistema — quando rotear pedido, filtrar só prateleiras tipo picking",
+    "detail": "Erros bloqueados na raiz, operador não consegue errar"
+   },
+   {
+    "rec_marked": false,
+    "label": "Avisar operador na hora da criação — mostrar que essa prateleira não serve pra separação",
+    "detail": "Operador sabe antes, mas ainda consegue tentar errar depois"
+   }
+  ],
+  "question": "Validar que separação acessa só prateleiras de picking"
+ },
+ {
+  "id": "P140",
+  "title": "Três funcionários mexem no token ao mesmo tempo e o sistema fica confuso",
+  "severity": "grave",
+  "tema": "Integração com a loja (Tiny / marketplace)",
+  "flow": "Autenticação com Tiny, Mercado Livre e Impressoras",
+  "file": "src/lib/tiny-oauth.ts:83-185",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — nao adicionar lock na renovacao do token Tiny (cada tarefa renova quando quer)",
+  "today": "3 tarefas em segundo plano processam pedidos Tiny em paralelo. Token expirou em 11:55:00, agora são 11:56:00. Tarefa 1 pede chave nova (chave_anterior=R1), recebe acesso_novo=A1 + nova chave R2, salva no banco. Tarefa 2 (quase no mesmo instante) pede chave com R1 (ainda não viu que Tarefa 1 atualizou), recebe A2 + R3, salva. Tarefa 3 idem, A3 + R4. Banco fica com A3/R4 (ou com A2/R3, dependendo de quem salvou por último). Se R2 e R3 ficarem gastos, a próxima renovação com R4 pode funcionar ou falhar, e o sistema trava.",
+  "why": "Por que importa: Se as chaves ficarem inconsistentes, o sistema não consegue mais renovar. Pedidos ficam parados, sem renovação de acesso. Vendas interrompem. Risco alto de indisponibilidade.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Implementar travamento: antes de renovar, a tarefa ativa um travamento no banco. Outras tarefas veem o travamento, aguardam ou usam token velho. Quem conseguiu o travamento renova, salva chave nova, libera o travamento.",
+    "detail": "Uma única renovação por vez. Todas as tarefas trabalham com a mesma chave válida. Sem confusão, sem duplicação."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como está (cada um renova quando quer)",
+    "detail": "Risco continua. Próximo pico de tráfego paralelo pode derrubar a integração com Tiny."
+   }
+  ],
+  "question": "Usar um travamento na renovação, igual ao sistema já faz com MercadoLivre. Só um renovador por vez."
+ },
+ {
+  "id": "P156",
+  "title": "Fornecedor muda de localidade e ninguém avisa",
+  "severity": "média",
+  "tema": "Compras de fornecedor",
+  "flow": "Trocar um produto em uma compra (antes de fazer a encomenda)",
+  "file": "route.ts:situacao descrita",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "noop / deixar como esta (troca de fornecedor que muda galpao)",
+  "today": "O sistema muda o fornecedor nos dados internos em silêncio. A próxima vez que você abre, o item já aparece no card do novo fornecedor. Se havia uma compra aberta com o fornecedor antigo, ela fica órfã (sem itens). Você pode nem perceber que o galpão de destino mudou.",
+  "why": "Por que importa: Cada fornecedor fica em um galpão. Se você não percebe que a localidade mudou, pode mandar a nota para o galpão errado ou perder tempo procurando mercadoria que chegou em outro lugar.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Bloquear a troca se há compra aberta para o fornecedor antigo",
+    "detail": "Sistema recusa: 'tem compra aberta para Multiqualita, cancela ou deixa chegar antes de trocar de fornecedor'. Você é forçado a resolver a compra antiga primeiro."
+   },
+   {
+    "rec_marked": false,
+    "label": "Avisar mas deixar trocar, marcando compra antiga como descontinuada",
+    "detail": "Permite a troca e avisa: 'compra anterior será descontinuada'. Compra antiga fica fechada sozinha. Você decide se acha tudo bem."
+   }
+  ],
+  "question": "Avisar quando o fornecedor mudar, principalmente se isso altera o galpão de destino. E validar se há compras abertas."
+ },
+ {
+  "id": "P157",
+  "title": "Devolução chega sem informação de quem é a loja — fica como 'vazio'",
+  "severity": "média",
+  "tema": "Integração com a loja (Tiny / marketplace)",
+  "flow": "Devolução com Troca de Peça",
+  "file": "devolucoes.ts:142-165",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "noop / deixar como esta (devolucao sem loja preenchida)",
+  "today": "O sistema tenta adivinhar procurando a nota de venda original. Não acha (talvez foi nota manual, talvez o aviso bugou). Campo de loja fica branco. Quando depois faz relatório de devoluções por loja, essa aparece como '(vazio)' — ninguém sabe de quem era.",
+  "why": "Por que importa: Relatórios ficam incompletos. Não dá pra rastrear se a devolução veio de qual loja/revenda. Pra fins de cobrança ou bônus, fica confuso.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Tornar obrigatório preenchimento de loja no formulário quando o sistema não achar a nota original",
+    "detail": "Operador preenche na hora. Dados sempre completos. Relatórios mostram direitinho."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar em branco e depois tentar corrigir manualmente no relatório (ex: exportar, preencher em planilha, reimportar)",
+    "detail": "Trabalhoso e propenso a erro. Relatórios temporariamente incorretos."
+   }
+  ],
+  "question": "Operador deve ser obrigado a digitar a loja/empresa manualmente quando o sistema não conseguir adivinhar."
+ },
+ {
+  "id": "P167",
+  "title": "Não dá pra desfazer uma correção de estoque feita semana passada",
+  "severity": "média",
+  "tema": "Cancelar e desfazer",
+  "flow": "Corrigir quantidade de estoque no painel",
+  "file": "src/app/api/wms/tiny/stock/ajustar/route.ts (sem endpoint de reverse)",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar sem estorno formal (como hoje) na correcao de estoque",
+  "today": "Sistema não tem botão de 'desfazer'. Operador poderia chamar a rota novamente com '5', mas fica parecendo um novo ajuste. Não fica claro que desfez nada. Auditoria não vê o par 'ajuste + estorno'.",
+  "why": "Por que importa: Sem estorno formal, o saldo fica correto por acaso, mas a trilha está confusa. Próxima auditoria não entende o que aconteceu.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Deixar sem estorno (como hoje)",
+    "detail": "Flexível, mas auditoria fica confusa quando há múltiplos ajustes."
+   },
+   {
+    "rec_marked": false,
+    "label": "Criar botão 'desfazer' com estorno formal",
+    "detail": "Rastreabilidade total: fica claro que houve ajuste e sua reversão."
+   }
+  ],
+  "question": "Cada correção deve ficar identificada. Quando precisa desfazer, criar estorno formal que aponta 'reversão do ajuste original de [data/hora/operador]'."
+ },
+ {
+  "id": "P172",
+  "title": "Código da prateleira com caracteres estranhos (números e letras misturadas)",
+  "severity": "média",
+  "tema": "Cadastros (produtos, prateleiras, fornecedores)",
+  "flow": "Criar, editar e remover prateleiras",
+  "file": "src/app/api/wms/localizacoes/route.ts",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta (sem validacao de caractere no codigo de prateleira)",
+  "today": "Não há validação — o sistema deixa salvar código com símbolos (@, espaço, etc.). O código entra no banco de dados com caracteres inválidos e depois pode quebrar sistemas que dependem desse código.",
+  "why": "Por que importa: Sistemas que leem esse código (como impressora de etiquetas) podem não entender '@' ou espaço e gerar erros. Operador tenta escanear 'LOC@123' e o leitor não reconhece.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Deixar como está — não valida, permite qualquer caractere",
+    "detail": "Fácil no curto prazo, mas gera confusão com sistemas externos"
+   },
+   {
+    "rec_marked": false,
+    "label": "Validar — só aceita A-Z, números e hífen (ex: 'A-123' sim, 'A B' não)",
+    "detail": "Seguro, mas operador que digitou errado vai ver erro e ter que digitar de novo"
+   }
+  ],
+  "question": "Permitir apenas letras maiúsculas, números e hífen no código da prateleira."
+ },
+ {
+  "id": "P181",
+  "title": "Alarme falso: novo galpão (vazio) grita que embalagem está lenta",
+  "severity": "média",
+  "tema": "Relatórios e indicadores",
+  "flow": "Painel de Acompanhamento de Fluxo (produtividade e atrasos por etapa)",
+  "file": "supabase/migrations/20260514_wms_insights_motor.sql:358",
+  "opcao": 0,
+  "decisao": "SEM AÇÃO / deixar como está",
+  "nota": "deixar como esta — alarme falso de galpao novo e aceitavel",
+  "today": "Novo galpão spinup. Histórico de 30 dias = zero pedidos embalados (não existem dados). Período de 24h = 10 pedidos em 180min. Regra: se 180min > 1.5 × (histórico), alerta. Como histórico = vazio, sistema trata como 0, compara 180 > 1.5×0 = 180 > 0 → CRÍTICO. Dispara falso. Cooldown de 4 horas evita spam, mas primeira vez já atrapalha.",
+  "why": "Por que importa: Alarmes falsos gastam atenção. Time começa a ignorar alertas porque 'sempre é falso'. Quando vem um alerta de verdade, ninguém liga. Além disso, operador que abriu o galpão fica nervoso com crítico no primeiro dia.",
+  "options": [
+   {
+    "rec_marked": false,
+    "label": "Checar: histórico tem pelo menos 10 pedidos nos últimos 30 dias? Só se SIM, roda a regra. Se não, ignora o alerta (ou avisa com nível mais baixo, tipo INFO).",
+    "detail": "Galpão novo não grita. Depois de 10 pedidos passarem, o sistema aprende e começa a comparar de verdade."
+   },
+   {
+    "rec_marked": false,
+    "label": "Usar um valor pré-configurado como 'default' pra novos galpões (ex: esperado = 120min). Compara contra esse default.",
+    "detail": "Histórico zero não mata a lógica. Mas se default estiver errado, vira outro alarme falso."
+   },
+   {
+    "rec_marked": false,
+    "label": "Deixar como está (alarme falso é ok). Time aprende a ignorar nos primeiros dias.",
+    "detail": "Mais simples, mas compromete confiança. Não recomendado."
+   }
+  ],
+  "question": "Regra de alarme precisa saber se tem histórico suficiente. Se não tem, não compara."
+ }
+]

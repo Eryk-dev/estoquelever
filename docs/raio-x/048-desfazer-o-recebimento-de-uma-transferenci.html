@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Desfazer o recebimento de uma transferência entre galpões — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Transferências entre galpões</p>
+<h1>Desfazer o recebimento de uma transferência entre galpões</h1><p class="lead">Quando você recebe uma transferência de estoque vindo de outro galpão e depois percebe que foi erro, o sistema permite voltar tudo pra trás: o estoque volta pro galpão que mandou e a transferência volta a estar &quot;em caminho&quot; pra receber novamente.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">1</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Desfazer quando há um item na transferência</span></li><li><span class="dot">✓</span><span>Desfazer quando há vários itens na transferência de uma vez</span></li><li><span class="dot">✓</span><span>Bloqueia desfazer de transferências que não foram recebidas ainda</span></li><li><span class="dot">✓</span><span>Exigir motivo escrito obrigatoriamente (impede cliques acidentais)</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P067</span>Desfazer recebimento pode deixar os dados desorganizados</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador descobre que um recebimento estava errado e clica em desfazer.</p><p class="ln"><b>Hoje:</b> O sistema começa a devolver o estoque pro monte. Devolve a primeira parte (as movimentações). Depois tenta ajustar os itens na conta. Se o segundo ajuste falha (problema no banco de dados), o sistema devolve a mercadoria mas nao consegue ajustar a planilha. Os dados ficam com a mercadoria devolvida mas a papelada ainda diz que estava recebido.</p><p class="ln why"><b>Por que importa:</b> Se os dados ficam desalinhados, a próxima pessoa que mexer no estoque vai ver quantidade errada, separar produto errado, ou dar inventário errado. Pode vender estoque que nao existe ou deixar produto perdido na contagem.</p><div class="decision"><p class="q">Como o sistema deve reagir quando a devolução comeca mas nao consegue terminar?</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Desfazer completo: se qualquer etapa falha, voltar tudo como era (nenhuma mercadoria é devolvida).</b> — Dados sempre alinhados. Operador ve que nao conseguiu (sistema diz 'tente de novo'), e tenta novamente depois. Sem risco de saldo errado.</span></li><li class=""><span class="ck"></span><span><b>Desfazer em etapas: desfaz o que conseguiu, loga o que falhou e deixa alguém resolver depois.</b> — Processo continua, mas deixa trabalho manual pra resolver depois. Risco de dados desalinhados por dias ate alguem arrumar na mão.</span></li><li class=""><span class="ck"></span><span><b>Bloquear desfazer se há risco: sistema avisa 'nao consegui confirmar que é seguro desfazer isso' e nao faz nada.</b> — Nenhuma etapa começa se nao tiver certeza. Operador precisa chamar supervisor, mas dados nunca ficam meio-mutilados.</span></li></ul><p class="recnote"><b>Recomendo:</b> Usar a opção 1 (desfazer completo ou nada). E' mais seguro pra estoque. Operador vê que falhou, tira um dia pra entender o motivo, e tenta denovo. Sem risco de descobrir depois que faltam 100 peças na contagem.</p></div></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D011</span>O que fazer se dois operadores clicam em desfazer no mesmo instante (na mesma transferência)?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador A e Operador B recebem a mesma transferência, descobrem erro, e clicam em desfazer simultaneamente (no mesmo segundo, por acaso, ou porque nao viram a notificação um do outro).</p><p class="ln"><b>Hoje o sistema:</b> O sistema nao trava ninguém. A recebe a instrução, começa a devolver estoque. B também recebe, vê que pode desfazer (porque A ainda nao terminou), e começa a devolver o mesmo estoque de novo. Resultado: estoque voltado em duplicata pro monte. Sistema tenta se proteger: quando B tenta devolver a movimentação que A ja devolveu, o sistema vê 'essa movimentacao ja foi devolvida' e ignora (pula pra próxima). Se B conseguir fazer tudo igualmente, o saldo acaba com menos mercadoria do que deveria (porque B 'vendeu' estoque que nao tinha).</p><p class="ln why"><b>Por que importa:</b> Dois cliques simultâneos nao sao tao raros em galpão (especialmente se a pessoa nao viu notificação, ou se dois turnos diferentess estao limpando fila de tarefas). Se o sistema deixa desfazer duas vezes, o estoque fica errado. Pode vender produto que ja 'voltou', ou contar menos do que tem.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Travar a transferência: quando A clica desfazer, trava a transferência pra ninguém mexer ate A terminar.</b> — B clica desfazer, sistema diz 'esperando A terminar, tente em 1 min'. Estoque nao fica duplicado. Operador tem que esperar ou tentar de novo depois.</span></li><li class=""><span class="ck"></span><span><b>Permitir que ambos tentem, mas reverter se houver conflito.</b> — Ambos começam, mas o sistema detecta e desfaz a ação de B automaticamente. Mais complexo, risco de dados ficarem em estado confuso por um instante.</span></li><li class=""><span class="ck"></span><span><b>Usar a proteção que já existe: quando B tenta devolver a mesma movimentação, o sistema ignora (ja foi) e só faz no resto.</b> — Funciona se todas as movimentações da transferência ja foram devolvidas por A. Se apenas algumas foram, B pode conseguir desfazer o resto, deixando a transferência meio-desfeita.</span></li></ul><p class="recnote"><b>Recomendo:</b> Usar opção 1 (travar). E' a mais simples e clara pro operador. Deixa alguém esperando alguns segundos, mas garante que nao há confusão. Se dois cliques acontecem, apenas um vira sucesso, o outro falha de forma clara ('em progresso, tente depois').</p></div></div><div class="dcard"><div class="dhead"><h3><span class="idb">D012</span>Vale a pena deixar desfazer um recebimento que é de muito tempo atrás (semanas ou meses)?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Uma transferência foi recebida há 30 dias. Ontem, o operador descobriu que a quantidade estava errada (ou veio o produto errado). Hoje, clica em desfazer recebimento.</p><p class="ln"><b>Hoje o sistema:</b> Sistema nao checa quanto tempo passou. Busca a mercadoria, devolve pro monte. Mas: a mercadoria ja saiu de lá (foi vendida, ou separada pra outro pedido). Quando o sistema tenta voltar, o saldo fica negativo. Uma funcao interna do sistema vê quantidade negativa e rejeita a operação com erro 'estoque insuficiente'. Cliente no final vê erro 500.</p><p class="ln why"><b>Por que importa:</b> Se desfazer é permitido depois de semanas, pode desorganizar estoque que ja foi vendido ou movimentado várias vezes. Criar um rastro confuso (pedido A comprou, pedido B comprou novamente, depois volta pro estoque de A). E' mais seguro não permitir desfazer antiga mercadoria, porque ninguém consegue garantir de cabeça que nada foi vendido no meio do caminho.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir sempre: deixa desfazer em qualquer momento, mas pede pra supervisor ou gerente confirmar.</b> — Operador nao consegue sozinho (tela pede aprovação). Gerente vê que é velho, pode pedir pra resolver manualmente ou documentar como ajuste no inventário. Mais seguro, mais burocracia.</span></li><li class=""><span class="ck"></span><span><b>Bloquear desfazer se passou de N dias (ex: 7 ou 14 dias): sistema diz 'muito velho, nao posso desfazer, fale com gerente'.</b> — Operador sabe que tem que fazer diferente (ajuste manual, ou supervisor desfaz). Nao cria saldo negativo. Mas precisa conhecer a regra (ninguém sabe disso hoje).</span></li><li class=""><span class="ck"></span><span><b>Deixar desfazer, mas avisar que pode ficar saldo negativo, e pedir pro operador conferir estoque antes.</b> — Mais trabalho pro operador (conferir se produto foi vendido), mas permite resolução rápida se ele confirmar. Risco se ele clicar sem pensar.</span></li></ul><p class="recnote"><b>Recomendo:</b> Usar opção 2 (bloquear se passou de 7-14 dias). E' a mais equilibrada. Desfazer recente (dentro de um ou dois dias) é seguro (ninguém mexeu no produto ainda). Desfazer velho precisa de outra rota (conversa com supervisor, ou ajuste no inventário). Evita surpresa de 'saldo ficou negativo', porque o sistema nao deixa chegar lá.</p></div></div><h2>Ainda a conferir · 1</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Um recebimento que já teve ajustes parciais antes pode nao desfazer completamente, ou deixa mensagem de erro confusa — precisa checar se isso realmente acontece em casos reais ou é só proteção (pode ser um cenário tão raro que nao precisa mexer)</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

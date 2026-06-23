@@ -6581,3 +6581,255 @@ erros:
       - src/lib/wms/aprovar-roteamento.ts
       - src/lib/wms/aprovar-roteamento.test.ts
     tags: [aprovar, transferencia, roteamento, reserva, separacao, estado-fantasma]
+
+  - id: pickmov-checklist-nao-atomico-double-tap
+    date: 2026-06-22
+    source: separacao-bipar-checklist
+    category: business_logic
+    message: >
+      Double-tap no scanner (2 POST /bipar-checklist simultâneos pro mesmo item)
+      ou falha da S após o L commitar gerava baixa DUPLA / L órfã (reservado
+      reaparece como disponível = janela de overselling). bipar-checklist e
+      validar-oc-item usavam pickMovPicking, que emitia L e S em 2 RPCs separadas
+      (não-atômico) e sem lock na reserva — o guard `if(item.mov_saida_id)` lia
+      snapshot pré-pick (TOCTOU).
+    cause: >
+      pickMovPicking chamava liberarReservaPicking (L) e inserirMovimentacao (S)
+      como 2 transações independentes, sem FOR UPDATE na R nem checagem de
+      "reserva já liberada". O caminho marcar-item (wms_pick_item_atomico) já era
+      atômico/idempotente; o do scanner não foi migrado.
+    fix: >
+      pickMovPicking delega o par L+S à RPC atômica wms_pick_item_atomico (mesma
+      do marcar-item): FOR UPDATE na R + guard 'reserva já liberada' serializam
+      double-tap (2ª chamada lança → item não re-marcado, sem dupla baixa) e o
+      par L+S vira uma única transação. A RPC também seta origem_id=pedido na S
+      (ver bug saida-realocacao-sem-origem-id). Residual: ramo SEM reserva
+      (OC "bipa onde achou") ainda não passa idempotency_key — double-tap sem R
+      pode duplicar (raro).
+    files:
+      - src/lib/wms/separacao/pick-mov.ts
+      - src/lib/wms/separacao/pick-mov.test.ts
+    tags: [pick, bipar-checklist, scanner, double-tap, atomicidade, overselling, ledger, BUG-06, BUG-07]
+
+  - id: saida-realocacao-sem-origem-id-reverter-cutover
+    date: 2026-06-22
+    source: separacao-marcar-realocacao
+    category: business_logic
+    message: >
+      Retrocesso (desfazer-bip embalado→em_separacao) deixava a S de realocação
+      (cascade) SEM estorno → saldo físico continuava deduzido (estoque fantasma
+      a menos) e a R cascade nunca recriada.
+    cause: >
+      A S de realocação grava seu mov_saida_id em siso_pedido_item_realocacoes
+      (não em siso_pedido_itens) e era inserida SEM origem_id. A RPC
+      wms_reverter_cutover_atomico só acha a S por origem_id=pedido OU por
+      mov_saida_id ∈ siso_pedido_itens — então perdia a S de realocação.
+      desfazer-bip não roda reset-state (que já estorna via realoc.mov_saida_id),
+      só a RPC.
+    fix: >
+      Passa origem_id=pedido na S de realocação single-pedido (marcar-realocacao)
+      e no pick principal (pick-mov, agora via RPC que já seta origem_id) — a RPC
+      de reverter acha a S pelo Caminho 1. NÃO aplicado à S consolidada de wave
+      do /parcial (cobre N pedidos numa só S — tag de 1 pedido faria
+      super-estorno; fica como limitação, liga ao bug s-consolidada-wave).
+    files:
+      - src/app/api/wms/separacao/marcar-realocacao/route.ts
+      - src/lib/wms/separacao/pick-mov.ts
+    tags: [realocacao, cascade, reverter-cutover, estorno, origem-id, estoque-fantasma, BUG-02]
+
+  - id: reverter-cutover-falha-silenciosa-status-retrocede
+    date: 2026-06-22
+    source: separacao-voltar-etapa
+    category: business_logic
+    message: >
+      voltar-etapa e desfazer-bip retornavam {ok:true}/200 mesmo quando a RPC de
+      reversão de estoque falhava — status retrocedia mas estoque_lancado ficava
+      true + S viva → re-pick gerava baixa DUPLA.
+    cause: >
+      reverterCutoverSeRetrocedeu NÃO lança em falha da RPC: retorna
+      {reverted:false, motivo:'rpc_error'}. Os callers usavam .catch(()=>warn) e
+      ignoravam o retorno, APÓS o UPDATE de status já ter persistido.
+    fix: >
+      Os 2 callers capturam o retorno; se motivo==='rpc_error', logError (loud,
+      siso_erros) + respondem 500 (voltar-etapa lista os pedido_ids). A operação
+      é idempotente — retry converge. Fecha o {ok:true} silencioso.
+    files:
+      - src/app/api/wms/separacao/voltar-etapa/route.ts
+      - src/app/api/wms/separacao/desfazer-bip/route.ts
+    tags: [voltar-etapa, desfazer-bip, cutover, reversao, fail-loud, baixa-dupla, BUG-10]
+
+  - id: cancelar-pos-pick-vazamento-silencioso
+    date: 2026-06-22
+    source: separacao-cancelar
+    category: business_logic
+    message: >
+      Cancelar pedido com item já pego (S viva) não estornava a S (por design) e
+      só gravava a tag cancelado_com_picks — sem worklist nenhuma (grep=0
+      consumidores). Peça saía da prateleira, pedido morria, saldo nunca voltava.
+    cause: >
+      cancelar/route.ts (D1) e pedido-cancel-handler.ts (webhook) só montavam
+      itens_para_devolver_manual + tag; nenhum fluxo alimentava
+      siso_devolucoes_pendentes pra esses picks (só o caminho de NF de devolução).
+    fix: >
+      Novo helper registrarPicksCanceladosParaDevolucao cria pendência FORTE por
+      item pego (pedido_origem_mov_id = S do pick), idempotente por mov_saida_id.
+      Aparece na fila de devoluções; classificar 'integro' devolve a peça ao
+      estoque (E). Ligado nos 2 caminhos de cancelamento.
+    files:
+      - src/lib/wms/devolucoes.ts
+      - src/app/api/wms/separacao/cancelar/route.ts
+      - src/lib/pedido-cancel-handler.ts
+    tags: [cancelar, devolucao, pick, vazamento, estoque, fila-forte, BUG-12]
+
+  - id: embalagem-oc-le-galpao-id-deprecado
+    date: 2026-06-22
+    source: separacao-confirmar-item-embalagem
+    category: business_logic
+    message: >
+      No ramo OC da embalagem (confirmar-item-embalagem, bipar-embalagem-oc), a
+      decisão própria×transferência e o separacao_galpao_id usavam
+      siso_empresas.galpao_id (espelho DEPRECADO do 1º preferencial) → etiqueta /
+      job de execução podiam ir pro galpão errado quando a empresa opera em N
+      galpões ou admin editou preferenciais.
+    cause: >
+      pedidoGalpaoId era derivado de siso_empresas.galpao_id, coluna deprecada
+      (empresa não pertence a galpão pós-3D).
+    fix: >
+      Prefere pedido.separacao_galpao_id (autoritativo); só cai no espelho
+      deprecado se o pedido ainda não tem galpão de separação.
+    files:
+      - src/app/api/wms/separacao/confirmar-item-embalagem/route.ts
+      - src/app/api/wms/separacao/bipar-embalagem-oc/route.ts
+    tags: [embalagem, oc, galpao, deprecado, separacao_galpao_id, BUG-03]
+
+  - id: localizacao-move-saldo-nao-atomico-perde-estoque
+    date: 2026-06-22
+    source: localizacao
+    category: business_logic
+    message: >
+      POST /separacao/localizacao move TODO o saldo entre locs via par S+E sem
+      transação; se a E falhasse após a S, o saldo saía da origem e não entrava
+      no destino = saldo REAL perdido.
+    cause: >
+      As duas inserirMovimentacao (S e E) eram chamadas independentes; o catch só
+      logava.
+    fix: >
+      Captura a S; se a E lançar, compensa estornando a S (devolve saldo à
+      origem) antes de propagar. Re-reserva no destino segue best-effort com
+      logError. (Permissão: ausência de userCan é convenção das rotas de
+      separação, não corrigida aqui.)
+    files:
+      - src/app/api/wms/separacao/localizacao/route.ts
+    tags: [localizacao, transferencia-loc, atomicidade, saldo-perdido, compensacao, BUG-14]
+
+  - id: parcial-residual-rereserva-warn-silencioso
+    date: 2026-06-22
+    source: separacao-parcial
+    category: business_logic
+    message: >
+      Parcial !loc_zerou: a re-reserva do residual (R original 100% liberada no
+      7a) falhava só com logger.warn → item ficava aberto sem R viva (próximo
+      pick cai no fallback S-only). Degradação invisível.
+    cause: >
+      Tratamento de erro da criarReservaCascade residual era warn silencioso.
+    fix: >
+      warn→logError (business_logic) + contagem reservas_residuais_falhadas na
+      resposta. Não vira 500 (picks já commitados); mas fica observável.
+    files:
+      - src/app/api/wms/separacao/parcial/route.ts
+    tags: [parcial, re-reserva, residual, fail-loud, observabilidade, BUG-05]
+
+  - id: encaminhar-r-nao-liberada-reservado-fantasma
+    date: 2026-06-22
+    source: encaminhar
+    category: business_logic
+    message: >
+      Ao encaminhar pedido pra outro galpão, uma R que falhasse ao liberar era só
+      logger.warn → pedido migrava mas a R ficava viva no galpão origem =
+      reservado fantasma (saldo travado; escapa de detectarReservasOrfas que só
+      flaga status=cancelado).
+    cause: >
+      Catch da liberação per-R era warn silencioso.
+    fix: >
+      warn→logError (business_logic) + contagem nao_liberadas no log. Direção
+      conservadora (trava, não vende dobrado), mas agora observável pra limpeza.
+    files:
+      - src/app/api/wms/separacao/encaminhar/route.ts
+    tags: [encaminhar, reserva, reservado-fantasma, fail-loud, BUG-15]
+
+  - id: parcial-replay-double-s-idempotencia
+    date: "2026-06-23"
+    source: separacao-parcial
+    category: business_logic
+    message: >
+      Reenvio do MESMO request de /parcial (timeout+retry / entrega dupla de
+      rede) no ramo residual (loc_zerou=false, item fica ABERTO:
+      separacao_marcado=false, separacao_parcial=false) passava o guard de
+      re-entrada (que só rejeita marcado||parcial) e emitia 2ª saída S (baixa
+      dobrada) + inflava quantidade_pega (wms_acumular_qty_pega é UPDATE com
+      soma, não-idempotente). loc_zerou=true dobrava o write-off do ajuste.
+    cause: >
+      Nenhuma deduplicação de request. A S não carregava token de idempotência
+      e o acúmulo de quantidade_pega rodava incondicionalmente.
+    fix: >
+      idempotency_key (uuid v4) client-gerada por clique, enviada no body.
+      wms_pick_parcial_atomico +p_idempotency_key: top-check retorna
+      ja_aplicado=true se a key já existe; a S (ou o ajuste quando qty_pega=0)
+      carrega a key e wms_inserir_movimentacao faz no-op via UNIQUE parcial. O
+      route guarda a key no topo (item+realoc) ANTES de liberar R/emitir
+      S/acumular; backstop ja_aplicado fecha a janela de concorrência. Como o
+      top-check da RPC é um read não-locking, um pg_advisory_xact_lock por key no
+      início da RPC SERIALIZA requests com a mesma key — sem ele, sob entrega
+      concorrente, o perdedor passava (ja_aplicado=false), a S deduplicava lá
+      dentro (no-op), mas o route acumulava quantidade_pega 2x no ramo residual
+      (loc_zerou=false pula o Pass A → sem rollback). O caminho
+      realocação passou a usar a MESMA RPC (antes 2 inserirMovimentacao diretos)
+      pra ganhar o ja_aplicado e evitar cross-contaminação no racePerdida (S
+      compartilhada). submittingActionRef + botão disabled já barravam o
+      duplo-clique na UI. Validado ao vivo (dado TEST- isolado, rollback): replay
+      mesma key = 1 S + saldo debitado 1x; key nova aplica de novo.
+    files:
+      - supabase/migrations/20260623_pick_parcial_idempotency.sql
+      - src/app/api/wms/separacao/parcial/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/api/wms/separacao/parcial/idempotency-guard.test.ts
+    tags: [parcial, idempotencia, replay, double-s, quantidade-pega, ledger, BUG-09]
+
+  - id: troca-aplicada-beco-sem-saida-desfazer
+    date: "2026-06-23"
+    source: trocas-equivalencia
+    category: business_logic
+    message: >
+      Após reabrir (voltar-etapa) um pedido com troca de equivalência APLICADA
+      (item com produto_wms_substituto_id), o operador não conseguia trocar pra
+      um 3º SKU nem voltar ao original: solicitarTroca dava TROCA_JA_APLICADA,
+      trocarSubstituto/rejeitar davam TROCA_NAO_PENDENTE. reset-state (de
+      propósito) NÃO limpa produto_wms_substituto_id/troca_equivalencia_id — o
+      caso normal quer MANTER o substituto pra re-picar a mesma peça.
+    cause: >
+      Não existia ação pra DESFAZER uma troca já aprovada; todos os caminhos de
+      troca exigiam status 'pendente' ou ausência de substituto.
+    fix: >
+      Ação explícita "desfazer troca aplicada" (só com item reaberto e
+      NÃO-picado). RPC wms_desfazer_troca_aplicada_atomico: libera a R
+      reserva_pedido viva do substituto LIMITADA à qty do item (quantidade_pedida,
+      não-picado), preferindo R(s) que carreguem o troca_id deste item — a R é
+      chaveada por (pedido, produto, loc) e a ressuscitada por reset-state perde o
+      troca_id, então sem o teto de qty a desfazer de UM item invadiria a R de um
+      irmão do mesmo pedido no mesmo produto físico (overselling). Libera a R
+      (L liberacao_reserva), limpa os 2 campos
+      do item (volta a resolver pro original) e fecha a troca status='desfeita'
+      (+CHECK), tudo-ou-nada. Endpoint POST /api/wms/trocas/[id]/desfazer gated
+      vendas.aprovar_troca. NÃO recria R no original (item fica sem R; re-roteia
+      ou solicita nova troca; o guard de solicitarTroca volta a passar). NÃO mexe
+      no reset-state nem no caso comum (item nunca-trocado). Validado ao vivo
+      (rollback): happy + guards ITEM_JA_PICADO/PEDIDO_ESTADO_INVALIDO/
+      TROCA_NAO_APLICADA.
+    files:
+      - supabase/migrations/20260623b_desfazer_troca_aplicada.sql
+      - src/lib/wms/trocas-equivalencia.ts
+      - src/lib/wms/trocas-api.ts
+      - src/lib/historico-service.ts
+      - src/app/api/wms/trocas/[id]/desfazer/route.ts
+      - src/lib/wms/desfazer-troca.test.ts
+    tags: [troca-equivalencia, desfazer, beco-sem-saida, substituto, reabertura, BUG-A]

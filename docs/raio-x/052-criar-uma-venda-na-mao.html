@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Criar uma venda na mão — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Vendas feitas na mão</p>
+<h1>Criar uma venda na mão</h1><p class="lead">Quando o operador cria um pedido direto no sistema (sem a loja avisar). O sistema escolhe se baixa o estoque na hora ou se aparta ele pra depois o pessoal separar.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Cria venda simples em separação: 3 itens em estoque, aparta tudo certo</span></li><li><span class="dot">✓</span><span>Detecta automaticamente falta de estoque e muda de estratégia (de apartar pra baixar direto)</span></li><li><span class="dot">✓</span><span>Cancela uma venda: devolve o estoque apartado pro monte de uma vez</span></li><li><span class="dot">✓</span><span>Bloqueia quantidade zero ou negativa na entrada</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P071</span>Dois pedidos criados quando vendedor clica rápido duas vezes</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Integração com a loja (Tiny / marketplace)</span></div></div><p class="ln scn"><b>Imagina assim:</b> O vendedor está criando uma venda manual. A internet está lenta. Ele clica no botão 'Criar e baixar estoque', não vê resposta imediata, e clica de novo.</p><p class="ln"><b>Hoje:</b> O sistema deveria bloquear o segundo clique — a tela fica cinzenta mesmo. Mas se por algum motivo o bloqueio falha (por exemplo, desativado), dois pedidos são criados com os mesmos itens e o mesmo cliente. Cada clique gera um código único de identificação diferente no sistema, então o sistema não reconhece que é o mesmo pedido sendo submetido de novo.</p><p class="ln why"><b>Por que importa:</b> O cliente recebe dois pedidos iguais em vez de um. Na contabilidade, aparecem duas vendas. No estoque, o saldo cai o dobro. Operador tem trabalho de arrumar: cancelar o pedido fantasma, refazer números.</p><div class="decision"><p class="q">O código único precisa ser gerado e guardado no navegador ANTES de qualquer clique, e reutilizado sempre se o vendedor tentar enviar novamente (por 5 minutos ou até ter resposta). Assim, mesmo que clique 10 vezes, é sempre 1 pedido.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Gerar o código único uma vez ao abrir o formulário (em vez de gerar a cada clique)</b> — Segundo clique usa o mesmo código. O sistema por tras reconhece, ignora, retorna o pedido já criado. Um pedido só.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (código novo a cada clique)</b> — Risco permanente de duplo clique = dois pedidos. Evento raro, mas acontece.</span></li></ul><p class="recnote"><b>Recomendo:</b> Mudar para gerar o código único ao abrir o formulário. É a prática padrão em sistemas de vendas sérios.</p></div><p class="refp">page.tsx:183</p></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D278</span>Quando alguém com permissão especial (um gerente) cria um pedido 'em nome de' outro vendedor (João), como registrar quem realmente criou?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um gerente precisa criar um pedido manualmente para um vendedor João (talvez o vendedor estava offline, ou o gerente assumiu uma venda via telefone). O sistema precisa saber: quem REALMENTE criou este pedido (gerente), e em nome de quem foi criado (João).</p><p class="ln"><b>Hoje o sistema:</b> O sistema já tem a lógica pronta: valida se o gerente tem permissão 'criar em nome de alguém'. Se tiver, cria o pedido em nome de João, e guarda internamente quem foi o gerente que criou. Mas a tela, o botão/campo não aparece ainda — a permissão ainda não existe oficialmente (está marcada como futura).</p><p class="ln why"><b>Por que importa:</b> Para auditoria e responsabilidade. Você precisa saber depois: 'Este pedido foi criado pelo gerente Silva em nome do vendedor João, dia tal, hora tal.' Se a mercadoria desaparecer ou houver reclamação, você rastreia. Também controla quem pode fingir ser vendedor (só gerentes, não qualquer um).</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Ativar a permissão e deixar gerentes criarem em nome de vendedores</b> — Gerentes ganham flexibilidade. Auditoria fica completa (quem criou + em nome de quem). Operação manual fica mais ágil.</span></li><li class=""><span class="ck"></span><span><b>Manter bloqueado (cada um cria só suas próprias vendas)</b> — Mais segurança (menos gente mexendo em venda alheia), mas menos flexibilidade operacional. Gerente não consegue criar pedido 'em nome de' quando precisa.</span></li></ul><p class="recnote"><b>Recomendo:</b> Ativar a permissão. O sistema por tras já está pronto, a auditoria está pronta. É só liberar a tela e treinar os gerentes (eles precisam entender que gera registro).</p></div><p class="refp">route.ts:131-168</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D019</span>Se alguém clica para cancelar um pedido que JÁ está cancelado, o sistema deve fazer algo?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido foi cancelado há 2 dias. Hoje, alguém tenta cancelar de novo (porque esqueceu que já foi cancelado, ou um aviso automático tentou cancelar novamente).</p><p class="ln"><b>Hoje o sistema:</b> O sistema reconhece que já está cancelado e retorna 'sucesso, nada mudou' (0 linhas de estoque restauradas). Porém, o registro de quem fez o quê registra um novo cancelamento, como se tivesse feito algo.</p><p class="ln why"><b>Por que importa:</b> Histórico limpo e confiável. Se você vê no log '5 cancelamentos do pedido X', mas foi só 1 cancelamento real + 4 tentativas de cancelamento do mesmo, fica confuso. E o registro deve refletir decisões de verdade — tentativas não precisam sujar o histórico.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Registrar que foi uma tentativa que não faz efeito (cancelamento de algo já cancelado, sem mudança)</b> — Log fica claro: mostra que tentaram cancelar, mas não mudou nada. O registro de quem fez o quê fica preciso e não confunde.</span></li><li class=""><span class="ck"></span><span><b>Continuar registrando como se tivesse cancelado, mesmo que já estivesse</b> — Histórico fica bagunçado. 5 tentativas parecem 5 ações reais.</span></li></ul><p class="recnote"><b>Recomendo:</b> Marcar como tentativa que não faz efeito (ou simplesmente não registrar). O registro deve refletir decisões, não tentativas.</p></div><p class="refp">vendas-cancelamento.ts:56-58</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D252</span>Estoque apartado para um pedido 'esquecido' na separação por 35 dias — como garantir que ele volta ao saldo?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Estoque apartado pros pedidos (reservas)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido em modo 'separação' foi criado 35 dias atrás. O estoque foi apartado (separado da prateleira, bloqueado para outras vendas). Ninguém terminou a separação, ninguém cancelou. Hoje, aquele estoque continua apartado e indisponível para vender, mesmo que a venda original tenha morrido.</p><p class="ln"><b>Hoje o sistema:</b> O sistema tem regra: apartado por máximo 30 dias. Depois disso, deveria limpar automaticamente (uma tarefa que roda sozinha em segundo plano verifica 1x por hora e remove o apartado expirado). Mas não confirmei se essa tarefa está funcionando, ou se é só um plano.</p><p class="ln why"><b>Por que importa:</b> Se o apartado fica travado indefinidamente, o saldo do galpão fica errado — parece que não tem estoque quando na verdade tem, está só esquecido. Operador tenta vender, sistema diz que não tem, cliente não consegue comprar, venda é perdida.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Ativar a limpeza automática: tarefa que roda sozinha em segundo plano a cada 1 hora remove apartado expirado</b> — Após 30 dias, o apartado é automaticamente devolvido ao saldo. Saldo fica correto, sem intervenção manual. Pedido continua registrado (não apaga), mas o estoque volta a estar disponível.</span></li><li class=""><span class="ck"></span><span><b>Deixar manual: operador ou gerente tem que cancelar o pedido antigo</b> — Precisa de atenção. Se ninguém cancelar, o estoque fica perdido para sempre. Operação mais trabalhosa.</span></li></ul><p class="recnote"><b>Recomendo:</b> Ativar a limpeza automática. Depois de 30 dias, o apartado deve ir embora sozinho — é automatismo. Assim o saldo nunca fica travado indefinidamente.</p></div><p class="refp">route.ts:470</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Estoque muda enquanto o vendedor está criando a venda — e o sistema rejeita porque não tem mais quantidade. Confirmar se o travamento pessimista está implementado ou se é só validação frágil.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Cancelar um pedido já cancelado — verificar se realmente não gera registro duplicado no registro de quem fez o quê ou se está com problema.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

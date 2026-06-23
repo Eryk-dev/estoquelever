@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Relatório de quantidade em estoque por empresa — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Gestão de estoque</p>
+<h1>Relatório de quantidade em estoque por empresa</h1><p class="lead">Todo dia você precisa saber quanto cada empresa tem de cada produto, guardado em cada galpão. Esse relatório puxa esse número calculando: tudo que entrou menos tudo que saiu (descartando o que foi estornado depois).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Quando volta um estorno de entrada, a quantidade volta na hora pro total</span></li><li><span class="dot">✓</span><span>Quando a mesma peça está em galpões diferentes ou foi comprada/vendida por empresas diferentes, o sistema soma tudo certo</span></li><li><span class="dot">✓</span><span>Você consegue filtrar por galpão ou por empresa pra ver só o que interessa</span></li><li><span class="dot">✓</span><span>O relatório destaca em vermelho quando a quantidade fica negativa (isso quer dizer que algo saiu sem ter entrada correspondente)</span></li></ul></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D032</span>Quando um operador tenta devolver só parte de uma entrada, o que fazer?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Chegou uma compra com 100 unidades. O operador quer devolver 50 delas (talvez vieram erradas ou com defeito).</p><p class="ln"><b>Hoje o sistema:</b> O sistema bloqueia. A operação não consegue executar — retorna erro. Os 100 itens continuam contando no estoque como se nada tivesse acontecido.</p><p class="ln why"><b>Por que importa:</b> Mercadorias chegam erradas ou com problemas. O dono precisa poder descontar só o que é ruim, não precisa descontar tudo para fazer ajuste. Se isso não for possível, força correções lá por trás, perdendo rastreabilidade de quanto entrou de verdade.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir devolver parcialmente: o sistema desconta só as 50 unidades que o operador marca como 'devolver'.</b> — Estoque fica correto (50 saem, 50 ficam). Sistema deixa tudo registrado. Mais flexível para erros na entrega.</span></li><li class=""><span class="ck"></span><span><b>Manter como está: devolução é tudo ou nada. Se 50 estão ruins, o operador inventa um jeito na mão (nota manual, depois ajusta geral).</b> — Estoque bate no final, mas o rastro de movimentação fica sujo. Ninguém sabe depois se aqueles 50 ruins foram pra onde.</span></li><li class=""><span class="ck"></span><span><b>Proibir entrada parcial: obrigar o fornecedor a mandar correto ou forçar rejeição integral na chegada.</b> — Menos problemas depois, mas mais luta com fornecedores agora.</span></li></ul><p class="recnote"><b>Recomendo:</b> Permitir devolução parcial (opção 1). É padrão em estoque. Você perde tempo hoje ajustando manualmente se não fizer. O sistema já tem a logica guardada num canto — só precisa ligar.</p></div><p class="refp">ledger.ts:386-391</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D300</span>Quando alguém faz um ajuste manual no estoque (sem vincular a uma empresa), onde esse ajuste aparece no relatório?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Saldo e disponibilidade de estoque</span></div></div><p class="ln scn"><b>Imagina assim:</b> O gestor identifica uma diferença de 100 unidades na contagem física. Cria um ajuste 'entrada manual' no sistema mas não marca qual empresa é dona desse estoque.</p><p class="ln"><b>Hoje o sistema:</b> O sistema aceita e anota os 100 itens. Mas no relatório de saldos por empresa, essa entrada desaparece. Não aparece em nenhuma linha porque não tem empresa marcada. Porém, os 100 itens realmente afetam o saldo total (a quantidade real que o sistema acha que tem).</p><p class="ln why"><b>Por que importa:</b> Cria confusão: o relatório não bate com a realidade de estoque. Você olha o relatório, vê X unidades, mas se somar com físico da câmera sobra diferença que ninguém entende. Além disso, não fica registrado: 'aqueles 100 vieram de onde?'.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Ajustes órfãos aparecem numa linha 'Sem empresa' no relatório.</b> — Visibilidade total. Você vê tudo que entrou sem vínculo e consegue rastrear depois.</span></li><li class=""><span class="ck"></span><span><b>Forçar sistema a rejeitar ajuste sem empresa: obriga o operador a escolher uma empresa sempre.</b> — Nenhum ajuste fica invisível. Tudo tem dono. Mais trabalho no dia-a-dia mas rastreabilidade perfeita.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está, mas avisar que relatório de empresa não inclui esses valores.</b> — Sem mudança, só documentar que relatório é parcial. Continua confuso.</span></li></ul><p class="recnote"><b>Recomendo:</b> Forçar vínculo a empresa (opção 2). Ajuste manual é raro e importante — vale 2 cliques a mais do operador pra ter rastreabilidade. Depois você consegue entender de verdade: ajuste foi reposição? Acerto de diferença? Que empresa?</p></div><p class="refp">route.ts:62, ledger.ts</p></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

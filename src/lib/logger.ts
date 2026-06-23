@@ -13,6 +13,7 @@
  */
 
 import { createServiceClient } from "@/lib/supabase-server";
+import { forwardErrorToDiscord } from "@/lib/discord-erros";
 
 type Level = "info" | "warn" | "error";
 
@@ -285,8 +286,23 @@ function log(
   meta: LogOptions = {},
 ): void {
   try {
-    writeToConsole(level, source, message, meta);
-    persistToSupabase(level, source, message, meta);
+    // _skipDiscord: internal flag set by logError() so this plain log() call
+    // doesn't double-post to Discord — logError forwards a richer payload itself.
+    const { _skipDiscord, ...cleanMeta } = meta;
+    writeToConsole(level, source, message, cleanMeta);
+    persistToSupabase(level, source, message, cleanMeta);
+    if (level === "error" && _skipDiscord !== true) {
+      const corr =
+        typeof cleanMeta.correlationId === "string" ? cleanMeta.correlationId : _correlationId;
+      forwardErrorToDiscord({
+        source,
+        message,
+        severity: "error",
+        origin: "backend",
+        correlationId: corr ?? null,
+        metadata: cleanMeta,
+      });
+    }
   } catch {
     // Absolute last resort — logger must never crash the caller
   }
@@ -335,17 +351,39 @@ export const logger = {
     try {
       const errorMsg = extractErrorMessage(opts.error);
 
-      // Write to siso_logs (backwards compat)
+      // Write to siso_logs (backwards compat). _skipDiscord so the plain log()
+      // path doesn't double-post — we forward a richer payload (stack, path,
+      // codes, siso_erros id) to Discord below.
       log(opts.severity === "warning" ? "warn" : "error", opts.source, opts.message, {
         pedidoId: opts.pedidoId,
         error: errorMsg,
         category: opts.category,
         correlationId: opts.correlationId ?? _correlationId,
         ...(opts.metadata ?? {}),
+        _skipDiscord: true,
       });
 
       // Write to siso_erros (rich structure)
       persistErrorToSupabase(opts, id, timestamp);
+
+      // Forward to Discord (fire-and-forget; severity/dedup/config handled inside).
+      forwardErrorToDiscord({
+        source: opts.source,
+        message: opts.message,
+        severity: opts.severity ?? "error",
+        category: opts.category ?? null,
+        errorCode: opts.errorCode ?? extractErrorCode(opts.error),
+        stack: extractStack(opts.error),
+        pedidoId: opts.pedidoId ?? null,
+        empresaNome: opts.empresaNome ?? null,
+        galpaoNome: opts.galpaoNome ?? null,
+        correlationId: opts.correlationId ?? _correlationId ?? null,
+        requestPath: opts.requestPath ?? null,
+        requestMethod: opts.requestMethod ?? null,
+        errosId: id,
+        origin: "backend",
+        metadata: { error_message: errorMsg, ...(opts.metadata ?? {}) },
+      });
     } catch {
       // Never crash
     }

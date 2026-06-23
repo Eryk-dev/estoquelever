@@ -1,0 +1,7632 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raio-X · Rede Viva do WMS</title>
+<style>
+  :root{
+    --ink:#16191d; --ink-soft:#5b626b; --ink-faint:#9aa0a8;
+    --paper:#fbfbf9; --paper-2:#f3f2ee; --line:#e3e1da;
+    --hub:#1c2024; --hub-ring:#0c0d0f;
+    --write:#16191d; --read:#9aa0a8;
+    --dim:#dedcd5; --dim-line:#ebe9e3;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:"Outfit",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --grave:#cc4436; --media:#d98324; --leve:#9aa0a8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--paper);color:var(--ink);
+    font-family:var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+  .app{display:grid;grid-template-rows:auto 1fr;height:100%}
+
+  /* ---------- Header ---------- */
+  header{padding:16px 26px 13px;border-bottom:1px solid var(--line);
+    display:flex;align-items:flex-end;gap:30px;flex-wrap:wrap;background:var(--paper)}
+  .brand{display:flex;flex-direction:column;gap:3px;min-width:230px}
+  .kicker{font-family:var(--mono);font-size:10.5px;letter-spacing:.26em;
+    text-transform:uppercase;color:var(--ink-faint)}
+  h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1}
+  h1 b{font-weight:700}
+  .sub{font-size:12px;color:var(--ink-soft);max-width:360px;line-height:1.35}
+  .stats{display:flex;gap:24px;flex-wrap:wrap;margin-left:auto;align-items:flex-end}
+  .stat{display:flex;flex-direction:column;line-height:1}
+  .stat .n{font-size:21px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .stat .l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-faint);margin-top:5px}
+  .stat.warn .n{color:var(--grave)}
+
+  /* ---------- Stage ---------- */
+  .stage{position:relative;overflow:hidden;background:
+    radial-gradient(circle at 50% 46%,#ffffff 0%,var(--paper) 58%,var(--paper-2) 100%)}
+  svg{position:absolute;inset:0;width:100%;height:100%;display:block;
+    cursor:grab;touch-action:none}
+  svg.panning{cursor:grabbing}
+
+  /* edges */
+  .edge{stroke-linecap:round;pointer-events:none}
+  .edge.write{stroke:var(--write);stroke-width:.7;opacity:.16}
+  .edge.read{stroke:var(--read);stroke-width:.6;stroke-dasharray:1.4 2.6;opacity:.22}
+  .edge.hot-write{stroke:var(--c-write);stroke-width:1.5;opacity:.9}
+  .edge.hot-read{stroke:var(--c-read);stroke-width:1.2;stroke-dasharray:2 2.4;opacity:.85}
+  .edge.faded{opacity:.04 !important}
+
+  /* flow nodes */
+  .flow circle{stroke:#fff;stroke-width:1.1;cursor:pointer;
+    transition:opacity .18s, r .15s}
+  .flow.faded circle{opacity:.12;fill:#c9c7c0 !important}
+  .flow.faded .flbl{opacity:0}
+  .flow.island circle{stroke-dasharray:2 2}
+  /* macro filter: a flow whose area is toggled off disappears entirely */
+  .flow.filt-off{display:none}
+  /* mega-hub graduated highlight: dim readers, keep writers loud (fix #5) */
+  .flow.lit-soft circle{opacity:.42}
+  .flow.lit-soft .flbl{opacity:.55}
+  /* r/w global toggle hides those edges */
+  .edge.rw-off{display:none}
+  .flbl{font-family:var(--mono);font-size:7px;fill:#fff;text-anchor:middle;
+    dominant-baseline:central;pointer-events:none;opacity:0;font-weight:600;
+    letter-spacing:.02em}
+  .flow.lit .flbl{opacity:1}
+
+  /* hub nodes */
+  .hub rect{fill:var(--hub);stroke:var(--hub-ring);stroke-width:1.2;
+    cursor:pointer;rx:4;transition:opacity .18s}
+  .hub.faded rect{opacity:.16}
+  .hub.faded .hub-name,.hub.faded .hub-deg{opacity:.18}
+  .hub.litw rect{fill:var(--c-write);stroke:#0a0b0c}
+  .hub.litr rect{fill:var(--c-read);stroke:#0a0b0c}
+  .hub-name{font-family:var(--sans);font-weight:600;fill:#fff;
+    text-anchor:middle;dominant-baseline:central;pointer-events:none;
+    letter-spacing:-.01em}
+  .hub-deg{font-family:var(--mono);fill:#fff;opacity:.62;text-anchor:middle;
+    pointer-events:none;font-weight:500}
+  .hub-halo{fill:none;stroke:var(--ink);opacity:0;stroke-width:1.4;
+    pointer-events:none;transition:opacity .2s}
+  .hub.active .hub-halo{opacity:.5}
+  /* severity dot: risk reading straight on the node */
+  .hub-sev{pointer-events:none}
+  .hub.faded .hub-sev{opacity:.18}
+  .hub:focus{outline:none}
+  .hub:focus-visible rect:not(.hub-halo){stroke:var(--grave);stroke-width:2}
+  .flow:focus{outline:none}
+  .flow:focus-visible circle{stroke:var(--ink);stroke-width:2}
+
+  .ringlbl{font-family:var(--mono);font-size:8px;fill:var(--ink-faint);
+    letter-spacing:.18em;text-anchor:middle;pointer-events:none;text-transform:uppercase}
+
+  /* ---------- Tooltip ---------- */
+  .tip{position:fixed;pointer-events:none;z-index:40;background:var(--ink);
+    color:#fff;padding:7px 10px;border-radius:5px;font-size:11.5px;max-width:280px;
+    line-height:1.32;opacity:0;transform:translateY(3px);transition:opacity .12s;
+    box-shadow:0 8px 24px rgba(0,0,0,.28)}
+  .tip.on{opacity:1;transform:none}
+  .tip .tid{font-family:var(--mono);font-size:9.5px;opacity:.62;letter-spacing:.08em}
+  .tip .tt{font-weight:600;margin-top:1px}
+
+  /* ---------- Side panel ---------- */
+  .panel{position:absolute;top:14px;right:14px;width:344px;max-height:calc(100% - 28px);
+    background:rgba(251,251,249,.97);border:1px solid var(--line);border-radius:9px;
+    box-shadow:0 14px 44px rgba(0,0,0,.10);display:flex;flex-direction:column;
+    transform:translateX(calc(100% + 26px));transition:transform .32s cubic-bezier(.2,.7,.2,1);
+    z-index:20;backdrop-filter:blur(3px)}
+  .panel.on{transform:none}
+  .p-head{padding:15px 16px 12px;border-bottom:1px solid var(--line);position:relative}
+  .p-kind{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--ink-faint);display:flex;align-items:center;gap:7px}
+  .p-kind .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .p-kind .dot.sq{border-radius:2px;background:var(--hub)}
+  .p-id{font-family:var(--mono);font-size:11px;color:var(--ink-soft);float:right;letter-spacing:.06em}
+  .p-title{font-size:16px;font-weight:600;line-height:1.22;margin:7px 0 0;letter-spacing:-.01em}
+  .p-mod{font-size:11.5px;color:var(--ink-soft);margin-top:5px;display:flex;
+    align-items:center;gap:6px}
+  .p-mod .mc{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .p-desc{font-size:12px;line-height:1.45;color:#43484e;padding:12px 16px 0}
+  .p-body{overflow:auto;padding-bottom:14px}
+  .p-metrics{display:flex;gap:8px;padding:13px 16px 4px;flex-wrap:wrap}
+  .met{flex:1;min-width:62px;border:1px solid var(--line);border-radius:7px;
+    padding:8px 9px;background:#fff}
+  .met .mn{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+  .met .ml{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-faint);margin-top:5px}
+  .met.bad .mn{color:var(--grave)}
+  .sec{padding:14px 16px 0}
+  .sec h4{margin:0 0 8px;font-size:10px;font-family:var(--mono);letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-faint);display:flex;align-items:center;gap:7px}
+  .sec h4 .tag{width:13px;height:0;border-top-width:2px;border-top-style:solid}
+  .sec h4 .tag.w{border-color:var(--c-write)}
+  .sec h4 .tag.r{border-color:var(--c-read);border-top-style:dashed}
+  .chips{display:flex;flex-direction:column;gap:5px}
+  .chip{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 9px;
+    border-radius:6px;background:var(--paper-2);cursor:pointer;border:1px solid transparent;
+    transition:border-color .12s,background .12s}
+  .chip:hover{border-color:var(--line);background:#fff}
+  .chip .sq{width:9px;height:9px;border-radius:2px;background:var(--hub);flex:none}
+  .chip .nm{flex:1;line-height:1.2}
+  .chip .ct{font-family:var(--mono);font-size:10px;color:var(--ink-soft)}
+  .chip.w .sq{background:var(--c-write)}
+  .chip.r .sq{background:var(--c-read)}
+  .conf{display:flex;align-items:flex-start;gap:8px;font-size:11.5px;padding:7px 0;
+    border-bottom:1px solid var(--dim-line);line-height:1.3}
+  .conf:last-child{border-bottom:0}
+  .sev{font-family:var(--mono);font-size:8px;letter-spacing:.08em;text-transform:uppercase;
+    padding:3px 5px;border-radius:4px;flex:none;font-weight:600;color:#fff;margin-top:1px}
+  .sev.grave{background:var(--grave)}
+  .sev.media{background:var(--media)}
+  .sev.leve{background:var(--leve)}
+  .empty{font-size:11.5px;color:var(--ink-faint);font-style:italic;padding:2px 0}
+  /* neutral "como ler" panel (shown when nothing selected) */
+  .panel.neutral{transform:none}
+  .nx-head{padding:15px 16px 11px;border-bottom:1px solid var(--line)}
+  .nx-head .p-kind{margin-bottom:5px}
+  .nx-head .p-title{margin:0;font-size:15px}
+  .nx-body{padding:13px 16px 16px;overflow:auto}
+  .nx-body p{margin:0 0 11px;font-size:12px;line-height:1.5;color:#43484e}
+  .nx-bip{display:flex;align-items:stretch;gap:9px;margin:2px 0 13px}
+  .nx-side{flex:1;border:1px solid var(--line);border-radius:7px;padding:9px 10px;background:#fff}
+  .nx-side .t{font-family:var(--mono);font-size:9px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px}
+  .nx-side .d{font-size:11.5px;line-height:1.35;color:#43484e}
+  .nx-arrows{display:flex;flex-direction:column;justify-content:center;gap:5px;flex:none;
+    color:var(--ink-faint)}
+  .nx-leg{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+  .nx-leg .row{display:flex;align-items:center;gap:9px;font-size:11.5px;color:#43484e}
+  .nx-leg .row .ln{width:26px;height:0;border-top-width:2px;border-top-style:solid;flex:none}
+  .nx-leg .row .ln.w{border-color:var(--ink)}
+  .nx-leg .row .ln.r{border-color:var(--ink-faint);border-top-style:dashed}
+  .nx-leg .row .dotc{width:11px;height:11px;border-radius:50%;flex:none;background:var(--grave)}
+  .nx-leg .row .sqc{width:13px;height:10px;border-radius:2px;flex:none;background:var(--hub)}
+  .nx-tip{font-size:11px;color:var(--ink-faint);line-height:1.4;margin-top:13px;
+    padding-top:11px;border-top:1px solid var(--dim-line)}
+  .x{position:absolute;top:12px;right:12px;width:26px;height:26px;border:1px solid var(--line);
+    background:#fff;border-radius:6px;cursor:pointer;display:grid;place-items:center;
+    color:var(--ink-soft);font-size:15px;line-height:1}
+  .x:hover{background:var(--paper-2);color:var(--ink)}
+
+  /* ---------- Controls (bottom-left) ---------- */
+  .controls{position:absolute;left:14px;bottom:14px;z-index:15;display:flex;
+    flex-direction:column;gap:9px;max-width:300px}
+  .search{display:flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line);
+    border-radius:8px;padding:7px 11px;box-shadow:0 4px 14px rgba(0,0,0,.05);width:248px}
+  .search svg{position:static;width:13px;height:13px;flex:none;opacity:.5}
+  .search input{border:0;outline:0;font-family:var(--sans);font-size:12.5px;width:100%;
+    background:transparent;color:var(--ink)}
+  .search input::placeholder{color:var(--ink-faint)}
+  .search .hits{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);flex:none}
+
+  .legend{background:rgba(251,251,249,.95);border:1px solid var(--line);border-radius:8px;
+    padding:11px 12px;box-shadow:0 4px 14px rgba(0,0,0,.05);font-size:11px;
+    backdrop-filter:blur(2px)}
+  .legend.collapsed .lg-body{display:none}
+  .lg-head{display:flex;align-items:center;justify-content:space-between;cursor:pointer;
+    font-family:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--ink-faint)}
+  .lg-head .car{transition:transform .2s}
+  .legend.collapsed .lg-head .car{transform:rotate(-90deg)}
+  .lg-body{margin-top:9px;display:flex;flex-direction:column;gap:10px}
+  .lg-hint{font-size:10px;color:var(--ink-soft);letter-spacing:.02em;margin:-2px 0 1px}
+  .lg-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px}
+  .lg-it{display:flex;align-items:center;gap:7px;line-height:1.1;cursor:pointer;
+    padding:2px 4px;border-radius:5px;user-select:none;transition:opacity .14s,background .12s}
+  .lg-it:hover{background:var(--paper-2)}
+  .lg-it.off{opacity:.32}
+  .lg-it.off .sw{box-shadow:inset 0 0 0 1.4px #fff,inset 0 0 0 2.6px currentColor;
+    background:transparent !important}
+  .lg-it .sw{width:10px;height:10px;border-radius:50%;flex:none}
+  .lg-sep{height:1px;background:var(--line)}
+  .lg-row{display:flex;align-items:center;gap:8px}
+  .lg-row .ln{width:22px;height:0;border-top-width:2px;border-top-style:solid;flex:none}
+  .lg-row .ln.w{border-color:var(--ink)}
+  .lg-row .ln.r{border-color:var(--ink-faint);border-top-style:dashed}
+  .lg-row .glyph{font-size:10px;color:var(--ink-soft)}
+  /* r/w global toggle inside legend */
+  .lg-toggle{display:flex;gap:6px}
+  .lg-tg{flex:1;display:flex;align-items:center;gap:7px;justify-content:center;
+    font-size:10px;border:1px solid var(--line);border-radius:6px;padding:5px 6px;
+    cursor:pointer;background:#fff;color:var(--ink-soft);user-select:none;
+    transition:opacity .14s,border-color .12s}
+  .lg-tg:hover{border-color:var(--ink-faint)}
+  .lg-tg .tgln{width:18px;height:0;border-top-width:2px;border-top-style:solid;
+    border-color:var(--ink);flex:none}
+  .lg-tg .tgln.r{border-top-style:dashed;border-color:var(--ink-faint)}
+  .lg-tg.off{opacity:.34}
+  .lg-shape{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--ink-soft)}
+  .lg-shape .sh-h{width:13px;height:9px;background:var(--hub);border-radius:2px;flex:none}
+  .lg-shape .sh-f{width:10px;height:10px;background:var(--ink-faint);border-radius:50%;
+    border:1px solid #fff;flex:none}
+  .hint{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:12;
+    font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-faint);
+    background:rgba(251,251,249,.8);padding:5px 12px;border-radius:20px;
+    border:1px solid var(--line);transition:opacity .4s;pointer-events:none}
+  .hint.gone{opacity:0}
+
+  .zoomctl{position:absolute;right:14px;bottom:14px;z-index:15;display:flex;
+    flex-direction:column;gap:1px;border:1px solid var(--line);border-radius:8px;
+    overflow:hidden;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.05)}
+  .zoomctl button{border:0;background:#fff;width:32px;height:30px;cursor:pointer;
+    font-size:15px;color:var(--ink-soft);display:grid;place-items:center}
+  .zoomctl button:hover{background:var(--paper-2);color:var(--ink)}
+  .zoomctl button+button{border-top:1px solid var(--line)}
+  .zoomctl button.fit{font-size:10px;font-family:var(--mono);letter-spacing:.04em}
+  @media(max-width:720px){
+    .stats{width:100%;margin-left:0;gap:16px}
+    .stat .n{font-size:18px}
+    /* panel becomes a bottom-sheet so it never overflows a narrow viewport */
+    .panel{width:100%;left:0;right:0;bottom:0;top:auto;max-height:62%;border-radius:13px 13px 0 0;
+      transform:translateY(calc(100% + 26px));border-bottom:0}
+    .panel.on,.panel.neutral{transform:none}
+    .nx-bip{flex-direction:column}
+    .controls{max-width:calc(100% - 28px)}
+    .search{width:100%;max-width:240px}
+    .zoomctl{bottom:auto;top:14px}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="kicker">Raio-X · Rede Viva</div>
+      <h1>O <b>acoplamento</b> do WMS num olhar</h1>
+      <div class="sub">108 fluxos puxados pra dentro dos 12 estados que compartilham. Clique pra mergulhar.</div>
+    </div>
+    <div class="stats" id="stats">
+      <div class="stat"><span class="n">108</span><span class="l">Fluxos</span></div>
+      <div class="stat"><span class="n">12</span><span class="l">Estados comuns</span></div>
+      <div class="stat"><span class="n">749</span><span class="l">Ligações</span></div>
+      <div class="stat warn"><span class="n">75</span><span class="l">Conflitos · 32 graves</span></div>
+      <div class="stat"><span class="n">9</span><span class="l">Áreas</span></div>
+    </div>
+  </header>
+
+  <div class="stage" id="stage">
+    <svg id="svg"></svg>
+
+    <!-- search + legend -->
+    <div class="controls">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input id="search" placeholder="Buscar fluxo por nome…" autocomplete="off" spellcheck="false">
+        <span class="hits" id="hits"></span>
+      </div>
+      <div class="legend" id="legend">
+        <div class="lg-head" id="lgHead"><span>Legenda · Filtros</span><span class="car">▾</span></div>
+        <div class="lg-body">
+          <div class="lg-hint">Clique uma área pra ligar/desligar</div>
+          <div class="lg-grid" id="macroLegend"></div>
+          <div class="lg-sep"></div>
+          <div class="lg-toggle" id="rwToggle">
+            <span class="lg-tg" data-rw="write"><span class="tgln"></span>Escreve</span>
+            <span class="lg-tg" data-rw="read"><span class="tgln r"></span>Lê</span>
+          </div>
+          <div class="lg-sep"></div>
+          <div class="lg-shape"><span class="sh-h"></span><span>Estado compartilhado (12 · âncora no anel)</span></div>
+          <div class="lg-shape"><span class="sh-f"></span><span>Fluxo (108 · tamanho ∝ ligações)</span></div>
+          <div class="lg-shape"><span class="sh-f" style="border-style:dashed;border-color:var(--ink-faint);background:none"></span><span>Ilha (6 · não toca nenhum estado)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="zoomctl">
+      <button id="zin" title="Aproximar">+</button>
+      <button id="zout" title="Afastar">−</button>
+      <button id="zfit" class="fit" title="Enquadrar">FIT</button>
+    </div>
+
+    <div class="hint" id="hint">arraste o fundo pra mover · scroll pra zoom · clique num nó · Tab navega · Esc limpa</div>
+
+    <!-- side panel -->
+    <aside class="panel" id="panel">
+      <button class="x" id="closeP">×</button>
+      <div class="p-head" id="pHead"></div>
+      <div class="p-body" id="pBody"></div>
+    </aside>
+  </div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+/* ============================================================
+   DADOS — JSON cru embutido verbatim (não editar à mão)
+   ============================================================ */
+const DATA = {
+ "meta": {
+  "flows": 108,
+  "hubs": 12,
+  "modules": 26,
+  "edges": 749,
+  "write_edges": 241,
+  "read_edges": 508,
+  "conflicts": 75,
+  "conflicts_grave": 32,
+  "isolated": [
+   "070",
+   "087",
+   "098",
+   "100",
+   "102",
+   "104"
+  ]
+ },
+ "modules": [
+  "Compras de fornecedor",
+  "Separação de pedidos",
+  "Acertos automáticos",
+  "Relatórios e indicadores",
+  "Integrações (Tiny, Mercado Livre)",
+  "Inventário (contagem)",
+  "Gestão de estoque",
+  "Configurações e cadastros",
+  "Cadastro de produtos",
+  "Pedidos e para onde vão",
+  "Vendas feitas na mão",
+  "Transferências entre galpões",
+  "Devoluções",
+  "Acertos retroativos",
+  "Cadastro de fornecedores",
+  "Cadastro de prateleiras",
+  "Histórico de movimentações",
+  "Etiquetas e impressão",
+  "Peças equivalentes e cross-dock",
+  "Recebimento de mercadoria",
+  "Embalagem",
+  "Ajuste manual de estoque",
+  "Reabastecimento de prateleira",
+  "Expedição (envio)",
+  "Análise de cobertura",
+  "Tarefas automáticas do sistema"
+ ],
+ "flows": [
+  {
+   "id": "001",
+   "file": "001-quando-um-pedido-novo-chega-e-o-sistema-de.html",
+   "title": "Quando um pedido novo chega e o sistema decide de qual galpão sai",
+   "desc": "Sua loja avisa que vendeu algo, o sistema aparta o estoque e decide se o próprio galpão tem pra mandar ou se precisa comprar.",
+   "module": "Pedidos e para onde vão",
+   "problems": 3,
+   "decisions": 3,
+   "check": 3,
+   "writes": 6,
+   "reads": 6,
+   "degree": 12,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "002",
+   "file": "002-roteamento-automatico-de-pedidos.html",
+   "title": "Roteamento automático de pedidos",
+   "desc": "Quando um pedido chega, o sistema decide automaticamente se deve sair do seu estoque, vir de outra filial ou ser comprado de um fornecedor.",
+   "module": "Pedidos e para onde vão",
+   "problems": 0,
+   "decisions": 3,
+   "check": 2,
+   "writes": 5,
+   "reads": 5,
+   "degree": 10,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "003",
+   "file": "003-aprovacao-de-pedidos-e-compras.html",
+   "title": "Aprovação de Pedidos e Compras",
+   "desc": "Quando chega um pedido novo (aviso da loja de que entrou um pedido), o operador escolhe como resolver: com estoque próprio, trazendo de outro galpão, ou comprando do fornecedor. O sistema aparta o estoque, guarda a decisão, e enfileira a tarefa de dar baixa automática.",
+   "module": "Pedidos e para onde vão",
+   "problems": 2,
+   "decisions": 3,
+   "check": 1,
+   "writes": 5,
+   "reads": 3,
+   "degree": 8,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "004",
+   "file": "004-acompanhamento-de-pedido-do-que-chega-ate-.html",
+   "title": "Acompanhamento de pedido — do que chega até sair do galpão",
+   "desc": "Quando um pedido entra no sistema (a loja avisa), ele passa por várias mãos: operador aprova, separador pega as peças, embalador arruma, imprime etiqueta e manda embora. O sistema registra cada passo pra você ver exatamente o que aconteceu e em que data e hora.",
+   "module": "Pedidos e para onde vão",
+   "problems": 1,
+   "decisions": 2,
+   "check": 5,
+   "writes": 3,
+   "reads": 11,
+   "degree": 14,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "005",
+   "file": "005-cancelamento-e-devolucao-de-pedido-ao-esto.html",
+   "title": "Cancelamento e devolução de pedido ao estoque",
+   "desc": "O fluxo que desfaz um pedido (quando o cliente desiste ou você cancela uma compra) e devolve as peças que já tinham sido separadas de volta pro estoque para vender pra outro cliente.",
+   "module": "Pedidos e para onde vão",
+   "problems": 3,
+   "decisions": 5,
+   "check": 2,
+   "writes": 4,
+   "reads": 8,
+   "degree": 12,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "006",
+   "file": "006-recebimento-de-compra-de-fornecedor.html",
+   "title": "Recebimento de Compra de Fornecedor",
+   "desc": "Quando chega um caminhão de compra do fornecedor, você confere quantidade real vs. sistema, registra diferenças, e marca o que vai ser guardado nas prateleiras — o sistema então te ajuda a organizar tudo pra separar depois nos pedidos dos clientes.",
+   "module": "Recebimento de mercadoria",
+   "problems": 0,
+   "decisions": 4,
+   "check": 2,
+   "writes": 6,
+   "reads": 3,
+   "degree": 9,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "007",
+   "file": "007-recebimento-de-estoque-transferido-de-outr.html",
+   "title": "Recebimento de Estoque Transferido de Outro Galpão",
+   "desc": "Quando estoque sai de um galpão e chega em outro, o operador usa esse fluxo pra avisar ao sistema onde guardar cada peça e registrar que o estoque agora existe no novo galpão.",
+   "module": "Recebimento de mercadoria",
+   "problems": 0,
+   "decisions": 3,
+   "check": 5,
+   "writes": 4,
+   "reads": 3,
+   "degree": 7,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "008",
+   "file": "008-recebimento-avulso-achado-devolucao-ajuste.html",
+   "title": "Recebimento avulso (achado, devolução, ajuste manual)",
+   "desc": "Quando chega um item solto (compra do fornecedor, devolução de cliente ou ajuste de estoque), o sistema registra no estoque, pode guardar direto na prateleira ou deixar pra guardar depois.",
+   "module": "Recebimento de mercadoria",
+   "problems": 0,
+   "decisions": 2,
+   "check": 4,
+   "writes": 7,
+   "reads": 6,
+   "degree": 13,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "009",
+   "file": "009-guardagem-de-mercadoria-recebida.html",
+   "title": "Guardagem de mercadoria recebida",
+   "desc": "Quando a mercadoria chega, seu operador de estoque pega as peças do recebimento, leva pra prateleira final (escolhe entre prateleira comum, zona de embalagem ou sobrestoque), registra na hora — e o estoque fica imediatamente disponível pros pedidos saírem. Se ele desfizer ou cancelar depois, as peças voltam pro recebimento.",
+   "module": "Recebimento de mercadoria",
+   "problems": 0,
+   "decisions": 3,
+   "check": 1,
+   "writes": 4,
+   "reads": 5,
+   "degree": 9,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "010",
+   "file": "010-rota-de-guarda-otimizada.html",
+   "title": "Rota de Guarda Otimizada",
+   "desc": "Quando mercadoria entra no galpão, o sistema cria uma lista de tarefas de guarda (onde colocar cada produto). O operador usa essa rota pra levar a mercadoria das prateleiras de recebimento até as prateleiras finais, confirmando cada movimento. O sistema automaticamente libera pedidos que estavam esperando por essa mercadoria chegar.",
+   "module": "Recebimento de mercadoria",
+   "problems": 0,
+   "decisions": 2,
+   "check": 1,
+   "writes": 3,
+   "reads": 9,
+   "degree": 12,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "011",
+   "file": "011-painel-de-separacao-de-pedidos.html",
+   "title": "Painel de Separação de Pedidos",
+   "desc": "O sistema que o operador de galpão usa pra listar, filtrar e marcar os itens que saem dos pedidos — organiza por etapas, avisa quando há estoque faltando, e permite que o time trabalhe junto sem uma pessoa pisando na outra.",
+   "module": "Separação de pedidos",
+   "problems": 3,
+   "decisions": 3,
+   "check": 1,
+   "writes": 2,
+   "reads": 6,
+   "degree": 8,
+   "macro": "Separação"
+  },
+  {
+   "id": "012",
+   "file": "012-iniciar-a-separacao-de-pedidos.html",
+   "title": "Iniciar a separação de pedidos",
+   "desc": "Quando o operador decide que quer começar a separar um ou mais pedidos, o sistema marca os pedidos como \"em separação\", bloqueia os que estão esperando compra de fornecedor, e entrega ao operador uma lista organizada por prateleira: \"você precisa pegar 5 da peça X na prateleira A3, depois 2 da peça Y na prateleira B1\".",
+   "module": "Separação de pedidos",
+   "problems": 2,
+   "decisions": 2,
+   "check": 2,
+   "writes": 1,
+   "reads": 5,
+   "degree": 6,
+   "macro": "Separação"
+  },
+  {
+   "id": "013",
+   "file": "013-marcar-itens-como-separados-com-scanner-ou.html",
+   "title": "Marcar itens como separados (com scanner ou checkbox)",
+   "desc": "Quando o operador de galpão marca um item como separado (via checkbox ou scanner), o sistema aparta esse item do estoque disponível e registra que ele saiu do monte pra aquele pedido.",
+   "module": "Separação de pedidos",
+   "problems": 4,
+   "decisions": 5,
+   "check": 1,
+   "writes": 2,
+   "reads": 4,
+   "degree": 6,
+   "macro": "Separação"
+  },
+  {
+   "id": "014",
+   "file": "014-finalizar-a-separacao.html",
+   "title": "Finalizar a separação",
+   "desc": "Quando o operador termina de coletar todos os itens de um pedido (marca tudo na lista) e clica no botão 'Concluir separação', o sistema avalia o que foi pego, verifica se há compras pendentes ou realocações, e libera o pedido pra ir pro próximo passo (embalagem/estoque).",
+   "module": "Separação de pedidos",
+   "problems": 0,
+   "decisions": 3,
+   "check": 1,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Separação"
+  },
+  {
+   "id": "015",
+   "file": "015-separacao-de-pedidos-em-prateleiras-quando.html",
+   "title": "Separação de pedidos em prateleiras (quando não tem quantidade completa)",
+   "desc": "Quando o operador pega uma quantidade parcial de uma peça de uma prateleira, o sistema libera aquela quantidade do monte, gera o registro de saída no o registro das movimentacoes de estoque, e automaticamente procura outra prateleira no galpão pra guardar o que sobrou do pedido.",
+   "module": "Separação de pedidos",
+   "problems": 3,
+   "decisions": 2,
+   "check": 3,
+   "writes": 1,
+   "reads": 1,
+   "degree": 2,
+   "macro": "Separação"
+  },
+  {
+   "id": "016",
+   "file": "016-marcar-um-produto-como-faltando-sem-estoqu.html",
+   "title": "Marcar um produto como faltando / sem estoque",
+   "desc": "Quando o operador está separando um pedido, descobre que não tem mais daquele produto na prateleira e precisa avisar o sistema. O sistema então tira o pedido daqui (manda pro outro galpão ou pra comprar mais).",
+   "module": "Separação de pedidos",
+   "problems": 0,
+   "decisions": 3,
+   "check": 1,
+   "writes": 3,
+   "reads": 10,
+   "degree": 13,
+   "macro": "Separação"
+  },
+  {
+   "id": "017",
+   "file": "017-mandar-item-para-compra-quando-nao-tem-est.html",
+   "title": "Mandar item para compra quando não tem estoque no galpão",
+   "desc": "Quando o operador na separação descobre que não consegue pegar a quantidade que o cliente pediu (ou pega menos), o sistema decide se realoca pra outra prateleira ou manda pra comprar de novo.",
+   "module": "Separação de pedidos",
+   "problems": 0,
+   "decisions": 4,
+   "check": 3,
+   "writes": 2,
+   "reads": 3,
+   "degree": 5,
+   "macro": "Separação"
+  },
+  {
+   "id": "018",
+   "file": "018-desfazer-ou-voltar-etapas-da-separacao.html",
+   "title": "Desfazer ou voltar etapas da separação",
+   "desc": "Quando seu operador em separação ou embalagem comete um erro (escaneia o mesmo item duas vezes, coloca um item errado na caixa, etc), o sistema deixa ele corrigir e voltar atrás. Pode desfazer um escaneamento, desfazer uma alocação parcial, reiniciar uma embalagem, ou mandar o pedido inteiro voltar pra um passo anterior.",
+   "module": "Separação de pedidos",
+   "problems": 4,
+   "decisions": 1,
+   "check": 1,
+   "writes": 4,
+   "reads": 7,
+   "degree": 11,
+   "macro": "Separação"
+  },
+  {
+   "id": "019",
+   "file": "019-cancelamento-de-separacao.html",
+   "title": "Cancelamento de Separação",
+   "desc": "Quando você quer voltar atrás em um pedido que foi separado (já pegaram as peças do estoque), o sistema tira aquele pedido da separação e devolve as peças pro monte.",
+   "module": "Separação de pedidos",
+   "problems": 1,
+   "decisions": 3,
+   "check": 1,
+   "writes": 2,
+   "reads": 1,
+   "degree": 3,
+   "macro": "Separação"
+  },
+  {
+   "id": "020",
+   "file": "020-embalagem-de-pedidos-e-impressao-de-etique.html",
+   "title": "Embalagem de pedidos e impressão de etiqueta",
+   "desc": "Quando um pedido acabou de ser separado (todas as peças reunidas), o operador escaneia cada item, o sistema marca como embalado e depois imprime a etiqueta de envio automaticamente.",
+   "module": "Embalagem",
+   "problems": 1,
+   "decisions": 6,
+   "check": 3,
+   "writes": 3,
+   "reads": 4,
+   "degree": 7,
+   "macro": "Separação"
+  },
+  {
+   "id": "021",
+   "file": "021-embalagem-de-compras-de-fornecedor.html",
+   "title": "Embalagem de Compras de Fornecedor",
+   "desc": "Quando mercadoria de fornecedor chega, o operador aponta a nota fiscal e o scanner lê cada item. A cada leitura o sistema marca como recebido, e quando tudo está lido, a nota fecha e o estoque é baixado automaticamente.",
+   "module": "Embalagem",
+   "problems": 0,
+   "decisions": 1,
+   "check": 0,
+   "writes": 2,
+   "reads": 8,
+   "degree": 10,
+   "macro": "Separação"
+  },
+  {
+   "id": "022",
+   "file": "022-checklist-de-separacao.html",
+   "title": "Checklist de Separação",
+   "desc": "A lista que o operador consulta na prateleira para marcar cada item do pedido conforme pega, parcialmente ou completo, com opção de registrar itens de compra (fornecedor) encontrados ou não encontrados.",
+   "module": "Embalagem",
+   "problems": 0,
+   "decisions": 2,
+   "check": 2,
+   "writes": 2,
+   "reads": 4,
+   "degree": 6,
+   "macro": "Separação"
+  },
+  {
+   "id": "023",
+   "file": "023-marcar-pedido-como-enviado.html",
+   "title": "Marcar pedido como enviado",
+   "desc": "Quando um pedido sai do galpão já embalado, o sistema precisa registrar que foi expedido (enviado ao cliente).",
+   "module": "Expedição (envio)",
+   "problems": 2,
+   "decisions": 1,
+   "check": 1,
+   "writes": 1,
+   "reads": 4,
+   "degree": 5,
+   "macro": "Separação"
+  },
+  {
+   "id": "024",
+   "file": "024-mandar-um-pedido-para-outro-galpao.html",
+   "title": "Mandar um pedido para outro galpão",
+   "desc": "Quando um pedido precisa sair de um galpão e ir para outro (porque chegou errado, porque o outro está mais perto do cliente, ou porque precisa de mudança), o operador clica um botão e o sistema devolve o estoque apartado, reseta tudo e deixa o pedido pronto para o novo galpão.",
+   "module": "Expedição (envio)",
+   "problems": 0,
+   "decisions": 1,
+   "check": 2,
+   "writes": 3,
+   "reads": 4,
+   "degree": 7,
+   "macro": "Separação"
+  },
+  {
+   "id": "025",
+   "file": "025-gestao-de-compras-de-fornecedor.html",
+   "title": "Gestão de compras de fornecedor",
+   "desc": "Fluxo que marca itens como pedidos ao fornecedor, recebe a mercadoria, lança tudo no estoque, e libera os pedidos de cliente pra separação.",
+   "module": "Compras de fornecedor",
+   "problems": 2,
+   "decisions": 2,
+   "check": 1,
+   "writes": 6,
+   "reads": 2,
+   "degree": 8,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "026",
+   "file": "026-validacao-do-estoque-quando-precisa-de-com.html",
+   "title": "Validação do estoque quando precisa de compra",
+   "desc": "Quando um pedido precisa de compra de fornecedor, o operador valida cada peça — se está em prateleira ou se falta mesmo — em cerca de 30 segundos por item. Quando termina, o sistema automático classifica o pedido (só prateleira → separa, só compra → aguarda fornecedor, ou misto → fica aguardando decisão).",
+   "module": "Compras de fornecedor",
+   "problems": 2,
+   "decisions": 2,
+   "check": 2,
+   "writes": 5,
+   "reads": 7,
+   "degree": 12,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "027",
+   "file": "027-conclusao-de-pedido-de-compra-apos-recebim.html",
+   "title": "Conclusão de pedido de compra após recebimento completo",
+   "desc": "Quando todos os itens de uma compra de fornecedor foram separados e encontrados, o operador confirma que o pedido está pronto. O sistema marca tudo como recebido, desconta do estoque em segundo plano e libera o pedido pro cliente — mas só deixa confirmar se não há itens faltando e se não há transferências entre galpões em aberto.",
+   "module": "Compras de fornecedor",
+   "problems": 1,
+   "decisions": 4,
+   "check": 2,
+   "writes": 5,
+   "reads": 3,
+   "degree": 8,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "028",
+   "file": "028-recebimento-de-compras-de-fornecedor-com-c.html",
+   "title": "Recebimento de compras de fornecedor com conferência",
+   "desc": "Quando você recebe mercadoria que pediu a um fornecedor, o operador confere quantidade por quantidade na chegada, registra tudo direitinho no sistema, e depois libera automaticamente os pedidos dos clientes que estavam esperando esse estoque.",
+   "module": "Compras de fornecedor",
+   "problems": 2,
+   "decisions": 2,
+   "check": 2,
+   "writes": 6,
+   "reads": 4,
+   "degree": 10,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "029",
+   "file": "029-criar-compra-automatica-quando-um-pedido-c.html",
+   "title": "Criar compra automática quando um pedido chega sem estoque",
+   "desc": "Quando um pedido chega pela loja e nenhum galpão tem estoque suficiente para atender na hora, o sistema marca como pendente e sugere ao operador que crie uma compra de fornecedor. Se o operador aprovar, o sistema já cria a compra; quando a mercadoria chega, o sistema conecta automaticamente com o pedido em espera.",
+   "module": "Compras de fornecedor",
+   "problems": 2,
+   "decisions": 4,
+   "check": 4,
+   "writes": 4,
+   "reads": 6,
+   "degree": 10,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "030",
+   "file": "030-trocar-um-produto-em-uma-compra-antes-de-f.html",
+   "title": "Trocar um produto em uma compra (antes de fazer a encomenda)",
+   "desc": "Quando você recebe um item de um pedido que não tem estoque, ou vem caro, ou descontinuou, o sistema deixa você substituir por um produto equivalente. A troca acontece antes de você clicar em \"mandar pra fornecedor\" — é só no papel, sem mexer no estoque.",
+   "module": "Compras de fornecedor",
+   "problems": 3,
+   "decisions": 1,
+   "check": 0,
+   "writes": 0,
+   "reads": 12,
+   "degree": 12,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "031",
+   "file": "031-marcar-uma-mercadoria-como-indisponivel-ca.html",
+   "title": "Marcar uma mercadoria como indisponível (cancelamento de compra)",
+   "desc": "Quando o sistema marca uma mercadoria como indisponível (porque o fornecedor não tem mais, por exemplo), ele tenta cancelar o pedido inteiro — MAS deixa o estoque contado errado por até 1 hora.",
+   "module": "Compras de fornecedor",
+   "problems": 1,
+   "decisions": 3,
+   "check": 1,
+   "writes": 4,
+   "reads": 8,
+   "degree": 12,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "032",
+   "file": "032-cancelamento-de-item-de-compra-de-forneced.html",
+   "title": "Cancelamento de item de compra de fornecedor",
+   "desc": "Quando você descobre que pediu algo pro fornecedor que não vai mais chegar (ou que ele cancelou), o sistema precisa marcar como cancelado e devolver qualquer estoque que estava apartado pra esse pedido.",
+   "module": "Compras de fornecedor",
+   "problems": 4,
+   "decisions": 2,
+   "check": 2,
+   "writes": 1,
+   "reads": 5,
+   "degree": 6,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "033",
+   "file": "033-devolver-um-item-de-compra-de-fornecedor.html",
+   "title": "Devolver um item de compra de fornecedor",
+   "desc": "Quando você quer desistir de uma compra que chegou ou estava pendente — devolver aquele item pro sistema pra que ele saia da compra e volte pra estar livre pra recomprar depois.",
+   "module": "Compras de fornecedor",
+   "problems": 6,
+   "decisions": 1,
+   "check": 3,
+   "writes": 0,
+   "reads": 12,
+   "degree": 12,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "034",
+   "file": "034-recebimento-e-classificacao-de-devolucoes.html",
+   "title": "Recebimento e classificação de devoluções",
+   "desc": "Quando um cliente devolve um produto, o sistema recebe via loja, o operador escolhe uma das 4 classes (inteiro, avariado, garantia ou troca) e distribui o produto no galpão conforme a classe.",
+   "module": "Devoluções",
+   "problems": 1,
+   "decisions": 3,
+   "check": 2,
+   "writes": 5,
+   "reads": 2,
+   "degree": 7,
+   "macro": "Devoluções"
+  },
+  {
+   "id": "035",
+   "file": "035-recebimento-de-devolucao-de-cliente-e-volt.html",
+   "title": "Recebimento de devolução de cliente e volta ao estoque",
+   "desc": "Quando um cliente devolve um produto, o sistema recebe a nota fiscal de devolução, o operador classifica o que fazer com ele (aproveitar, consertar, descartar, trocar), e o estoque volta disponível — ou vai pra quarentena ou pro fornecedor, dependendo do estado.",
+   "module": "Devoluções",
+   "problems": 2,
+   "decisions": 4,
+   "check": 2,
+   "writes": 4,
+   "reads": 4,
+   "degree": 8,
+   "macro": "Devoluções"
+  },
+  {
+   "id": "036",
+   "file": "036-devolucao-de-mercadoria-avariada.html",
+   "title": "Devolução de mercadoria avariada",
+   "desc": "Quando um cliente devolve uma peça quebrada, o sistema recebe no galpão, marca como avaria, e move pro isolamento (quarentena) pra depois enviar de volta ao fornecedor.",
+   "module": "Devoluções",
+   "problems": 1,
+   "decisions": 1,
+   "check": 1,
+   "writes": 3,
+   "reads": 4,
+   "degree": 7,
+   "macro": "Devoluções"
+  },
+  {
+   "id": "037",
+   "file": "037-devolucao-com-troca-de-peca.html",
+   "title": "Devolução com Troca de Peça",
+   "desc": "Quando um cliente devolve uma peça errada (por exemplo, uma porca M8 em vez de M10), o operador registra no sistema que é uma troca. O produto errado entra no estoque e fica marcado com o custo original da venda.",
+   "module": "Devoluções",
+   "problems": 4,
+   "decisions": 1,
+   "check": 0,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Devoluções"
+  },
+  {
+   "id": "038",
+   "file": "038-contagem-de-estoque-em-ciclo.html",
+   "title": "Contagem de Estoque em Ciclo",
+   "desc": "A contagem periódica inteligente de estoque por prateleira, onde operadores vão marcando o que existe em cada local, o sistema compara com o registro e avisa quando há diferença.",
+   "module": "Inventário (contagem)",
+   "problems": 2,
+   "decisions": 4,
+   "check": 1,
+   "writes": 2,
+   "reads": 11,
+   "degree": 13,
+   "macro": "Inventário"
+  },
+  {
+   "id": "039",
+   "file": "039-verificacao-de-estoque-na-hora-da-separaca.html",
+   "title": "Verificação de Estoque na Hora da Separação",
+   "desc": "Quando um pedido chega e o sistema diz que não tem estoque registrado na prateleira, o operador conta agora mesmo e o sistema libera o estoque para separação — tudo na mesma hora, sem esperar fim do dia.",
+   "module": "Inventário (contagem)",
+   "problems": 2,
+   "decisions": 2,
+   "check": 2,
+   "writes": 2,
+   "reads": 1,
+   "degree": 3,
+   "macro": "Inventário"
+  },
+  {
+   "id": "040",
+   "file": "040-contagem-de-estoque-por-prateleira-digitar.html",
+   "title": "Contagem de estoque por prateleira (digitar quantidades que vê)",
+   "desc": "Quando você precisa contar fisicamente o que tem em cada prateleira do galpão, seus operadores entram no sistema, vão de prateleira em prateleira escaneando ou digitando quantidades. O supervisor depois confere se o que foi contado bate com o que o sistema esperava e aplica as diferenças no estoque.",
+   "module": "Inventário (contagem)",
+   "problems": 1,
+   "decisions": 2,
+   "check": 1,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Inventário"
+  },
+  {
+   "id": "041",
+   "file": "041-contagem-de-estoque-nas-prateleiras.html",
+   "title": "Contagem de estoque nas prateleiras",
+   "desc": "O sistema guia cada operador pra contar produto por produto em cada prateleira, evita que dois operadores se pisem no mesmo lugar, e depois compara o que foi contado com o que o sistema esperava ter ali.",
+   "module": "Inventário (contagem)",
+   "problems": 1,
+   "decisions": 2,
+   "check": 1,
+   "writes": 1,
+   "reads": 4,
+   "degree": 5,
+   "macro": "Inventário"
+  },
+  {
+   "id": "042",
+   "file": "042-contagem-de-estoque-e-ajustes.html",
+   "title": "Contagem de Estoque e Ajustes",
+   "desc": "Seu operador conta o que tem nas prateleiras, o sistema compara com o número que estava registrado, mostra as diferenças (perdas, achados), e você aprova quais diferenças para o sistema ajustar o estoque.",
+   "module": "Inventário (contagem)",
+   "problems": 2,
+   "decisions": 2,
+   "check": 1,
+   "writes": 3,
+   "reads": 2,
+   "degree": 5,
+   "macro": "Inventário"
+  },
+  {
+   "id": "043",
+   "file": "043-aprovacao-de-contagem-de-inventario.html",
+   "title": "Aprovação de Contagem de Inventário",
+   "desc": "Quando você faz uma contagem cíclica (para conferir o estoque nas prateleiras), esse fluxo calcula o que você contou versus o que o sistema esperava, aprova as diferenças, e depois aplica as correções no livro de registro.",
+   "module": "Inventário (contagem)",
+   "problems": 0,
+   "decisions": 2,
+   "check": 1,
+   "writes": 3,
+   "reads": 2,
+   "degree": 5,
+   "macro": "Inventário"
+  },
+  {
+   "id": "044",
+   "file": "044-aplicacao-de-ajustes-de-estoque-descoberto.html",
+   "title": "Aplicação de ajustes de estoque descobertos em contagem",
+   "desc": "Quando você faz contagem cíclica de estoque e descobre divergências (quantidade que contou diferente do que o sistema esperava), o sistema calcula a diferença, você aprova quais divergências corrigir, e ao clicar em 'Aplicar', o estoque é atualizado no sistema com as quantidades corretas.",
+   "module": "Inventário (contagem)",
+   "problems": 1,
+   "decisions": 2,
+   "check": 1,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Inventário"
+  },
+  {
+   "id": "045",
+   "file": "045-desfazer-ajustes-de-inventario.html",
+   "title": "Desfazer ajustes de inventário",
+   "desc": "Quando você aplica um ajuste de estoque (contagem cíclica que mostra ganho ou falta), depois percebe que foi errado, este fluxo desfaz aquele ajuste e devolve tudo como era.",
+   "module": "Inventário (contagem)",
+   "problems": 1,
+   "decisions": 0,
+   "check": 1,
+   "writes": 2,
+   "reads": 5,
+   "degree": 7,
+   "macro": "Inventário"
+  },
+  {
+   "id": "046",
+   "file": "046-transferencia-de-estoque-entre-galpoes.html",
+   "title": "Transferência de estoque entre galpões",
+   "desc": "Quando você envia estoque de um galpão pra outro: origem separa a mercadoria (a quantidade sai de lá), destino recebe em uma prateleira (a quantidade chega). Os dois podem desfazer até 7 dias depois.",
+   "module": "Transferências entre galpões",
+   "problems": 3,
+   "decisions": 2,
+   "check": 2,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Transferências"
+  },
+  {
+   "id": "047",
+   "file": "047-recebimento-de-transferencia-entre-galpoes.html",
+   "title": "Recebimento de transferência entre galpões",
+   "desc": "Quando o galpão de destino recebe mercadoria que outro galpão mandou, o operador escolhe em qual prateleira de cada caixa/item vai ficar guardado, e o sistema atualiza o estoque.",
+   "module": "Transferências entre galpões",
+   "problems": 3,
+   "decisions": 2,
+   "check": 4,
+   "writes": 2,
+   "reads": 9,
+   "degree": 11,
+   "macro": "Transferências"
+  },
+  {
+   "id": "048",
+   "file": "048-desfazer-o-recebimento-de-uma-transferenci.html",
+   "title": "Desfazer o recebimento de uma transferência entre galpões",
+   "desc": "Quando você recebe uma transferência de estoque vindo de outro galpão e depois percebe que foi erro, o sistema permite voltar tudo pra trás: o estoque volta pro galpão que mandou e a transferência volta a estar \"em caminho\" pra receber novamente.",
+   "module": "Transferências entre galpões",
+   "problems": 1,
+   "decisions": 2,
+   "check": 1,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Transferências"
+  },
+  {
+   "id": "049",
+   "file": "049-cancelamento-de-transferencia-entre-galpoe.html",
+   "title": "Cancelamento de transferência entre galpões",
+   "desc": "Quando você cancela uma transferência de estoque que foi enviada de um galpão para outro (ex: CWB manda 5 peças pra SP), o sistema tira as peças de circulação e devolve elas pra origem.",
+   "module": "Transferências entre galpões",
+   "problems": 1,
+   "decisions": 4,
+   "check": 3,
+   "writes": 1,
+   "reads": 3,
+   "degree": 4,
+   "macro": "Transferências"
+  },
+  {
+   "id": "050",
+   "file": "050-ajuste-de-estoque-manual.html",
+   "title": "Ajuste de estoque manual",
+   "desc": "Quando você precisa corrigir o estoque na mão (falta, sobra, avaria, achado), o sistema registra isso manualmente e atualiza a quantidade na prateleira no mesmo instante.",
+   "module": "Ajuste manual de estoque",
+   "problems": 1,
+   "decisions": 3,
+   "check": 2,
+   "writes": 4,
+   "reads": 4,
+   "degree": 8,
+   "macro": "Estoque"
+  },
+  {
+   "id": "051",
+   "file": "051-desfazer-um-ajuste-de-estoque.html",
+   "title": "Desfazer um ajuste de estoque",
+   "desc": "Quando você registra uma entrada ou saída manual de mercadoria no sistema (ajuste), depois percebe que errou e quer desfazer — essa é a ação de estornar (reverter) o ajuste.",
+   "module": "Ajuste manual de estoque",
+   "problems": 1,
+   "decisions": 3,
+   "check": 1,
+   "writes": 4,
+   "reads": 4,
+   "degree": 8,
+   "macro": "Estoque"
+  },
+  {
+   "id": "052",
+   "file": "052-criar-uma-venda-na-mao.html",
+   "title": "Criar uma venda na mão",
+   "desc": "Quando o operador cria um pedido direto no sistema (sem a loja avisar). O sistema escolhe se baixa o estoque na hora ou se aparta ele pra depois o pessoal separar.",
+   "module": "Vendas feitas na mão",
+   "problems": 1,
+   "decisions": 3,
+   "check": 2,
+   "writes": 3,
+   "reads": 9,
+   "degree": 12,
+   "macro": "Vendas"
+  },
+  {
+   "id": "053",
+   "file": "053-separacao-de-pedidos-operador-marca-itens-.html",
+   "title": "Separação de Pedidos (operador marca itens conforme apanha do galpão)",
+   "desc": "Quando um pedido está pronto pra sair, o operador abre a lista e marca cada item conforme vai apanhando do galpão. O sistema tira do estoque, libera a reserva que tinha feito, e quando tudo está marcado, o pedido fica pronto pra embalar.",
+   "module": "Vendas feitas na mão",
+   "problems": 3,
+   "decisions": 3,
+   "check": 2,
+   "writes": 3,
+   "reads": 5,
+   "degree": 8,
+   "macro": "Vendas"
+  },
+  {
+   "id": "054",
+   "file": "054-venda-manual-consulta-de-estoque-criacao-d.html",
+   "title": "Venda Manual (consulta de estoque + criação de pedido)",
+   "desc": "Quando um vendedor cria um pedido manualmente (teclando cliente, selecionando itens, escolhendo se o estoque sai na hora ou fica apartado), o sistema checa se tem quantidade disponível e cria o pedido.",
+   "module": "Vendas feitas na mão",
+   "problems": 1,
+   "decisions": 4,
+   "check": 3,
+   "writes": 3,
+   "reads": 5,
+   "degree": 8,
+   "macro": "Vendas"
+  },
+  {
+   "id": "055",
+   "file": "055-reatribuicao-do-responsavel-de-uma-venda.html",
+   "title": "Reatribuição do responsável de uma venda",
+   "desc": "Quando um gerente quer trocar de quem é responsável por um pedido — retirar de um vendedor ou passar pra outro.",
+   "module": "Vendas feitas na mão",
+   "problems": 1,
+   "decisions": 4,
+   "check": 0,
+   "writes": 0,
+   "reads": 2,
+   "degree": 2,
+   "macro": "Vendas"
+  },
+  {
+   "id": "056",
+   "file": "056-cancelamento-de-vendas.html",
+   "title": "Cancelamento de Vendas",
+   "desc": "Quando um vendedor precisa cancelar uma venda que acabou de entrar, o sistema devolve o estoque que estava apartado ou tira o produto que saiu da conta.",
+   "module": "Vendas feitas na mão",
+   "problems": 1,
+   "decisions": 4,
+   "check": 2,
+   "writes": 4,
+   "reads": 6,
+   "degree": 10,
+   "macro": "Vendas"
+  },
+  {
+   "id": "057",
+   "file": "057-mudanca-de-estoque-entre-prateleiras-reaba.html",
+   "title": "Mudança de estoque entre prateleiras (reabastecimento de picking)",
+   "desc": "Quando você tem muita quantidade de uma peça em um lugar (abarrotado) e pouca no lugar onde o pessoal pega pra separar pedidos, o sistema move quantidade de um lado pro outro. Leva 2 segundos, registra tudo, e você pode desfazer se precisar.",
+   "module": "Reabastecimento de prateleira",
+   "problems": 1,
+   "decisions": 3,
+   "check": 2,
+   "writes": 2,
+   "reads": 4,
+   "degree": 6,
+   "macro": "Estoque"
+  },
+  {
+   "id": "058",
+   "file": "058-desfazer-uma-realocacao-dentro-do-galpao.html",
+   "title": "Desfazer uma realocação dentro do galpão",
+   "desc": "Quando o operador percebe que moveu mercadoria pra prateleira errada (realocação dentro do galpão), ele clica em desfazer, e o sistema devolve a quantidade pra prateleira original.",
+   "module": "Reabastecimento de prateleira",
+   "problems": 0,
+   "decisions": 3,
+   "check": 3,
+   "writes": 2,
+   "reads": 9,
+   "degree": 11,
+   "macro": "Estoque"
+  },
+  {
+   "id": "059",
+   "file": "059-painel-de-cobertura-de-estoque.html",
+   "title": "Painel de cobertura de estoque",
+   "desc": "É o painel que mostra quantos dias de estoque você ainda tem de cada peça, baseado no que vende por dia e no tempo que o fornecedor leva pra trazer a compra.",
+   "module": "Análise de cobertura",
+   "problems": 0,
+   "decisions": 2,
+   "check": 2,
+   "writes": 0,
+   "reads": 2,
+   "degree": 2,
+   "macro": "Estoque"
+  },
+  {
+   "id": "060",
+   "file": "060-atualizacao-de-cobertura-de-estoque.html",
+   "title": "Atualização de cobertura de estoque",
+   "desc": "Todos os minutos, o sistema faz uma fotografia do estoque que você tem, quanto você vende por dia, e quanto tempo o fornecedor demora pra trazer mais — daí marca quais produtos você pode vender sem problema, quais estão perto de faltar, e quais têm risco de desabastecimento.",
+   "module": "Análise de cobertura",
+   "problems": 1,
+   "decisions": 3,
+   "check": 2,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Estoque"
+  },
+  {
+   "id": "061",
+   "file": "061-busca-de-pecas-equivalentes-e-compatibilid.html",
+   "title": "Busca de peças equivalentes e compatibilidades",
+   "desc": "Ferramenta que permite seu time procurar peças por código, descobrir quais peças são equivalentes (intercambiáveis), e anotar quais peças cabem em quais veículos.",
+   "module": "Peças equivalentes e cross-dock",
+   "problems": 0,
+   "decisions": 2,
+   "check": 1,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Transferências"
+  },
+  {
+   "id": "062",
+   "file": "062-equivalentes-de-pecas-catalogo-de-substitu.html",
+   "title": "Equivalentes de Peças (Catálogo de Substituições)",
+   "desc": "É o catálogo que mostra, para cada peça, quais outras peças podem ser usadas como substituto. Hoje é só informação (operador vê quais equivalentes existem); em breve, vai permitir trocar peça durante a separação se a que pediu tiver falta.",
+   "module": "Peças equivalentes e cross-dock",
+   "problems": 0,
+   "decisions": 2,
+   "check": 3,
+   "writes": 0,
+   "reads": 8,
+   "degree": 8,
+   "macro": "Transferências"
+  },
+  {
+   "id": "063",
+   "file": "063-compatibilidade-de-veiculos-por-produto.html",
+   "title": "Compatibilidade de Veículos por Produto",
+   "desc": "Fluxo que permite cadastrar quais marcas e modelos de veículos são compatíveis com cada peça vendida. Um operador adiciona, por exemplo, \"FIAT UNO 2015-2020\" a uma peça de escapamento, e isso fica visível no catálogo.",
+   "module": "Peças equivalentes e cross-dock",
+   "problems": 1,
+   "decisions": 3,
+   "check": 1,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Transferências"
+  },
+  {
+   "id": "064",
+   "file": "064-deteccao-automatica-de-saidas-diretas-do-r.html",
+   "title": "Detecção automática de saídas diretas do recebimento",
+   "desc": "Quando a mercadoria chega de um fornecedor, o sistema detecta se pode enviar direto pra embalagem (sem guardar nas prateleiras) se isso fecha 100% dos 2-3 primeiros pedidos esperando estoque desse fornecedor.",
+   "module": "Peças equivalentes e cross-dock",
+   "problems": 2,
+   "decisions": 2,
+   "check": 1,
+   "writes": 3,
+   "reads": 1,
+   "degree": 4,
+   "macro": "Transferências"
+  },
+  {
+   "id": "065",
+   "file": "065-quando-estoque-chega-ligar-de-novo-os-pedi.html",
+   "title": "Quando estoque chega, ligar de novo os pedidos presos esperando compra",
+   "desc": "Toda vez que você recebe um lote de mercadoria (compra do fornecedor chega), o sistema procura automaticamente quais pedidos de clientes estavam esperando por essa peça para separar e mandar embora. Se tiver quantidade suficiente, o pedido volta a andar — estoque é apartado e puxa pra próxima etapa. Se não tiver o bastante, continua parado até outra entrada chegar.",
+   "module": "Acertos automáticos",
+   "problems": 1,
+   "decisions": 4,
+   "check": 1,
+   "writes": 5,
+   "reads": 5,
+   "degree": 10,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "066",
+   "file": "066-reconciliacao-de-pedidos-quando-entra-esto.html",
+   "title": "Reconciliação de pedidos quando entra estoque novo",
+   "desc": "Quando um pedido chega, o sistema aparta o estoque. Se é um pedido de compra (esperando o fornecedor), o sistema fica vigiando. No momento que estoque novo entra do fornecedor, o sistema automaticamente conecta esse estoque aos pedidos que estavam esperando.",
+   "module": "Acertos automáticos",
+   "problems": 3,
+   "decisions": 4,
+   "check": 1,
+   "writes": 8,
+   "reads": 8,
+   "degree": 16,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "067",
+   "file": "067-relatorio-de-sincronizacao-com-tiny-sistem.html",
+   "title": "Relatório de Sincronização com Tiny (sistema antigo)",
+   "desc": "Rotina que toda manhã (6am) compara a quantidade de cada produto que você tem no WMS (sistema novo) com a quantidade que está no Tiny (sistema antigo), e mostra em uma tabela quais produtos estão desincronizados. Nenhuma correção automática — você vê o problema e decide se investiga.",
+   "module": "Acertos automáticos",
+   "problems": 0,
+   "decisions": 5,
+   "check": 2,
+   "writes": 0,
+   "reads": 1,
+   "degree": 1,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "068",
+   "file": "068-corrigir-quantidade-de-estoque-no-painel.html",
+   "title": "Corrigir quantidade de estoque no painel",
+   "desc": "Quando o estoque do sistema está errado, o operador consegue clicar no número e corrigir direto no painel (sem sair pra outro menu), mandando o saldo correto pro Tiny.",
+   "module": "Acertos automáticos",
+   "problems": 10,
+   "decisions": 2,
+   "check": 0,
+   "writes": 2,
+   "reads": 10,
+   "degree": 12,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "069",
+   "file": "069-conexao-com-a-loja-tiny-erp-autorizacao-e-.html",
+   "title": "Conexão com a loja (Tiny ERP) - autorização e avisos de pedidos",
+   "desc": "Quando um pedido entra na loja (Tiny avisa o sistema), o sistema é autorizado pra acessar o estoque de Tiny e dar baixa. Essa é a \"ponte\" entre a loja e seu WMS.",
+   "module": "Integrações (Tiny, Mercado Livre)",
+   "problems": 3,
+   "decisions": 9,
+   "check": 2,
+   "writes": 3,
+   "reads": 5,
+   "degree": 8,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "070",
+   "file": "070-integracao-com-mercadolivre-autenticacao-s.html",
+   "title": "Integração com MercadoLivre (Autenticação + Sincronização de Anúncios)",
+   "desc": "Quando um operador conecta a conta do MercadoLivre ao sistema, o WMS autoriza e passa a buscar informações dos anúncios ativos em cada conta de vendedor. Durante a separação, é possível ver todos os anúncios vinculados a cada peça.",
+   "module": "Integrações (Tiny, Mercado Livre)",
+   "problems": 2,
+   "decisions": 5,
+   "check": 1,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "071",
+   "file": "071-sincronizacao-de-produtos-com-o-tiny.html",
+   "title": "Sincronização de produtos com o Tiny",
+   "desc": "Quando você quer atualizar os dados de um produto (descrição, imagem, custo, se é um kit ou não) puxando as informações que estão guardadas no Tiny, o sistema faz essa sincronização. Não mexe com estoque de ninguém — só ajusta a ficha do produto.",
+   "module": "Integrações (Tiny, Mercado Livre)",
+   "problems": 7,
+   "decisions": 4,
+   "check": 3,
+   "writes": 0,
+   "reads": 1,
+   "degree": 1,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "072",
+   "file": "072-historico-de-movimentacoes-de-estoque.html",
+   "title": "Histórico de Movimentações de Estoque",
+   "desc": "O histórico completo de tudo que entra, sai, é apartado ou devolvido do seu estoque. Cada linha mostra quanto você tinha antes e depois, pra auditoria.",
+   "module": "Histórico de movimentações",
+   "problems": 0,
+   "decisions": 2,
+   "check": 3,
+   "writes": 0,
+   "reads": 7,
+   "degree": 7,
+   "macro": "Estoque"
+  },
+  {
+   "id": "073",
+   "file": "073-entrada-de-estoque-como-o-sistema-registra.html",
+   "title": "Entrada de estoque — como o sistema registra quando mercadoria chega",
+   "desc": "Quando um fornecedor entrega a mercadoria, o sistema faz o registro: anota que entrou, calcula a quantidade nova disponível, avisa se há pedidos esperando por essa peça, e guarda o custo dela. Este é o coração do estoque — toda entrada passa por aqui.",
+   "module": "Histórico de movimentações",
+   "problems": 1,
+   "decisions": 2,
+   "check": 5,
+   "writes": 7,
+   "reads": 6,
+   "degree": 13,
+   "macro": "Estoque"
+  },
+  {
+   "id": "074",
+   "file": "074-custo-medio-do-produto.html",
+   "title": "Custo médio do produto",
+   "desc": "O sistema calcula e guarda o preço médio que você pagou por cada peça, atualizando esse valor quando chega uma nota fiscal de compra, uma devolução de cliente, um ajuste manual ou um lançamento retroativo (entrada que descobriu faltando).",
+   "module": "Histórico de movimentações",
+   "problems": 4,
+   "decisions": 2,
+   "check": 2,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Estoque"
+  },
+  {
+   "id": "075",
+   "file": "075-consulta-do-saldo-de-estoque-quanto-tem-e-.html",
+   "title": "Consulta do saldo de estoque — quanto tem e onde tem",
+   "desc": "Quando você abre a tela de estoque, o sistema mostra quanto tem de cada peça em cada galpão e em qual prateleira. O número mostra tudo: o que está livre pra vender e o que já foi apartado pra um pedido.",
+   "module": "Gestão de estoque",
+   "problems": 0,
+   "decisions": 4,
+   "check": 1,
+   "writes": 3,
+   "reads": 3,
+   "degree": 6,
+   "macro": "Estoque"
+  },
+  {
+   "id": "076",
+   "file": "076-relatorio-de-quantidade-em-estoque-por-emp.html",
+   "title": "Relatório de quantidade em estoque por empresa",
+   "desc": "Todo dia você precisa saber quanto cada empresa tem de cada produto, guardado em cada galpão. Esse relatório puxa esse número calculando: tudo que entrou menos tudo que saiu (descartando o que foi estornado depois).",
+   "module": "Gestão de estoque",
+   "problems": 0,
+   "decisions": 2,
+   "check": 0,
+   "writes": 0,
+   "reads": 6,
+   "degree": 6,
+   "macro": "Estoque"
+  },
+  {
+   "id": "077",
+   "file": "077-relatorio-de-entradas-e-saidas-por-empresa.html",
+   "title": "Relatório de Entradas e Saídas por Empresa",
+   "desc": "Ferramenta que mostra todas as entradas e saídas de estoque (compras, vendas, devoluções) agrupadas por empresa, produto e tipo de movimentação, com totais de quantidade e valor. Você escolhe o período e gera um relatório (ou baixa em CSV).",
+   "module": "Gestão de estoque",
+   "problems": 4,
+   "decisions": 5,
+   "check": 0,
+   "writes": 0,
+   "reads": 4,
+   "degree": 4,
+   "macro": "Estoque"
+  },
+  {
+   "id": "078",
+   "file": "078-relatorio-de-custo-medio-dos-produtos.html",
+   "title": "Relatório de Custo Médio dos Produtos",
+   "desc": "Seu sistema mostra como o preço médio de cada produto muda ao longo do tempo — quando compra cara, quando compra barato, e qual é o preço atual pra cálculo financeiro.",
+   "module": "Gestão de estoque",
+   "problems": 3,
+   "decisions": 4,
+   "check": 3,
+   "writes": 0,
+   "reads": 2,
+   "degree": 2,
+   "macro": "Estoque"
+  },
+  {
+   "id": "079",
+   "file": "079-conferencia-de-estoque-entre-wms-e-tiny.html",
+   "title": "Conferência de estoque entre WMS e Tiny",
+   "desc": "Você abre um relatório que compara a quantidade de cada peça que o WMS (seu sistema de galpão) diz que existe com o que a loja (Tiny) diz que existe. O sistema mostra onde os números não batem para você investigar e ajustar.",
+   "module": "Gestão de estoque",
+   "problems": 2,
+   "decisions": 4,
+   "check": 3,
+   "writes": 0,
+   "reads": 5,
+   "degree": 5,
+   "macro": "Estoque"
+  },
+  {
+   "id": "080",
+   "file": "080-criar-editar-e-remover-prateleiras.html",
+   "title": "Criar, editar e remover prateleiras",
+   "desc": "Seu operador acessa a tela de prateleiras (na barra lateral) e cria, muda tipo ou remove prateleiras do galpão. O sistema usa posições 3D (setor + horizontal + vertical, tipo \"A-05-02\") pra o sistema saber onde tirar produto.",
+   "module": "Cadastro de prateleiras",
+   "problems": 2,
+   "decisions": 3,
+   "check": 1,
+   "writes": 2,
+   "reads": 2,
+   "degree": 4,
+   "macro": "Inventário"
+  },
+  {
+   "id": "081",
+   "file": "081-importacao-em-lote-de-prateleiras.html",
+   "title": "Importação em lote de prateleiras",
+   "desc": "Quando você quer criar muitas prateleiras de uma vez (tipo: prateleira de picking, de recebimento, de estoque extra, etc), você preenche um formulário com o prefixo (A, B, C...) e a quantidade, clica Criar e o sistema gera todas as prateleiras de uma tacada.",
+   "module": "Cadastro de prateleiras",
+   "problems": 4,
+   "decisions": 3,
+   "check": 1,
+   "writes": 0,
+   "reads": 6,
+   "degree": 6,
+   "macro": "Inventário"
+  },
+  {
+   "id": "082",
+   "file": "082-remover-uma-prateleira-vazia-ou-mover-seu-.html",
+   "title": "Remover uma prateleira vazia (ou mover seu estoque pra outra)",
+   "desc": "Quando você quer tirar uma prateleira do galpão, o sistema busca o estoque que tem lá, você escolhe pra onde levar, e ele move tudo de uma vez e tira a prateleira do ar.",
+   "module": "Cadastro de prateleiras",
+   "problems": 0,
+   "decisions": 0,
+   "check": 1,
+   "writes": 1,
+   "reads": 5,
+   "degree": 6,
+   "macro": "Inventário"
+  },
+  {
+   "id": "083",
+   "file": "083-cadastro-de-produtos-e-sincronizacao-com-t.html",
+   "title": "Cadastro de Produtos e Sincronização com Tiny",
+   "desc": "Esse módulo mantém o catálogo de produtos (informações, preços, nomes, imagens, composição de kits) sincronizado entre o sistema de estoque e a plataforma Tiny, permitindo criar e editar produtos manualmente também.",
+   "module": "Cadastro de produtos",
+   "problems": 6,
+   "decisions": 6,
+   "check": 1,
+   "writes": 0,
+   "reads": 7,
+   "degree": 7,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "084",
+   "file": "084-produtos-que-sao-feitos-de-componentes-kit.html",
+   "title": "Produtos que são feitos de componentes (Kits)",
+   "desc": "Quando você vende um produto que é montado de outros produtos (exemplo: um kit presente com 5 itens). O sistema \"desmonta\" automaticamente no pedido, aparta o estoque de cada item componente, e depois controla a separação de cada um em vez de tratar como um único pacote.",
+   "module": "Cadastro de produtos",
+   "problems": 2,
+   "decisions": 2,
+   "check": 2,
+   "writes": 10,
+   "reads": 7,
+   "degree": 17,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "085",
+   "file": "085-historico-das-ultimas-contagens-de-um-prod.html",
+   "title": "Histórico das últimas contagens de um produto",
+   "desc": "Quando você abre um produto e quer ver o histórico de quantas vezes o pessoal contou aquele item em cada prateleira, quem contou e quando. O sistema mostra o que foi contado vs. o que tem agora em estoque.",
+   "module": "Cadastro de produtos",
+   "problems": 2,
+   "decisions": 6,
+   "check": 1,
+   "writes": 0,
+   "reads": 2,
+   "degree": 2,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "086",
+   "file": "086-cadastro-de-fornecedores.html",
+   "title": "Cadastro de fornecedores",
+   "desc": "É o lugar onde você registra quem são seus fornecedores (Tiger, Bosch, ACA, etc.), anota quanto tempo eles levam pra entregar, e conecta cada produto ao fornecedor que o vende.",
+   "module": "Cadastro de fornecedores",
+   "problems": 0,
+   "decisions": 3,
+   "check": 2,
+   "writes": 0,
+   "reads": 8,
+   "degree": 8,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "087",
+   "file": "087-auto-cadastro-de-fornecedores.html",
+   "title": "Auto-cadastro de fornecedores",
+   "desc": "Quando você clica um botão, o sistema cria automaticamente todos os fornecedores que você vai usar (13 fornecedores já pré-configurados), com seus respectivos nomes e códigos de prefixo. Você depois preenche manualmente quanto tempo cada fornecedor demora pra entregar.",
+   "module": "Cadastro de fornecedores",
+   "problems": 1,
+   "decisions": 3,
+   "check": 0,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "088",
+   "file": "088-cadastro-de-fornecedores-e-seus-vinculos-c.html",
+   "title": "Cadastro de Fornecedores e Seus Vínculos com Produtos",
+   "desc": "Quando voce vincula um produto a um fornecedor (escolhe qual fornecedor vai fornecer), o sistema guarda as informacoes: codigo do produto no fornecedor, custo, tempo de entrega. Tambem permite marcar um como \"preferencial\" (aquele que voce chama primeiro quando falta estoque).",
+   "module": "Cadastro de fornecedores",
+   "problems": 4,
+   "decisions": 4,
+   "check": 0,
+   "writes": 0,
+   "reads": 2,
+   "degree": 2,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "089",
+   "file": "089-painel-de-visibilidade-indicadores-chave-g.html",
+   "title": "Painel de Visibilidade (indicadores chave, gráficos, resumo rápido)",
+   "desc": "Tela que o dono/operador abre no começo do turno pra ver em 10 segundos como anda o estoque, inventário e separações — números de produtos em risco, espaços travados, e tarefas pendentes.",
+   "module": "Relatórios e indicadores",
+   "problems": 3,
+   "decisions": 5,
+   "check": 1,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "090",
+   "file": "090-painel-de-tarefas-da-guarda.html",
+   "title": "Painel de Tarefas da Guarda",
+   "desc": "Tela que mostra em tempo real quantas unidades precisam ser guardadas nas prateleiras, quanto está pronto, quanto falta, e alertas de estoque que caiu no chão.",
+   "module": "Relatórios e indicadores",
+   "problems": 1,
+   "decisions": 2,
+   "check": 5,
+   "writes": 1,
+   "reads": 12,
+   "degree": 13,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "091",
+   "file": "091-dashboard-de-devolucoes.html",
+   "title": "Dashboard de Devoluções",
+   "desc": "Seu sistema mostra um relatório de tudo que volta do cliente: quantas peças voltam inteiras, quantas vêm estragadas, quantas entram em garantia e quantas foram trocadas por erro de SKU (peça errada). É só leitura e contagem — nenhuma decisão operacional, só visibilidade pro dono acompanhar tendências.",
+   "module": "Relatórios e indicadores",
+   "problems": 0,
+   "decisions": 1,
+   "check": 1,
+   "writes": 3,
+   "reads": 3,
+   "degree": 6,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "092",
+   "file": "092-visao-de-saude-do-estoque.html",
+   "title": "Visão de Saúde do Estoque",
+   "desc": "Ferramenta que mostra em tempo real quanto você tem em estoque, quanto dura pra vender, qual mercadoria sai rápido (A) ou devagar (C), e quais itens estão críticos — tudo agregado por galpão e por tipo de mercadoria.",
+   "module": "Relatórios e indicadores",
+   "problems": 1,
+   "decisions": 4,
+   "check": 2,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "093",
+   "file": "093-painel-de-valor-do-estoque.html",
+   "title": "Painel de Valor do Estoque",
+   "desc": "Operador acessa um painel que mostra quanto dinheiro você tem parado no estoque (quantidade × preço de custo) separado por galpão. Quando o preço que você paga numa peça sobe muito (15% ou mais), o sistema dá um aviso. O operador pode ajustar manualmente a quantidade (se houve erro de contagem, por exemplo) e o sistema atualiza automaticamente quanto você tem em estoque.",
+   "module": "Relatórios e indicadores",
+   "problems": 0,
+   "decisions": 2,
+   "check": 2,
+   "writes": 2,
+   "reads": 1,
+   "degree": 3,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "094",
+   "file": "094-painel-de-acompanhamento-de-fluxo-produtiv.html",
+   "title": "Painel de Acompanhamento de Fluxo (produtividade e atrasos por etapa)",
+   "desc": "Um painel que acompanha em tempo real a velocidade de separação, embalagem e saída dos pedidos — mostra quantos estão em fila, quanto tempo leva em média cada etapa, e avisa quando algo sai do normal (muita demora, produtividade caindo).",
+   "module": "Relatórios e indicadores",
+   "problems": 3,
+   "decisions": 1,
+   "check": 2,
+   "writes": 0,
+   "reads": 4,
+   "degree": 4,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "095",
+   "file": "095-produtividade-e-ranking-dos-operadores.html",
+   "title": "Produtividade e ranking dos operadores",
+   "desc": "Painel que mostra quem está separando, embalando e contando certo — mede quantos pedidos cada pessoa faz por dia, detecta quando alguém cai de produtividade ou erra muito, e identifica quem é especialista em cada tarefa.",
+   "module": "Relatórios e indicadores",
+   "problems": 3,
+   "decisions": 3,
+   "check": 3,
+   "writes": 1,
+   "reads": 12,
+   "degree": 13,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "096",
+   "file": "096-sistema-de-alertas-de-problemas-criticos-q.html",
+   "title": "Sistema de alertas de problemas críticos (que some de vista)",
+   "desc": "O sistema monitora automaticamente 24/7 problemas no galpão (queda de produtividade do operador, falta de estoque, demora na separação) e avisa você com alertas na tela. Você pode ocultar qualquer alerta clicando um botão.",
+   "module": "Relatórios e indicadores",
+   "problems": 0,
+   "decisions": 2,
+   "check": 2,
+   "writes": 0,
+   "reads": 5,
+   "degree": 5,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "097",
+   "file": "097-sistema-de-alertas-e-sinais-de-anomalia.html",
+   "title": "Sistema de Alertas e Sinais de Anomalia",
+   "desc": "A cada 5 minutos, o sistema analisa 15 sinais diferentes do seu negócio (produtividade, fluxo de pedidos, estoque, financeiro, devoluções) e gera avisos quando algo sai do normal — tipo uma luz de alerta no painel do carro que te avisa se o motor está esquentando.",
+   "module": "Relatórios e indicadores",
+   "problems": 0,
+   "decisions": 3,
+   "check": 2,
+   "writes": 1,
+   "reads": 10,
+   "degree": 11,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "098",
+   "file": "098-controle-de-empresas-filiais-e-galpoes.html",
+   "title": "Controle de Empresas, Filiais e Galpões",
+   "desc": "É onde você configura (na administração) quais empresas você tem, quais galpões, qual galpão é preferido pra cada empresa, e agrupa empresas relacionadas. Não mexe direto no estoque ou pedidos — só organiza a estrutura.",
+   "module": "Configurações e cadastros",
+   "problems": 1,
+   "decisions": 3,
+   "check": 5,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "099",
+   "file": "099-gestao-de-funcionarios-e-acesso-aos-galpoe.html",
+   "title": "Gestão de funcionários e acesso aos galpões",
+   "desc": "Você controla quem trabalha no WMS, qual PIN cada pessoa usa, que galpão pode acessar, e que nível de permissão tem (administrador, operador de separação, etc).",
+   "module": "Configurações e cadastros",
+   "problems": 4,
+   "decisions": 2,
+   "check": 1,
+   "writes": 0,
+   "reads": 3,
+   "degree": 3,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "100",
+   "file": "100-quem-faz-o-que-no-sistema-e-quando-perde-a.html",
+   "title": "Quem faz o quê no sistema (e quando perde acesso)",
+   "desc": "O sistema que decide qual operador pode fazer qual ação no WMS: um pode aprovar pedidos, outro pode guardar estoque, outro pode ver relatório. Se você tira a permissão, o operador fica bloqueado na hora (ou não fica, depende).",
+   "module": "Configurações e cadastros",
+   "problems": 2,
+   "decisions": 2,
+   "check": 6,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "101",
+   "file": "101-autenticacao-com-tiny-mercado-livre-e-impr.html",
+   "title": "Autenticação com Tiny, Mercado Livre e Impressoras",
+   "desc": "Seu admin faz login no Tiny e Mercado Livre, o sistema guarda as permissões, e usa elas pra receber pedidos e controlar impressoras.",
+   "module": "Configurações e cadastros",
+   "problems": 1,
+   "decisions": 2,
+   "check": 3,
+   "writes": 0,
+   "reads": 12,
+   "degree": 12,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "102",
+   "file": "102-gestao-de-impressoras-na-retaguarda.html",
+   "title": "Gestão de impressoras na retaguarda",
+   "desc": "Admin configura quais computadores têm impressoras de etiqueta e qual impressora usa cada setor/pessoa quando precisa reimprimir uma etiqueta de pedido.",
+   "module": "Configurações e cadastros",
+   "problems": 2,
+   "decisions": 6,
+   "check": 3,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Cadastros/Config"
+  },
+  {
+   "id": "103",
+   "file": "103-impressao-de-etiquetas-para-guardar-mercad.html",
+   "title": "Impressão de etiquetas para guardar mercadoria",
+   "desc": "Quando a mercadoria chega no galpão, você clica um botão pra imprimir a etiqueta que vai ser pregada na prateleira avisando o preço e o código. O sistema se comunica com a impressora e cria um registro de cada etiqueta impressa.",
+   "module": "Etiquetas e impressão",
+   "problems": 0,
+   "decisions": 3,
+   "check": 3,
+   "writes": 0,
+   "reads": 4,
+   "degree": 4,
+   "macro": "Separação"
+  },
+  {
+   "id": "104",
+   "file": "104-reimpressao-de-etiqueta-quando-falha.html",
+   "title": "Reimpressão de etiqueta quando falha",
+   "desc": "Quando uma etiqueta não sai na impressora (impressora desligada, sem papel, servidor fora), o operador clica um botão pra enviar novamente — a rotina regraba a etiqueta memorizada e tenta imprimir de novo, sem mexer no estoque ou na etapa em que o pedido está.",
+   "module": "Etiquetas e impressão",
+   "problems": 0,
+   "decisions": 5,
+   "check": 0,
+   "writes": 0,
+   "reads": 0,
+   "degree": 0,
+   "macro": "Separação"
+  },
+  {
+   "id": "105",
+   "file": "105-reimpressao-de-etiqueta-de-separacao.html",
+   "title": "Reimpressão de etiqueta de separação",
+   "desc": "Quando um pedido está pronto pra ser expedido e descobrem que a etiqueta saiu errada ou desapareceu, o operador clica um botão e o sistema reenvia a etiqueta pra impressora em segundos.",
+   "module": "Etiquetas e impressão",
+   "problems": 3,
+   "decisions": 3,
+   "check": 3,
+   "writes": 1,
+   "reads": 10,
+   "degree": 11,
+   "macro": "Separação"
+  },
+  {
+   "id": "106",
+   "file": "106-processamento-automatico-de-pedidos-aprova.html",
+   "title": "Processamento automático de pedidos aprovados",
+   "desc": "Quando você aprova um pedido, o sistema automaticamente aparta o estoque, emite a nota fiscal e registra a saída — tudo em segundo plano, um pedido por vez, na ordem que chega.",
+   "module": "Tarefas automáticas do sistema",
+   "problems": 1,
+   "decisions": 5,
+   "check": 2,
+   "writes": 8,
+   "reads": 9,
+   "degree": 17,
+   "macro": "Pedidos"
+  },
+  {
+   "id": "107",
+   "file": "107-lancamento-de-estoque-em-emergencia-retroa.html",
+   "title": "Lançamento de Estoque em Emergência (retroativo)",
+   "desc": "Quando a mercadoria chega e você precisa registrar na hora no sistema, antes da nota fiscal estar pronta — você lança em emergência, e depois confirma contra a nota fiscal real quando ela chega.",
+   "module": "Acertos retroativos",
+   "problems": 4,
+   "decisions": 2,
+   "check": 1,
+   "writes": 4,
+   "reads": 3,
+   "degree": 7,
+   "macro": "Compras/Recebimento"
+  },
+  {
+   "id": "108",
+   "file": "108-acertar-estoque-retroativo-com-a-compra-re.html",
+   "title": "Acertar estoque retroativo com a compra real",
+   "desc": "Quando você descobre que tinha mercadoria no galpão que não estava registrada no sistema, o operador lança um lançamento retroativo (registra que aquelas peças sempre estiveram lá). Depois, quando acha a nota fiscal ou compra que realmente originou aquelas peças, ele \"fecha o ciclo\": tira aquelas peças do retroativo e liga direto à compra real.",
+   "module": "Acertos retroativos",
+   "problems": 3,
+   "decisions": 5,
+   "check": 0,
+   "writes": 3,
+   "reads": 4,
+   "degree": 7,
+   "macro": "Compras/Recebimento"
+  }
+ ],
+ "hubs": [
+  {
+   "hub": 0,
+   "name": "A fila de tarefas internas que o sistema executa sozinho pra dar baixa no estoque",
+   "short": "Fila de execução",
+   "writers": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "014",
+    "020",
+    "021",
+    "027",
+    "028",
+    "029",
+    "031",
+    "065",
+    "066",
+    "069",
+    "084",
+    "097",
+    "106"
+   ],
+   "readers": [
+    "002",
+    "004",
+    "010",
+    "016",
+    "017",
+    "018",
+    "029",
+    "030",
+    "032",
+    "033",
+    "038",
+    "052",
+    "053",
+    "058",
+    "061",
+    "066",
+    "068",
+    "072",
+    "081",
+    "083",
+    "086",
+    "090",
+    "095",
+    "101",
+    "105",
+    "106",
+    "107"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Pedido cancelado mas estoque continua apartado"
+    },
+    {
+     "sev": "grave",
+     "title": "Duas pessoas aprovam o mesmo pedido no mesmo segundo"
+    },
+    {
+     "sev": "grave",
+     "title": "Estoque é devolvido mas a tarefa de saída ainda tá marcada"
+    },
+    {
+     "sev": "grave",
+     "title": "Flag de controle bate errado com o estoque real"
+    },
+    {
+     "sev": "grave",
+     "title": "Você volta uma separação pra trás, mas a tarefa de saída ainda quer rodar"
+    },
+    {
+     "sev": "grave",
+     "title": "Você marca uma peça como separada E o sistema quer dar saída ao mesmo tempo"
+    },
+    {
+     "sev": "média",
+     "title": "Mercadoria chega e o sistema avança dois pedidos ao mesmo tempo"
+    },
+    {
+     "sev": "média",
+     "title": "Finalizando múltiplos pedidos, o sistema enfileira a mesma tarefa várias vezes"
+    },
+    {
+     "sev": "média",
+     "title": "Loja aprova pedido ao mesmo tempo que o sistema aprova sozinho"
+    },
+    {
+     "sev": "média",
+     "title": "Você libera estoque apartado, mas a tarefa ainda quer tirar saída"
+    },
+    {
+     "sev": "média",
+     "title": "Cancela uma compra mas a tarefa de estoque roda de qualquer forma"
+    }
+   ]
+  },
+  {
+   "hub": 1,
+   "name": "O estoque que você aparta para um pedido (fica separado, mas ainda não saiu do galpão)",
+   "short": "Reservas",
+   "writers": [
+    "001",
+    "003",
+    "006",
+    "008",
+    "013",
+    "018",
+    "031",
+    "052",
+    "054",
+    "056",
+    "065",
+    "066",
+    "073",
+    "084",
+    "106"
+   ],
+   "readers": [
+    "001",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "009",
+    "010",
+    "012",
+    "013",
+    "016",
+    "018",
+    "020",
+    "021",
+    "022",
+    "024",
+    "026",
+    "027",
+    "030",
+    "031",
+    "032",
+    "033",
+    "038",
+    "047",
+    "049",
+    "050",
+    "051",
+    "052",
+    "053",
+    "056",
+    "057",
+    "058",
+    "062",
+    "066",
+    "069",
+    "072",
+    "073",
+    "076",
+    "083",
+    "084",
+    "086",
+    "090",
+    "095",
+    "099",
+    "101",
+    "106",
+    "107"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Dois cliques de aprovação no mesmo instante criam apartado em dobro"
+    },
+    {
+     "sev": "grave",
+     "title": "Pedido cancelado deixa estoque apartado travado por 30 dias"
+    },
+    {
+     "sev": "média",
+     "title": "Devolver um item para compra não libera o apartado dele"
+    },
+    {
+     "sev": "média",
+     "title": "Encaminhar um pedido para o cliente pode deixar apartado ativo no meio do caminho"
+    },
+    {
+     "sev": "média",
+     "title": "Cancelar um pedido em compra não libera o apartado que ele tinha antes"
+    },
+    {
+     "sev": "média",
+     "title": "Reaprovar um pedido parcialmente pode deixar apartado com buracos"
+    },
+    {
+     "sev": "média",
+     "title": "Criar uma venda em separação pode deixar apartado órfão se der erro no meio"
+    },
+    {
+     "sev": "leve",
+     "title": "Admin força liberar apartado, mas algumas peças podem não soltar"
+    }
+   ]
+  },
+  {
+   "hub": 2,
+   "name": "Os travamentos das prateleiras durante a contagem de estoque",
+   "short": "Locks de contagem",
+   "writers": [
+    "038",
+    "040",
+    "041",
+    "042",
+    "043",
+    "044"
+   ],
+   "readers": [
+    "001",
+    "002",
+    "004",
+    "005",
+    "008",
+    "010",
+    "016",
+    "021",
+    "030",
+    "031",
+    "033",
+    "036",
+    "038",
+    "040",
+    "041",
+    "045",
+    "047",
+    "050",
+    "052",
+    "058",
+    "062",
+    "068",
+    "080",
+    "081",
+    "082",
+    "084",
+    "089",
+    "090",
+    "095",
+    "097",
+    "101",
+    "105"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Você pode ajustar estoque numa prateleira que está sendo contada"
+    },
+    {
+     "sev": "grave",
+     "title": "Prateleira fica meia-travada quando operador sai do meio da contagem"
+    },
+    {
+     "sev": "grave",
+     "title": "Operador cancela um pedido enquanto a prateleira está sendo contada"
+    },
+    {
+     "sev": "grave",
+     "title": "Venda manual consegue bipar produtos numa prateleira que está travada"
+    },
+    {
+     "sev": "média",
+     "title": "Prateleira fica travada mesmo depois que a contagem terminou"
+    },
+    {
+     "sev": "média",
+     "title": "Admin desfaz uma contagem que já foi aplicada, travamento fica preso"
+    },
+    {
+     "sev": "média",
+     "title": "Prateleira fica travada pra sempre se operador desaparecer"
+    },
+    {
+     "sev": "média",
+     "title": "Estoque de prateleira em 'pendente' fica com travamento invisível"
+    }
+   ]
+  },
+  {
+   "hub": 3,
+   "name": "A nota fiscal de venda e compra que o sistema recebe da loja e do fornecedor",
+   "short": "Nota fiscal",
+   "writers": [
+    "008",
+    "034",
+    "035",
+    "073",
+    "084",
+    "091",
+    "106"
+   ],
+   "readers": [
+    "001",
+    "004",
+    "005",
+    "009",
+    "010",
+    "011",
+    "012",
+    "016",
+    "018",
+    "021",
+    "023",
+    "024",
+    "026",
+    "027",
+    "028",
+    "030",
+    "031",
+    "033",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "045",
+    "047",
+    "051",
+    "052",
+    "053",
+    "054",
+    "056",
+    "058",
+    "062",
+    "065",
+    "068",
+    "069",
+    "072",
+    "073",
+    "076",
+    "077",
+    "079",
+    "081",
+    "083",
+    "084",
+    "086",
+    "090",
+    "091",
+    "095",
+    "097",
+    "101",
+    "105",
+    "106",
+    "108"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Aprovação do pedido pisando na nota fiscal que está chegando ao mesmo tempo"
+    },
+    {
+     "sev": "média",
+     "title": "Pedido encaminhado pra outro galpão reutiliza uma nota fiscal vencida"
+    },
+    {
+     "sev": "média",
+     "title": "Baixa do estoque saindo antes da nota fiscal estar pronta"
+    },
+    {
+     "sev": "média",
+     "title": "Cancelamento de compra e devolução criando múltiplos 'desfazimentos' do mesmo movimento"
+    },
+    {
+     "sev": "leve",
+     "title": "Desfazimento manual de um pedido perde a ligação com a nota fiscal"
+    },
+    {
+     "sev": "leve",
+     "title": "Recebimento de compra sem nota fiscal fica órfão no sistema"
+    }
+   ]
+  },
+  {
+   "hub": 4,
+   "name": "A fila de tarefas de guardar a mercadoria que chega",
+   "short": "Fila de guarda",
+   "writers": [
+    "006",
+    "008",
+    "009",
+    "010",
+    "064",
+    "073",
+    "084",
+    "090"
+   ],
+   "readers": [
+    "004",
+    "005",
+    "009",
+    "010",
+    "011",
+    "016",
+    "021",
+    "026",
+    "030",
+    "031",
+    "033",
+    "038",
+    "047",
+    "052",
+    "058",
+    "068",
+    "073",
+    "084",
+    "090",
+    "094",
+    "095",
+    "096",
+    "097",
+    "101",
+    "103",
+    "105"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Pedido cancelado deixa tarefa de guardar órfã"
+    },
+    {
+     "sev": "média",
+     "title": "Item marcado como indisponível deixa tarefa de guardar solta"
+    },
+    {
+     "sev": "média",
+     "title": "Item devolvido ao fornecedor deixa tarefa de guardar pendente"
+    },
+    {
+     "sev": "média",
+     "title": "Cancelamento de separação deixa tarefa de guardar desincrona"
+    },
+    {
+     "sev": "leve",
+     "title": "Transferência entre galpões pula a tarefa de guardar"
+    },
+    {
+     "sev": "leve",
+     "title": "Desfazer uma guarda confirmada pode deixar tudo desacoplado"
+    }
+   ]
+  },
+  {
+   "hub": 5,
+   "name": "A rotina que, quando a mercadoria chega, religa os pedidos que estavam esperando estoque",
+   "short": "Reconciliador",
+   "writers": [
+    "001",
+    "007",
+    "008",
+    "010",
+    "026",
+    "028",
+    "034",
+    "050",
+    "051",
+    "065",
+    "066",
+    "068",
+    "073",
+    "106"
+   ],
+   "readers": [
+    "003",
+    "004",
+    "008",
+    "010",
+    "011",
+    "016",
+    "025",
+    "028",
+    "030",
+    "031",
+    "033",
+    "038",
+    "047",
+    "052",
+    "054",
+    "062",
+    "066",
+    "084",
+    "090",
+    "095",
+    "097",
+    "101",
+    "105",
+    "106",
+    "108"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Aviso de 'saldo apareceu' fica pendurado mesmo depois que o pedido é cancelado"
+    },
+    {
+     "sev": "média",
+     "title": "Duas tarefas acontecem ao mesmo tempo e uma cai em silêncio — estoque fica na mão"
+    },
+    {
+     "sev": "média",
+     "title": "Ordem dos pedidos na fila de espera pode ser violada se duas entradas chegam quase juntas"
+    },
+    {
+     "sev": "média",
+     "title": "Pedido cancelado é refeito com o mesmo número — herda aviso fantasma do pedido antigo"
+    },
+    {
+     "sev": "média",
+     "title": "Aviso 'saldo apareceu' desatualizado quando você faz um pedido voltar pra espera"
+    },
+    {
+     "sev": "leve",
+     "title": "Se a reconexão de um pedido falha no meio, pedidos posteriores saem fora de ordem"
+    }
+   ]
+  },
+  {
+   "hub": 6,
+   "name": "A posição do estoque nas prateleiras — quanto tem em cada lugar, quanto está apartado para pedidos, e quanto está saindo",
+   "short": "Estoque (saldo)",
+   "writers": [
+    "002",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "022",
+    "025",
+    "026",
+    "028",
+    "034",
+    "035",
+    "036",
+    "037",
+    "039",
+    "042",
+    "043",
+    "045",
+    "046",
+    "047",
+    "048",
+    "050",
+    "051",
+    "053",
+    "056",
+    "057",
+    "058",
+    "066",
+    "073",
+    "075",
+    "080",
+    "084",
+    "091",
+    "107",
+    "108"
+   ],
+   "readers": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "012",
+    "013",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "034",
+    "035",
+    "036",
+    "038",
+    "039",
+    "040",
+    "041",
+    "042",
+    "043",
+    "044",
+    "046",
+    "047",
+    "048",
+    "049",
+    "050",
+    "051",
+    "052",
+    "053",
+    "054",
+    "056",
+    "057",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "064",
+    "065",
+    "066",
+    "067",
+    "068",
+    "069",
+    "071",
+    "072",
+    "073",
+    "074",
+    "075",
+    "076",
+    "079",
+    "080",
+    "081",
+    "082",
+    "083",
+    "084",
+    "085",
+    "086",
+    "088",
+    "089",
+    "090",
+    "091",
+    "092",
+    "093",
+    "094",
+    "095",
+    "096",
+    "097",
+    "099",
+    "101",
+    "103",
+    "105",
+    "106",
+    "107"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Estoque apartado de uma compra que foi cancelada não volta para o montão"
+    },
+    {
+     "sev": "grave",
+     "title": "Dois cliques simultâneos no 'marcar como saído' deixam o estoque negativo"
+    },
+    {
+     "sev": "grave",
+     "title": "Pedido encaminhado de um galpão para outro fica com estoque desalinhado"
+    },
+    {
+     "sev": "grave",
+     "title": "Estoque apartado que havia sido parcialmente devolvido fica todo confuso no cancelamento"
+    },
+    {
+     "sev": "média",
+     "title": "A rotina de religa de pedidos e a volta de etapa pisam uma na outra"
+    },
+    {
+     "sev": "média",
+     "title": "Prateleira de separação recebe estoque que ainda não foi guardado das compras"
+    }
+   ]
+  },
+  {
+   "hub": 7,
+   "name": "A etapa do pedido e quem decide o que fazer com ele",
+   "short": "Status do pedido",
+   "writers": [
+    "001",
+    "003",
+    "004",
+    "005",
+    "007",
+    "016",
+    "024",
+    "025",
+    "026",
+    "027",
+    "029",
+    "031",
+    "052",
+    "054",
+    "056",
+    "065",
+    "066",
+    "069",
+    "084",
+    "106"
+   ],
+   "readers": [
+    "004",
+    "006",
+    "008",
+    "009",
+    "029",
+    "030",
+    "032",
+    "033",
+    "036",
+    "038",
+    "045",
+    "047",
+    "051",
+    "052",
+    "055",
+    "056",
+    "060",
+    "063",
+    "066",
+    "068",
+    "072",
+    "076",
+    "077",
+    "079",
+    "082",
+    "083",
+    "084",
+    "086",
+    "088",
+    "090",
+    "095",
+    "097",
+    "101",
+    "105",
+    "106",
+    "108"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Dois cliques seguidos na aprovação trancam o estoque duas vezes"
+    },
+    {
+     "sev": "grave",
+     "title": "Pedido que estava esperando compra reverte pra novo enquanto sistema tenta dar baixa no estoque"
+    },
+    {
+     "sev": "grave",
+     "title": "Um pedido cancelado volta pra novo e fica invisível pro operador"
+    },
+    {
+     "sev": "média",
+     "title": "Uma compra que chegou cria pedidos-sombra que ninguém consegue cancelar"
+    },
+    {
+     "sev": "média",
+     "title": "Admin consegue cancelar um pedido em separação que o vendedor não consegue"
+    }
+   ]
+  },
+  {
+   "hub": 8,
+   "name": "A etapa em que cada pedido está na separação",
+   "short": "Status separação",
+   "writers": [
+    "001",
+    "002",
+    "003",
+    "004",
+    "009",
+    "011",
+    "012",
+    "014",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "023",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "031",
+    "053",
+    "064",
+    "066",
+    "084",
+    "095",
+    "105",
+    "106",
+    "107"
+   ],
+   "readers": [
+    "004",
+    "005",
+    "008",
+    "010",
+    "011",
+    "013",
+    "014",
+    "018",
+    "021",
+    "022",
+    "028",
+    "029",
+    "030",
+    "033",
+    "038",
+    "047",
+    "050",
+    "053",
+    "057",
+    "058",
+    "066",
+    "068",
+    "081",
+    "086",
+    "090",
+    "094",
+    "095",
+    "096",
+    "097",
+    "101",
+    "105",
+    "106"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Dois cliques ao mesmo tempo avançam o pedido de jeito errado"
+    },
+    {
+     "sev": "grave",
+     "title": "Cancelar um pedido não recua sua etapa de separação"
+    },
+    {
+     "sev": "grave",
+     "title": "Marcar item como separado, mas o pedido recua pra trás"
+    },
+    {
+     "sev": "grave",
+     "title": "Muitos caminhos diferentes mexem na etapa, sem ordem"
+    },
+    {
+     "sev": "média",
+     "title": "Encaminhar pra outro galpão deixa o pedido em etapa vazia"
+    }
+   ]
+  },
+  {
+   "hub": 9,
+   "name": "O preço médio de cada peça no seu estoque",
+   "short": "Custo médio",
+   "writers": [
+    "006",
+    "008",
+    "025",
+    "028",
+    "034",
+    "035",
+    "036",
+    "050",
+    "051",
+    "073",
+    "074",
+    "075",
+    "084",
+    "093",
+    "107",
+    "108"
+   ],
+   "readers": [
+    "001",
+    "004",
+    "005",
+    "007",
+    "010",
+    "016",
+    "021",
+    "022",
+    "026",
+    "030",
+    "033",
+    "035",
+    "037",
+    "038",
+    "041",
+    "042",
+    "043",
+    "044",
+    "045",
+    "047",
+    "054",
+    "055",
+    "057",
+    "058",
+    "062",
+    "065",
+    "068",
+    "072",
+    "073",
+    "074",
+    "075",
+    "077",
+    "078",
+    "079",
+    "082",
+    "083",
+    "086",
+    "090",
+    "091",
+    "092",
+    "095",
+    "096",
+    "097",
+    "101",
+    "103",
+    "106"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Duas pessoas entram estoque ao mesmo tempo e uma entrada desaparece da média"
+    },
+    {
+     "sev": "grave",
+     "title": "Desfazer uma entrada manual não tira o custo dela"
+    },
+    {
+     "sev": "média",
+     "title": "Encontrar estoque extra na contagem não atualiza o preço corretamente"
+    },
+    {
+     "sev": "média",
+     "title": "Três ou mais movimentações rápidas do mesmo produto calculam com números desatualizados"
+    },
+    {
+     "sev": "média",
+     "title": "Relatórios de valor de estoque mostram números diferentes de dia para dia sem mudança real"
+    }
+   ]
+  },
+  {
+   "hub": 10,
+   "name": "O registro de tudo que entra, sai e fica apartado no estoque",
+   "short": "Ledger",
+   "writers": [
+    "001",
+    "002",
+    "003",
+    "005",
+    "006",
+    "007",
+    "008",
+    "009",
+    "010",
+    "011",
+    "013",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "022",
+    "024",
+    "025",
+    "026",
+    "027",
+    "028",
+    "029",
+    "032",
+    "034",
+    "035",
+    "036",
+    "037",
+    "038",
+    "039",
+    "040",
+    "042",
+    "043",
+    "044",
+    "045",
+    "046",
+    "047",
+    "048",
+    "049",
+    "050",
+    "051",
+    "052",
+    "053",
+    "054",
+    "056",
+    "057",
+    "058",
+    "064",
+    "065",
+    "066",
+    "068",
+    "069",
+    "073",
+    "074",
+    "075",
+    "080",
+    "082",
+    "084",
+    "091",
+    "093",
+    "106",
+    "107",
+    "108"
+   ],
+   "readers": [
+    "002",
+    "004",
+    "012",
+    "013",
+    "016",
+    "017",
+    "018",
+    "020",
+    "023",
+    "026",
+    "029",
+    "030",
+    "031",
+    "032",
+    "033",
+    "035",
+    "041",
+    "045",
+    "046",
+    "048",
+    "049",
+    "056",
+    "058",
+    "059",
+    "060",
+    "061",
+    "062",
+    "063",
+    "065",
+    "066",
+    "068",
+    "069",
+    "072",
+    "075",
+    "076",
+    "077",
+    "078",
+    "079",
+    "081",
+    "082",
+    "083",
+    "085",
+    "086",
+    "089",
+    "090",
+    "092",
+    "094",
+    "095",
+    "096",
+    "097",
+    "099",
+    "101",
+    "103",
+    "105"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Duplo-clique em aprovar pedido cria duas apartações da mesma peça"
+    },
+    {
+     "sev": "grave",
+     "title": "Marcar item + cancelar separação ao mesmo tempo deixa apartação órfã"
+    },
+    {
+     "sev": "grave",
+     "title": "Embalagem pronta + tarefa de fechamento rodam ao mesmo tempo e geram dupla saída"
+    },
+    {
+     "sev": "média",
+     "title": "Cancelar compra e receber compra ao mesmo tempo estornam duas vezes"
+    },
+    {
+     "sev": "média",
+     "title": "Desmarcar e remarcar rápido cria dupla apartação"
+    }
+   ]
+  },
+  {
+   "hub": 11,
+   "name": "A marcação de estoque já saído da plataforma",
+   "short": "Estoque lançado",
+   "writers": [
+    "002",
+    "018",
+    "025",
+    "027",
+    "066",
+    "084",
+    "106"
+   ],
+   "readers": [
+    "001",
+    "002",
+    "005",
+    "008",
+    "011",
+    "012",
+    "014",
+    "016",
+    "018",
+    "020",
+    "021",
+    "023",
+    "024",
+    "026",
+    "029",
+    "030",
+    "031",
+    "033",
+    "038",
+    "052",
+    "054",
+    "056",
+    "062",
+    "065",
+    "066",
+    "068",
+    "069",
+    "073",
+    "076",
+    "090",
+    "095",
+    "097",
+    "101",
+    "105",
+    "106",
+    "108"
+   ],
+   "conflicts": [
+    {
+     "sev": "grave",
+     "title": "Cancelamento de pedido deixa estoque perdido no sistema"
+    },
+    {
+     "sev": "média",
+     "title": "Devolvição de item fica confusa se estoque já saiu"
+    },
+    {
+     "sev": "média",
+     "title": "Rerotar pedido pra outro galpão cria duplicação de estoque"
+    },
+    {
+     "sev": "média",
+     "title": "Alerta de cancelamento não bloqueia nem conserta automaticamente"
+    }
+   ]
+  }
+ ],
+ "edges": [
+  {
+   "flow": "001",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "002",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "005",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "006",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "014",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "020",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "021",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "027",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "029",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "031",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "065",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "069",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "097",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 0,
+   "type": "write"
+  },
+  {
+   "flow": "002",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "017",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "032",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "053",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "061",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "107",
+   "hub": 0,
+   "type": "read"
+  },
+  {
+   "flow": "001",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "006",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "013",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "018",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "031",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "052",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "054",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "056",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "065",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 1,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "003",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "006",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "007",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "009",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "012",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "013",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "020",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "022",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "024",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "027",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "032",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "049",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "050",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "051",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "053",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "057",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "069",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "099",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "107",
+   "hub": 1,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "040",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "041",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "042",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "043",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "044",
+   "hub": 2,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "002",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "036",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "040",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "041",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "045",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "050",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "080",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "082",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "089",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 2,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "034",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "035",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "091",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 3,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "009",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "012",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "023",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "024",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "027",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "028",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "034",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "035",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "036",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "037",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "045",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "051",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "053",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "054",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "065",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "069",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "077",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "079",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "091",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "108",
+   "hub": 3,
+   "type": "read"
+  },
+  {
+   "flow": "006",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "009",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "010",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "064",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "090",
+   "hub": 4,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "009",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "094",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "096",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "103",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 4,
+   "type": "read"
+  },
+  {
+   "flow": "001",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "007",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "010",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "026",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "034",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "050",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "051",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "065",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "068",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 5,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "025",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "028",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "054",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "108",
+   "hub": 5,
+   "type": "read"
+  },
+  {
+   "flow": "002",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "005",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "006",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "007",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "009",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "022",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "026",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "034",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "035",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "036",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "037",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "039",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "042",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "043",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "045",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "046",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "047",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "048",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "050",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "051",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "053",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "056",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "057",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "058",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "075",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "080",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "091",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "107",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "108",
+   "hub": 6,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "002",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "003",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "006",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "007",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "009",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "012",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "013",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "015",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "017",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "019",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "020",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "022",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "023",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "024",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "025",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "027",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "028",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "032",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "034",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "035",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "036",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "039",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "040",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "041",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "042",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "043",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "044",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "046",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "048",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "049",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "050",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "051",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "053",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "054",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "057",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "059",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "060",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "061",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "063",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "064",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "065",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "067",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "069",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "071",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "074",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "075",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "079",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "080",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "082",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "085",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "088",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "089",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "091",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "092",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "093",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "094",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "096",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "099",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "103",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "107",
+   "hub": 6,
+   "type": "read"
+  },
+  {
+   "flow": "001",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "005",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "007",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "016",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "024",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "026",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "027",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "029",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "031",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "052",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "054",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "056",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "065",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "069",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 7,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "006",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "009",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "032",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "036",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "045",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "051",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "055",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "060",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "063",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "077",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "079",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "082",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "084",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "088",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "108",
+   "hub": 7,
+   "type": "read"
+  },
+  {
+   "flow": "001",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "002",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "009",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "011",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "012",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "014",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "016",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "017",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "018",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "019",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "020",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "021",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "023",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "024",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "026",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "027",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "029",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "031",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "053",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "064",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "095",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "105",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "107",
+   "hub": 8,
+   "type": "write"
+  },
+  {
+   "flow": "004",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "013",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "014",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "022",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "028",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "050",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "053",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "057",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "094",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "096",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 8,
+   "type": "read"
+  },
+  {
+   "flow": "006",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "034",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "035",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "036",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "050",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "051",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "074",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "075",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "093",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "107",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "108",
+   "hub": 9,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "007",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "010",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "022",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "035",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "037",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "041",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "042",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "043",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "044",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "045",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "047",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "054",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "055",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "057",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "065",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "074",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "075",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "077",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "078",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "079",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "082",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "091",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "092",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "096",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "103",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 9,
+   "type": "read"
+  },
+  {
+   "flow": "001",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "002",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "003",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "005",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "006",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "007",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "008",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "009",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "010",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "011",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "013",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "015",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "016",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "017",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "018",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "019",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "020",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "022",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "024",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "026",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "027",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "028",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "029",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "032",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "034",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "035",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "036",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "037",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "038",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "039",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "040",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "042",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "043",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "044",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "045",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "046",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "047",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "048",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "049",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "050",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "051",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "052",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "053",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "054",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "056",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "057",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "058",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "064",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "065",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "068",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "069",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "073",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "074",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "075",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "080",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "082",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "091",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "093",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "107",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "108",
+   "hub": 10,
+   "type": "write"
+  },
+  {
+   "flow": "002",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "004",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "012",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "013",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "017",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "020",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "023",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "032",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "035",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "041",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "045",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "046",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "048",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "049",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "058",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "059",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "060",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "061",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "063",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "065",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "069",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "072",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "075",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "077",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "078",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "079",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "081",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "082",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "083",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "085",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "086",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "089",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "092",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "094",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "096",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "099",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "103",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 10,
+   "type": "read"
+  },
+  {
+   "flow": "002",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "018",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "025",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "027",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "066",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "084",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "106",
+   "hub": 11,
+   "type": "write"
+  },
+  {
+   "flow": "001",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "002",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "005",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "008",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "011",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "012",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "014",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "016",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "018",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "020",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "021",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "023",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "024",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "026",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "029",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "030",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "031",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "033",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "038",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "052",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "054",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "056",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "062",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "065",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "066",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "068",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "069",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "073",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "076",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "090",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "095",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "097",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "101",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "105",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "106",
+   "hub": 11,
+   "type": "read"
+  },
+  {
+   "flow": "108",
+   "hub": 11,
+   "type": "read"
+  }
+ ],
+ "macros": [
+  {
+   "name": "Pedidos",
+   "color": "#2f6fd0"
+  },
+  {
+   "name": "Separação",
+   "color": "#7c4dd1"
+  },
+  {
+   "name": "Compras/Recebimento",
+   "color": "#d98324"
+  },
+  {
+   "name": "Estoque",
+   "color": "#2f9e57"
+  },
+  {
+   "name": "Inventário",
+   "color": "#1fa6a6"
+  },
+  {
+   "name": "Transferências",
+   "color": "#caa50a"
+  },
+  {
+   "name": "Devoluções",
+   "color": "#cc4436"
+  },
+  {
+   "name": "Vendas",
+   "color": "#d14d8f"
+  },
+  {
+   "name": "Cadastros/Config",
+   "color": "#8a8f98"
+  }
+ ]
+};
+
+/* ============================================================
+   Setup
+   ============================================================ */
+const svg = document.getElementById('svg');
+const NS = 'http://www.w3.org/2000/svg';
+const macroByName = Object.fromEntries(DATA.macros.map(m => [m.name, m.color]));
+const hubByIdx = Object.fromEntries(DATA.hubs.map(h => [h.hub, h]));
+const flowById = Object.fromEntries(DATA.flows.map(f => [f.id, f]));
+const isolated = new Set(DATA.meta.isolated);
+
+// degree per hub (writers+readers) -> hub size
+DATA.hubs.forEach(h => h.deg = h.writers.length + h.readers.length);
+const hubDegMax = Math.max(...DATA.hubs.map(h => h.deg));
+
+// adjacency: flow -> {writes:Set(hubIdx), reads:Set(hubIdx)}
+const flowEdges = {};
+DATA.flows.forEach(f => flowEdges[f.id] = {writes:new Set(), reads:new Set()});
+DATA.edges.forEach(e => {
+  const fe = flowEdges[e.flow]; if(!fe) return;
+  (e.type==='write' ? fe.writes : fe.reads).add(e.hub);
+});
+
+/* ============================================================
+   Coordinate world (logical px) — radial editorial
+   ============================================================ */
+const W = 1600, H = 1100, CX = W/2, CY = H/2;
+const RING = 480;            // hub ring radius (was 430 — give the central web more room)
+const islandR = 720;         // where islands park
+const macroR = 250;          // mean radius where a macro's cluster lives
+
+// macro -> angular sector: each color pulls toward its own arc, so colour
+// becomes spatial structure (areas live in different parts of the canvas).
+const macroAng = {};
+DATA.macros.forEach((m,i) => {
+  // start at top, go clockwise; sectors evenly split the circle
+  macroAng[m.name] = -Math.PI/2 + (i/DATA.macros.length)*Math.PI*2;
+});
+
+// hub positions on the clock ring (12 -> top, clockwise)
+DATA.hubs.forEach((h,i) => {
+  const a = -Math.PI/2 + (i/DATA.hubs.length)*Math.PI*2;
+  h.x = CX + Math.cos(a)*RING;
+  h.y = CY + Math.sin(a)*RING;
+  h.ang = a;
+  // hub box size
+  const t = h.deg / hubDegMax;
+  h.w = 92 + t*54;
+  h.hh = 30 + t*16;
+});
+
+// flow nodes — seed in their macro sector, biased toward touched-hubs centroid
+const fnodes = DATA.flows.map((f,i) => {
+  const fe = flowEdges[f.id];
+  const touched = [...fe.writes, ...fe.reads];
+  let x, y, isl = isolated.has(f.id);
+  const sectorA = macroAng[f.macro] ?? 0;
+  if(isl){
+    const a = -Math.PI/2 + (DATA.meta.isolated.indexOf(f.id)/DATA.meta.isolated.length)*Math.PI*2;
+    x = CX + Math.cos(a)*islandR + (Math.random()-.5)*30;
+    y = CY + Math.sin(a)*islandR + (Math.random()-.5)*30;
+  } else if(touched.length){
+    let sx=0, sy=0;
+    touched.forEach(hi => { sx += hubByIdx[hi].x; sy += hubByIdx[hi].y; });
+    const cx = sx/touched.length, cy = sy/touched.length;
+    // sector anchor (mid radius) so same-colour flows start near each other
+    const ax = CX + Math.cos(sectorA)*macroR, ay = CY + Math.sin(sectorA)*macroR;
+    // 60% sector / 40% hub-centroid — colour leads, topology corrects
+    x = ax*0.6 + cx*0.4 + (Math.random()-.5)*70;
+    y = ay*0.6 + cy*0.4 + (Math.random()-.5)*70;
+  } else {
+    x = CX + (Math.random()-.5)*200; y = CY + (Math.random()-.5)*200;
+  }
+  // flow radius by degree
+  const r = 4.0 + Math.min(f.degree,16)*0.62;
+  return {f, x, y, vx:0, vy:0, r, isl, touched, fixed:false, sectorA, macro:f.macro};
+});
+const fnodeById = Object.fromEntries(fnodes.map(n => [n.f.id, n]));
+
+/* ============================================================
+   Force simulation (settles + freezes)
+   ============================================================ */
+let alpha = 1, alphaTarget = 0, alphaDecay = 0.022, alphaMin = 0.0015;
+let running = true;
+
+function tick(){
+  const a = alpha;
+  // 1. charge: flow-flow repulsion (Barnes-hut-lite: brute force, 102 nodes ok)
+  for(let i=0;i<fnodes.length;i++){
+    const ni = fnodes[i];
+    for(let j=i+1;j<fnodes.length;j++){
+      const nj = fnodes[j];
+      let dx = nj.x-ni.x, dy = nj.y-ni.y;
+      let d2 = dx*dx+dy*dy; if(d2<0.01){ dx=Math.random()-.5; dy=Math.random()-.5; d2=1; }
+      const d = Math.sqrt(d2);
+      // same-macro flows repel a touch less (let a colour cluster stay tight);
+      // cross-macro flows repel more so different areas don't blend in the centre.
+      const sameMacro = ni.macro===nj.macro;
+      const force = -180 / d2 * a * (sameMacro ? 22 : 30); // repulsion
+      const fx = dx/d*force, fy = dy/d*force;
+      ni.vx += fx; ni.vy += fy; nj.vx -= fx; nj.vy -= fy;
+    }
+  }
+  // 2. springs: flow -> each touched hub  +  gentle pull into the macro sector
+  fnodes.forEach(n => {
+    if(n.isl) return;
+    n.touched.forEach(hi => {
+      const h = hubByIdx[hi];
+      let dx = h.x-n.x, dy = h.y-n.y;
+      const d = Math.sqrt(dx*dx+dy*dy)||1;
+      const target = 160;                 // desired flow-hub distance
+      const k = 0.055 * a;
+      const f = (d-target)*k;
+      const fx = dx/d*f, fy = dy/d*f;
+      n.vx += fx; n.vy += fy;
+    });
+    // sector anchor: pull toward this macro's arc so colour reads as place
+    const ax = CX + Math.cos(n.sectorA)*macroR, ay = CY + Math.sin(n.sectorA)*macroR;
+    n.vx += (ax-n.x)*0.010*a; n.vy += (ay-n.y)*0.010*a;
+  });
+  // 3. islands: spring to their parking spot + mild mutual repulsion handled by charge
+  fnodes.forEach(n => {
+    if(!n.isl) return;
+    const idx = DATA.meta.isolated.indexOf(n.f.id);
+    const ang = -Math.PI/2 + (idx/DATA.meta.isolated.length)*Math.PI*2;
+    const tx = CX + Math.cos(ang)*islandR, ty = CY + Math.sin(ang)*islandR;
+    n.vx += (tx-n.x)*0.08*a; n.vy += (ty-n.y)*0.08*a;
+  });
+  // 4. weak centering so connected cluster stays framed
+  fnodes.forEach(n => {
+    if(n.isl) return;
+    n.vx += (CX-n.x)*0.0016*a;
+    n.vy += (CY-n.y)*0.0016*a;
+  });
+  // 5. collision (flow vs flow) — relax overlaps (more spacing, 3 passes)
+  for(let pass=0; pass<3; pass++){
+    for(let i=0;i<fnodes.length;i++){
+      const ni=fnodes[i];
+      for(let j=i+1;j<fnodes.length;j++){
+        const nj=fnodes[j];
+        let dx=nj.x-ni.x, dy=nj.y-ni.y;
+        let d=Math.sqrt(dx*dx+dy*dy)||0.01;
+        const min = ni.r+nj.r+7;
+        if(d<min){
+          const push=(min-d)/d*0.5;
+          const ox=dx*push, oy=dy*push;
+          if(!ni.fixed){ni.x-=ox;ni.y-=oy;}
+          if(!nj.fixed){nj.x+=ox;nj.y+=oy;}
+        }
+      }
+    }
+  }
+  // integrate
+  fnodes.forEach(n => {
+    if(n.fixed){ n.vx=0; n.vy=0; return; }
+    n.vx *= 0.86; n.vy *= 0.86;
+    n.x += n.vx; n.y += n.vy;
+  });
+  // anneal
+  alpha += (alphaTarget - alpha) * alphaDecay;
+  if(alpha < alphaMin && !dragging){ running = false; }
+}
+
+/* ============================================================
+   Build SVG
+   ============================================================ */
+const gRoot = el('g');                 // world transform
+svg.appendChild(gRoot);
+const gEdges = el('g'); gRoot.appendChild(gEdges);
+const gHubs  = el('g'); gRoot.appendChild(gHubs);
+const gFlows = el('g'); gRoot.appendChild(gFlows);
+
+function el(t){ return document.createElementNS(NS,t); }
+
+// ring guide
+const ringGuide = el('circle');
+ringGuide.setAttribute('cx',CX); ringGuide.setAttribute('cy',CY);
+ringGuide.setAttribute('r',RING);
+ringGuide.setAttribute('fill','none');
+ringGuide.setAttribute('stroke','var(--line)');
+ringGuide.setAttribute('stroke-width','1');
+ringGuide.setAttribute('stroke-dasharray','2 6');
+gEdges.appendChild(ringGuide);
+
+// edges
+const edgeEls = [];
+DATA.edges.forEach(e => {
+  const fn = fnodeById[e.flow]; const h = hubByIdx[e.hub];
+  if(!fn || !h) return;
+  const line = el('line');
+  line.setAttribute('class','edge '+e.type);
+  line.__flow = e.flow; line.__hub = e.hub; line.__type = e.type; line.__fn = fn; line.__h = h;
+  gEdges.appendChild(line);
+  edgeEls.push(line);
+});
+
+// precompute grave-conflict count per hub (drives the on-node risk dot)
+DATA.hubs.forEach(h => { h.grave = h.conflicts.filter(c => c.sev==='grave').length; });
+
+// hubs
+const hubEls = {};
+DATA.hubs.forEach(h => {
+  const g = el('g'); g.setAttribute('class','hub'); g.__hub = h.hub;
+  // accessibility: each hub is a focusable button
+  g.setAttribute('role','button'); g.setAttribute('tabindex','0');
+  g.setAttribute('aria-label', `Estado ${h.short} — ${h.writers.length} escrevem, ${h.readers.length} leem`
+    + (h.grave ? `, ${h.grave} conflito${h.grave>1?'s':''} grave${h.grave>1?'s':''}` : ''));
+  // halo
+  const halo = el('rect'); halo.setAttribute('class','hub-halo');
+  halo.setAttribute('rx',8);
+  g.appendChild(halo);
+  const rect = el('rect'); rect.setAttribute('rx',5);
+  g.appendChild(rect);
+  const name = el('text'); name.setAttribute('class','hub-name');
+  name.textContent = h.short;
+  g.appendChild(name);
+  const deg = el('text'); deg.setAttribute('class','hub-deg');
+  deg.textContent = h.writers.length+'w · '+h.readers.length+'r';
+  g.appendChild(deg);
+  // severity dot — risk read straight on the node (only hubs with grave conflicts)
+  let sev = null;
+  if(h.grave>0){
+    sev = el('g'); sev.setAttribute('class','hub-sev');
+    const sc = el('circle'); sc.setAttribute('r',7.5);
+    sc.setAttribute('fill','var(--grave)'); sc.setAttribute('stroke','#fff'); sc.setAttribute('stroke-width',1.4);
+    sev.appendChild(sc);
+    const st = el('text'); st.textContent = h.grave;
+    st.setAttribute('text-anchor','middle'); st.setAttribute('dominant-baseline','central');
+    st.setAttribute('font-family','var(--mono)'); st.setAttribute('font-size','8.5');
+    st.setAttribute('font-weight','700'); st.setAttribute('fill','#fff'); st.setAttribute('y','0.3');
+    sev.appendChild(st);
+    g.appendChild(sev);
+  }
+  g.__halo = halo; g.__rect = rect; g.__name = name; g.__deg = deg; g.__sev = sev;
+  gHubs.appendChild(g);
+  hubEls[h.hub] = g;
+  g.addEventListener('click', ev => { ev.stopPropagation(); selectHub(h.hub); });
+  g.addEventListener('mousemove', ev => showTip(ev, h.short, h.name + (h.grave?` · ${h.grave} graves`:''), true));
+  g.addEventListener('mouseleave', hideTip);
+  g.addEventListener('keydown', ev => {
+    if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); selectHub(h.hub); }
+  });
+});
+
+// ring labels (the 12-o'clock positions are described above the boxes via small markers)
+// flows
+const flowEls = {};
+fnodes.forEach(n => {
+  const g = el('g'); g.setAttribute('class','flow'+(n.isl?' island':''));
+  g.__id = n.f.id; g.__n = n;
+  g.setAttribute('role','button'); g.setAttribute('tabindex','0');
+  g.setAttribute('aria-label', `Fluxo ${n.f.id}: ${n.f.title} — área ${n.f.macro}` + (n.isl?' (ilha)':''));
+  const c = el('circle'); c.setAttribute('r', n.r);
+  c.setAttribute('fill', macroByName[n.f.macro] || '#888');
+  g.appendChild(c);
+  const lbl = el('text'); lbl.setAttribute('class','flbl'); lbl.textContent = n.f.id;
+  g.appendChild(lbl);
+  g.__c = c; g.__lbl = lbl;
+  gFlows.appendChild(g);
+  flowEls[n.f.id] = g;
+  g.addEventListener('mousemove', ev => showTip(ev, '#'+n.f.id, n.f.title, false));
+  g.addEventListener('mouseleave', hideTip);
+  g.addEventListener('keydown', ev => {
+    if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); selectFlow(n.f.id); }
+  });
+});
+
+// macro legend chips — clickable filters (on/off, faded when off)
+const macroOn = {};            // macro name -> visible?
+DATA.macros.forEach(m => macroOn[m.name] = true);
+const rwOn = {write:true, read:true};
+
+const ml = document.getElementById('macroLegend');
+DATA.macros.forEach(m => {
+  const d = document.createElement('div'); d.className='lg-it'; d.dataset.macro = m.name;
+  d.setAttribute('role','checkbox'); d.setAttribute('aria-checked','true');
+  d.setAttribute('tabindex','0'); d.setAttribute('title','Ligar/desligar a área '+m.name);
+  d.innerHTML = `<span class="sw" style="background:${m.color};color:${m.color}"></span>${m.name}`;
+  const toggle = () => {
+    macroOn[m.name] = !macroOn[m.name];
+    d.classList.toggle('off', !macroOn[m.name]);
+    d.setAttribute('aria-checked', String(macroOn[m.name]));
+    applyFilters();
+  };
+  d.addEventListener('click', toggle);
+  d.addEventListener('keydown', ev => { if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); toggle(); } });
+  ml.appendChild(d);
+});
+
+// global write/read toggle
+document.querySelectorAll('#rwToggle .lg-tg').forEach(tg => {
+  const k = tg.dataset.rw;
+  const toggle = () => {
+    rwOn[k] = !rwOn[k];
+    tg.classList.toggle('off', !rwOn[k]);
+    tg.setAttribute('aria-pressed', String(rwOn[k]));
+    applyFilters();
+  };
+  tg.setAttribute('role','button'); tg.setAttribute('tabindex','0'); tg.setAttribute('aria-pressed','true');
+  tg.addEventListener('click', toggle);
+  tg.addEventListener('keydown', ev => { if(ev.key==='Enter'||ev.key===' '){ ev.preventDefault(); toggle(); } });
+});
+
+/* ============================================================
+   Render loop
+   ============================================================ */
+function render(){
+  if(running || dragging) tick();
+  // edges
+  for(const line of edgeEls){
+    const fn=line.__fn, h=line.__h;
+    line.setAttribute('x1',h.x); line.setAttribute('y1',h.y);
+    line.setAttribute('x2',fn.x); line.setAttribute('y2',fn.y);
+  }
+  // hubs
+  // effective on-screen scale decides if the tiny w·r sub-label is worth showing
+  const showSub = view.k >= 0.62;
+  DATA.hubs.forEach(h => {
+    const g=hubEls[h.hub];
+    g.setAttribute('transform',`translate(${h.x},${h.y})`);
+    g.__rect.setAttribute('x',-h.w/2); g.__rect.setAttribute('y',-h.hh/2);
+    g.__rect.setAttribute('width',h.w); g.__rect.setAttribute('height',h.hh);
+    g.__halo.setAttribute('x',-h.w/2-4); g.__halo.setAttribute('y',-h.hh/2-4);
+    g.__halo.setAttribute('width',h.w+8); g.__halo.setAttribute('height',h.hh+8);
+    const fs = Math.min(13.5, h.w/h.short.length*1.55);
+    g.__name.setAttribute('font-size', Math.max(9.5,fs));
+    // when the count is hidden, vertically centre the name; otherwise sit it above
+    g.__name.setAttribute('y', showSub ? -3.5 : 0);
+    g.__deg.setAttribute('font-size', Math.max(7, h.hh*0.20));
+    g.__deg.setAttribute('y', h.hh*0.27);
+    g.__deg.style.display = showSub ? '' : 'none';
+    // severity dot pinned to the top-right corner of the box
+    if(g.__sev){ g.__sev.setAttribute('transform',`translate(${h.w/2-2},${-h.hh/2+1})`); }
+  });
+  // flows
+  fnodes.forEach(n => {
+    flowEls[n.f.id].setAttribute('transform',`translate(${n.x},${n.y})`);
+  });
+  requestAnimationFrame(render);
+}
+
+/* ============================================================
+   Zoom & pan
+   ============================================================ */
+let view = {x:0, y:0, k:1};
+function applyView(){ gRoot.setAttribute('transform',`translate(${view.x},${view.y}) scale(${view.k})`); }
+function fitView(){
+  const r = stageRect();
+  // bounding of everything incl islands
+  const pad = 70;
+  const bw = islandR*2 + 200, bh = islandR*2 + 200;
+  const k = Math.min(r.w/(bw+pad), r.h/(bh+pad));
+  view.k = Math.min(1.15, k);
+  view.x = r.w/2 - CX*view.k;
+  view.y = r.h/2 - CY*view.k;
+  applyView();
+}
+function stageRect(){ const b=svg.getBoundingClientRect(); return {w:b.width,h:b.height,left:b.left,top:b.top}; }
+
+svg.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const r=stageRect();
+  const mx=ev.clientX-r.left, my=ev.clientY-r.top;
+  const wx=(mx-view.x)/view.k, wy=(my-view.y)/view.k;
+  const f = ev.deltaY<0 ? 1.12 : 1/1.12;
+  view.k = Math.max(0.28, Math.min(4.5, view.k*f));
+  view.x = mx - wx*view.k; view.y = my - wy*view.k;
+  applyView();
+},{passive:false});
+
+document.getElementById('zin').onclick = ()=>zoomBtn(1.22);
+document.getElementById('zout').onclick = ()=>zoomBtn(1/1.22);
+document.getElementById('zfit').onclick = ()=>{ fitView(); };
+function zoomBtn(f){
+  const r=stageRect(); const mx=r.w/2, my=r.h/2;
+  const wx=(mx-view.x)/view.k, wy=(my-view.y)/view.k;
+  view.k=Math.max(0.28,Math.min(4.5,view.k*f));
+  view.x=mx-wx*view.k; view.y=my-wy*view.k; applyView();
+}
+
+/* ---- pan (drag background) + drag nodes ---- works for mouse, pen AND touch
+   (Pointer Events + touch-action:none); a small threshold keeps taps as clicks ---- */
+let dragging=null, panning=false, panStart=null, moved=false, downAt=null;
+const MOVE_TOL = 4;          // px before a press counts as a drag (so taps still select)
+svg.addEventListener('pointerdown', ev => {
+  const fg = ev.target.closest('.flow');
+  hideHint();
+  downAt = {x:ev.clientX, y:ev.clientY};
+  if(fg){
+    const n = fg.__n;
+    dragging = n; n.fixed = true; moved=false;
+    wakeSim();
+    svg.setPointerCapture(ev.pointerId);
+  } else if(!ev.target.closest('.hub')){
+    panning=true; panStart={x:ev.clientX-view.x, y:ev.clientY-view.y}; moved=false;
+    svg.classList.add('panning');
+    svg.setPointerCapture(ev.pointerId);
+  }
+});
+svg.addEventListener('pointermove', ev => {
+  if(downAt && !moved){
+    if(Math.abs(ev.clientX-downAt.x) < MOVE_TOL && Math.abs(ev.clientY-downAt.y) < MOVE_TOL) {
+      if(panning) return;    // ignore sub-threshold jitter on pan so a tap stays a tap
+    }
+  }
+  if(dragging){
+    const r=stageRect();
+    dragging.x=(ev.clientX-r.left-view.x)/view.k;
+    dragging.y=(ev.clientY-r.top-view.y)/view.k;
+    dragging.vx=0; dragging.vy=0; moved=true; wakeSim();
+  } else if(panning){
+    view.x=ev.clientX-panStart.x; view.y=ev.clientY-panStart.y;
+    moved=true; applyView();
+  }
+});
+svg.addEventListener('pointerup', ev => {
+  if(dragging){
+    const n=dragging; dragging=null;
+    setTimeout(()=>{ n.fixed=false; }, 30);
+    if(!moved) selectFlow(n.f.id);   // click (no drag) -> select
+  } else if(panning){
+    panning=false; svg.classList.remove('panning');
+    if(!moved) clearSelection();      // click background -> reset
+  }
+});
+
+function wakeSim(){ alpha=Math.max(alpha,0.32); running=true; }
+
+/* ============================================================
+   Selection / highlight
+   ============================================================ */
+let selKind=null, selKey=null;
+const MEGA = 80;             // hubs whose degree >= this get graduated reader dimming
+
+function clearHighlight(){
+  for(const id in flowEls) flowEls[id].classList.remove('faded','lit','lit-soft');
+  for(const hi in hubEls){ const g=hubEls[hi]; g.classList.remove('faded','litw','litr','active'); }
+  for(const e of edgeEls) e.classList.remove('hot-write','hot-read','faded');
+}
+
+// Single source of truth for what's visible: combines (selection) × (macro filter) × (r/w filter).
+function applyFilters(){
+  // 1. macro filter: hide flows whose area is off (+ their edges)
+  for(const id in flowEls){
+    const off = !macroOn[flowById[id].macro];
+    flowEls[id].classList.toggle('filt-off', off);
+  }
+  for(const e of edgeEls){
+    const macroOff = !macroOn[flowById[e.__flow].macro];
+    const rwOff = !rwOn[e.__type];
+    e.classList.toggle('rw-off', macroOff || rwOff);
+  }
+  // 2. re-render the current selection on top of the (possibly changed) filter set
+  renderSelection();
+}
+
+// applies highlight classes for the active selection (or neutral)
+function renderSelection(){
+  clearHighlight();
+  if(selKind==='flow') paintFlow(selKey);
+  else if(selKind==='hub') paintHub(selKey);
+  else if(selKind==='_search') paintSearch();
+}
+
+function paintFlow(id){
+  const fe = flowEdges[id];
+  for(const fid in flowEls) flowEls[fid].classList.add('faded');
+  for(const hi in hubEls) hubEls[hi].classList.add('faded');
+  for(const e of edgeEls) e.classList.add('faded');
+  const fg = flowEls[id]; fg.classList.remove('faded'); fg.classList.add('lit');
+  fe.writes.forEach(hi => { const g=hubEls[hi]; g.classList.remove('faded'); g.classList.add('active'); });
+  fe.reads.forEach(hi => { const g=hubEls[hi]; g.classList.remove('faded'); g.classList.add('active'); });
+  for(const e of edgeEls){
+    if(e.__flow===id && rwOn[e.__type]){
+      e.classList.remove('faded');
+      e.classList.add(e.__type==='write'?'hot-write':'hot-read');
+    }
+  }
+}
+
+function paintHub(hi){
+  const hub = hubByIdx[hi];
+  for(const fid in flowEls) flowEls[fid].classList.add('faded');
+  for(const h in hubEls) hubEls[h].classList.add('faded');
+  for(const e of edgeEls) e.classList.add('faded');
+  hubEls[hi].classList.remove('faded'); hubEls[hi].classList.add('active');
+  const isMega = hub.deg >= MEGA;
+  const writers=new Set(hub.writers);
+  // writers loud (rarer & more interesting); readers soft on a mega-hub to cut noise
+  hub.writers.forEach(fid => {
+    const fg=flowEls[fid]; if(fg && macroOn[flowById[fid].macro] && rwOn.write){ fg.classList.remove('faded'); fg.classList.add('lit'); }
+  });
+  hub.readers.forEach(fid => {
+    if(writers.has(fid)) return;   // a flow that both writes & reads already lit
+    const fg=flowEls[fid]; if(fg && macroOn[flowById[fid].macro] && rwOn.read){
+      fg.classList.remove('faded'); fg.classList.add(isMega ? 'lit-soft' : 'lit');
+    }
+  });
+  for(const e of edgeEls){
+    if(e.__hub===hi && rwOn[e.__type]){
+      e.classList.remove('faded');
+      e.classList.add(e.__type==='write'?'hot-write':'hot-read');
+    }
+  }
+}
+
+function paintSearch(){
+  const q = searchInput.value.trim().toLowerCase();
+  const ms = new Set(DATA.flows.filter(f =>
+    f.title.toLowerCase().includes(q) || f.id.includes(q) ||
+    f.module.toLowerCase().includes(q) || f.macro.toLowerCase().includes(q)).map(m=>m.id));
+  for(const fid in flowEls){
+    if(ms.has(fid) && macroOn[flowById[fid].macro]) flowEls[fid].classList.add('lit');
+    else flowEls[fid].classList.add('faded');
+  }
+  for(const hi in hubEls) hubEls[hi].classList.add('faded');
+  for(const e of edgeEls) e.classList.add('faded');
+}
+
+function clearSelection(){
+  selKind=null; selKey=null;
+  clearHighlight();
+  searchClear();
+  showNeutralPanel();
+}
+document.getElementById('closeP').onclick = clearSelection;
+window.addEventListener('keydown', e => { if(e.key==='Escape'){ clearSelection(); if(document.activeElement) document.activeElement.blur(); } });
+
+function selectFlow(id){
+  selKind='flow'; selKey=id;
+  searchClear();
+  renderSelection();
+  panelFlow(id);
+  panToNode(fnodeById[id]);
+}
+
+function selectHub(hi){
+  selKind='hub'; selKey=hi;
+  searchClear();
+  renderSelection();
+  panelHub(hi);
+  panToNode(hubByIdx[hi]);
+}
+
+/* gently centre the viewport on a node (pan only, keeps current zoom) */
+function panToNode(node){
+  if(!node) return;
+  const r = stageRect();
+  const tx = r.w/2 - node.x*view.k;
+  const ty = r.h/2 - node.y*view.k;
+  animateView(tx, ty);
+}
+function animateView(tx, ty){
+  const x0=view.x, y0=view.y, t0=performance.now(), dur=420;
+  function ease(p){ return 1-Math.pow(1-p,3); }
+  function frame(t){
+    const p=Math.min(1,(t-t0)/dur), e=ease(p);
+    view.x = x0+(tx-x0)*e; view.y = y0+(ty-y0)*e; applyView();
+    if(p<1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ============================================================
+   Side panel content
+   ============================================================ */
+const panel = document.getElementById('panel');
+const pHead = document.getElementById('pHead');
+const pBody = document.getElementById('pBody');
+const closeBtn = document.getElementById('closeP');
+
+// neutral "how to read the network" — persists when nothing is selected
+function showNeutralPanel(){
+  closeBtn.style.display = 'none';
+  pHead.className = 'nx-head';
+  pHead.innerHTML = `
+    <div class="p-kind"><span class="dot sq"></span>Como ler a rede</div>
+    <div class="p-title">12 estados no centro · 108 fluxos ao redor</div>`;
+  pBody.className = 'nx-body';
+  pBody.innerHTML = `
+    <p>A rede é <b>bipartida</b>: de um lado os <b>fluxos</b> (o que o operador ou o sistema faz),
+       do outro os <b>12 estados compartilhados</b> que vários fluxos mexem ao mesmo tempo.
+       É aí que mora o acoplamento — e o risco.</p>
+    <div class="nx-bip">
+      <div class="nx-side">
+        <div class="t">Fluxo</div>
+        <div class="d">Bolinha colorida pela área. Tamanho = quantas ligações tem.</div>
+      </div>
+      <div class="nx-arrows">→<br>←</div>
+      <div class="nx-side">
+        <div class="t">Estado</div>
+        <div class="d">Caixa escura no anel. Quanto maior, mais fluxos dependem dele.</div>
+      </div>
+    </div>
+    <div class="nx-leg">
+      <div class="row"><span class="ln w"></span><b>Escreve</b>&nbsp;— o fluxo muda o estado (linha cheia)</div>
+      <div class="row"><span class="ln r"></span><b>Lê</b>&nbsp;— o fluxo só consulta (linha tracejada)</div>
+      <div class="row"><span class="sqc"></span>Estado com <b style="color:var(--grave)">conflito grave</b> ganha um ponto vermelho com a contagem</div>
+      <div class="row"><span class="dotc" style="background:var(--ink-faint);border:1.4px dashed #fff"></span>As 6 ilhas (à direita) não tocam nenhum estado</div>
+    </div>
+    <div class="nx-tip">Clique num estado pra ver quem escreve e quem lê · clique num fluxo pra ver onde ele toca · use os filtros de área e o botão Escreve/Lê na legenda · Esc limpa.</div>`;
+  panel.classList.remove('on');
+  panel.classList.add('neutral');
+}
+
+function panelFlow(id){
+  const f = flowById[id]; const fe = flowEdges[id];
+  const col = macroByName[f.macro]||'#888';
+  closeBtn.style.display=''; panel.classList.remove('neutral');
+  pHead.className='p-head'; pBody.className='p-body';
+  pHead.innerHTML = `
+    <span class="p-id">#${f.id}</span>
+    <div class="p-kind"><span class="dot" style="background:${col}"></span>Fluxo · ${esc(f.macro)}</div>
+    <div class="p-title">${esc(f.title)}</div>
+    <div class="p-mod"><span class="mc" style="background:${col}"></span>${esc(f.module)}${f.isl?' · <b style="color:var(--ink-faint)">ilha (não toca estado)</b>':''}</div>`;
+  const wHubs=[...fe.writes].map(hi=>hubByIdx[hi]);
+  const rHubs=[...fe.reads].map(hi=>hubByIdx[hi]);
+  pBody.innerHTML = `
+    <div class="p-desc">${esc(f.desc)}</div>
+    <div class="p-metrics">
+      <div class="met ${f.problems>0?'bad':''}"><div class="mn">${f.problems}</div><div class="ml">Problemas</div></div>
+      <div class="met"><div class="mn">${f.decisions}</div><div class="ml">Decisões</div></div>
+      <div class="met"><div class="mn">${f.check}</div><div class="ml">Checagens</div></div>
+      <div class="met"><div class="mn">${f.degree}</div><div class="ml">Grau</div></div>
+    </div>
+    <div class="sec">
+      <h4><span class="tag w"></span>Escreve nestes estados · ${wHubs.length}</h4>
+      <div class="chips">${ wHubs.length ? wHubs.map(h=>hubChip(h,'w')).join('') : '<div class="empty">não escreve em nenhum estado central</div>'}</div>
+    </div>
+    <div class="sec">
+      <h4><span class="tag r"></span>Lê destes estados · ${rHubs.length}</h4>
+      <div class="chips">${ rHubs.length ? rHubs.map(h=>hubChip(h,'r')).join('') : '<div class="empty">não lê nenhum estado central</div>'}</div>
+    </div>`;
+  wireChips();
+  panel.classList.add('on');
+}
+
+function panelHub(hi){
+  const hub = hubByIdx[hi];
+  const grave=hub.conflicts.filter(c=>c.sev==='grave').length;
+  closeBtn.style.display=''; panel.classList.remove('neutral');
+  pHead.className='p-head'; pBody.className='p-body';
+  pHead.innerHTML = `
+    <span class="p-id">estado ${String(hi).padStart(2,'0')}</span>
+    <div class="p-kind"><span class="dot sq"></span>Estado compartilhado</div>
+    <div class="p-title">${esc(hub.short)}</div>
+    <div class="p-mod">${esc(hub.name)}</div>`;
+  const sevClass = s => s==='grave'?'grave':(s==='média'?'media':'leve');
+  pBody.innerHTML = `
+    <div class="p-metrics">
+      <div class="met"><div class="mn">${hub.writers.length}</div><div class="ml">Escrevem</div></div>
+      <div class="met"><div class="mn">${hub.readers.length}</div><div class="ml">Leem</div></div>
+      <div class="met ${grave>0?'bad':''}"><div class="mn">${hub.conflicts.length}</div><div class="ml">Conflitos${grave?` · ${grave} graves`:''}</div></div>
+    </div>
+    <div class="sec">
+      <h4>Zonas de conflito · ${hub.conflicts.length}</h4>
+      ${ hub.conflicts.length ? hub.conflicts.map(c=>`
+        <div class="conf"><span class="sev ${sevClass(c.sev)}">${esc(c.sev)}</span><span>${esc(c.title)}</span></div>`).join('')
+        : '<div class="empty">sem conflitos registrados</div>'}
+    </div>
+    <div class="sec">
+      <h4><span class="tag w"></span>Fluxos que escrevem · ${hub.writers.length}</h4>
+      <div class="chips">${hub.writers.map(fid=>flowChip(fid,'w')).join('')}</div>
+    </div>
+    <div class="sec">
+      <h4><span class="tag r"></span>Fluxos que leem · ${hub.readers.length}</h4>
+      <div class="chips">${hub.readers.map(fid=>flowChip(fid,'r')).join('')}</div>
+    </div>`;
+  wireChips();
+  panel.classList.add('on');
+}
+
+function hubChip(h, kind){
+  return `<div class="chip ${kind}" data-hub="${h.hub}">
+    <span class="sq"></span><span class="nm">${esc(h.short)}</span>
+    <span class="ct">${h.writers.length}w·${h.readers.length}r</span></div>`;
+}
+function flowChip(fid, kind){
+  const f = flowById[fid]; if(!f) return '';
+  return `<div class="chip ${kind}" data-flow="${fid}">
+    <span class="sq" style="background:${macroByName[f.macro]}"></span>
+    <span class="nm">${esc(f.title)}</span>
+    <span class="ct">#${fid}</span></div>`;
+}
+function wireChips(){
+  pBody.querySelectorAll('.chip[data-hub]').forEach(c=>{
+    c.onclick=()=>selectHub(parseInt(c.dataset.hub,10));
+  });
+  pBody.querySelectorAll('.chip[data-flow]').forEach(c=>{
+    c.onclick=()=>selectFlow(c.dataset.flow);
+  });
+}
+
+/* ============================================================
+   Tooltip
+   ============================================================ */
+const tip = document.getElementById('tip');
+function showTip(ev, id, title, isHub){
+  tip.innerHTML = `<div class="tid">${esc(id)}${isHub?' · estado':''}</div><div class="tt">${esc(title)}</div>`;
+  tip.classList.add('on');
+  positionTip(ev);
+}
+function positionTip(ev){
+  let x=ev.clientX+14, y=ev.clientY+14;
+  const b=tip.getBoundingClientRect();
+  if(x+b.width>innerWidth-8) x=ev.clientX-b.width-14;
+  if(y+b.height>innerHeight-8) y=ev.clientY-b.height-14;
+  tip.style.left=x+'px'; tip.style.top=y+'px';
+}
+function hideTip(){ tip.classList.remove('on'); }
+
+/* ============================================================
+   Search
+   ============================================================ */
+const searchInput = document.getElementById('search');
+const hitsEl = document.getElementById('hits');
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if(!q){
+    hitsEl.textContent='';
+    if(selKind==='_search'){ selKind=null; selKey=null; clearHighlight(); showNeutralPanel(); }
+    return;
+  }
+  const matches = DATA.flows.filter(f =>
+    f.title.toLowerCase().includes(q) || f.id.includes(q) ||
+    f.module.toLowerCase().includes(q) || f.macro.toLowerCase().includes(q));
+  hitsEl.textContent = matches.length+'';
+  selKind='_search'; selKey=q;
+  renderSelection();
+});
+searchInput.addEventListener('keydown', e => {
+  if(e.key==='Enter'){
+    const q=searchInput.value.trim().toLowerCase();
+    const m = DATA.flows.find(f=>f.title.toLowerCase().includes(q)||f.id.includes(q));
+    if(m){ searchInput.blur(); selectFlow(m.id); }   // selectFlow pans to the match
+  }
+});
+function searchClear(){ if(document.activeElement!==searchInput){ searchInput.value=''; hitsEl.textContent=''; } }
+
+/* ============================================================
+   Legend collapse + hint
+   ============================================================ */
+const legend=document.getElementById('legend');
+document.getElementById('lgHead').onclick=()=>legend.classList.toggle('collapsed');
+const hint=document.getElementById('hint');
+let hintGone=false;
+function hideHint(){ if(!hintGone){ hint.classList.add('gone'); hintGone=true; } }
+setTimeout(hideHint, 6500);
+
+/* ============================================================
+   utils
+   ============================================================ */
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* ============================================================
+   Boot: settle the simulation off-screen, then reveal
+   ============================================================ */
+// warm up the layout synchronously a bit so it opens already calm
+for(let i=0;i<200 && alpha>alphaMin;i++) tick();
+running = true; alpha = 0.18;   // a touch of settle visible
+applyFilters();                 // seed edge/flow filter classes
+showNeutralPanel();             // persist "como ler a rede" at rest
+fitView();
+applyView();
+render();
+window.addEventListener('resize', ()=>{ /* keep current view; user can FIT */ });
+</script>
+</body>
+</html>

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Picking Parcial — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Picking Parcial</h1>
+  <p class="subtitle">O que acontece quando o operador chega na prateleira e encontra menos do que o sistema mandou pegar</p>
+  <p class="meta">Validação de fluxo · 2026-05-18 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>
+  Durante a separação de um pedido, o sistema diz ao operador onde ir e quantas unidades pegar (ex: "vai na A-03-02 e pega 5 unid do SKU EW123"). Mas o mundo físico nem sempre bate com o sistema — a prateleira pode ter só 2 unidades, ou estar vazia, ou alguém pegou antes. <strong>Picking parcial</strong> é o mecanismo que permite o operador dizer "consegui pegar X de Y", o sistema corrige a contagem (se a loc zerou) e procura automaticamente outra prateleira no mesmo galpão para cobrir o que faltou — sem travar o operador esperando supervisor.
+</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Tornar o picking robusto a divergências de estoque sem interromper o operador: ele resolve no momento, o sistema reorganiza sozinho a cobertura, e só pede ajuda humana quando esgotou as opções do galpão.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal</h2>
+<p>O ponto de partida é o operador na tela de separação com uma linha indicando SKU + quantidade + localização. O ponto de chegada é o item totalmente coberto (ou um modal pedindo ao supervisor pra encaminhar pra outro galpão).</p>
+
+<div class="diagram">
+  <div class="diagram-title">Caminho · do parcial até cobertura completa ou esgotamento</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Operador vê linha<br/>SKU EW123 · 5 unid · Loc A-03-02] --> B[Vai até a prateleira física]
+  B --> C{Quantas unidades<br/>encontrou?}
+  C -->|"Exatamente 5"| D[Pega tudo · bipa · linha picada]
+  C -->|"Menos que 5<br/>ex: só 2"| E[Clica botão Parcial]
+  E --> F[Modal abre<br/>Quantas você pegou? · Loc zerou?]
+  F --> G[Operador informa<br/>qty=2 · loc zerou=sim]
+  G --> H[Sistema dá baixa<br/>de 2 unid no estoque]
+  H --> I{Loc zerou<br/>com sobra no sistema?}
+  I -->|"Sim · ex: tinha 4"| J[Ajuste automático<br/>baixa as 2 fantasmas]
+  I -->|Não| K[Pula ajuste]
+  J --> L[Sistema busca outra loc<br/>no mesmo galpão · 3 unid restantes]
+  K --> L
+  L --> M{Encontrou<br/>outra loc?}
+  M -->|"Sim · ex: B-12-04 tem 8"| N[Cria linha de realocação<br/>3 unid · B-12-04]
+  M -->|Não| O[Modal Sem cobertura<br/>Encaminhar / OC / Pendente]
+  N --> P[Operador vê a nova linha<br/>e segue pickando]
+  P --> C
+
+  style A fill:#dbeafe
+  style D fill:#dcfce7
+  style N fill:#fef3c7
+  style O fill:#fee2e2
+  </pre>
+</div>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um caso real, do bipe inicial até o pedido ficar separado:</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Pedido <strong>#48217</strong> do marketplace pediu <strong>5 unidades</strong> do SKU <strong>EW123</strong> (filtro de óleo). Sistema sugeriu pegar tudo na <strong>Loc A-03-02</strong> do <strong>Galpão CWB</strong>, empresa <strong>NetAir</strong>. Operador <strong>João</strong> assumiu a wave às 14h32.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>João abre a tela de separação no tablet</strong>
+    <p>Vê o checklist do pedido #48217. Uma linha: "EW123 · 5 unid · Loc A-03-02 · NetAir". Status: aguardando picking.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Caminha até a A-03-02 e abre a caixa</strong>
+    <p>Conta as unidades. Em vez das 5 esperadas, encontra apenas <strong>2 unidades</strong> de EW123. A prateleira ficou vazia depois de tirar essas 2.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Clica no botão "Parcial" da linha</strong>
+    <p>Abre um modal mostrando o SKU EW123, a loc A-03-02, e a pergunta: "Quantas unidades você conseguiu pegar?".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Informa qty = 2 e marca "Esta loc zerou"</strong>
+    <p>Ajusta o contador pra 2 com os botões + / − ou digita direto. Marca o checkbox porque a prateleira ficou de fato vazia. Confirma.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema registra a saída das 2 unidades</strong>
+    <p>O saldo de EW123 na A-03-02 cai de 2 → 0. Esse movimento fica gravado no histórico do pedido como "parcial · 2 de 5 · loc zerou".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema busca automaticamente outra loc no Galpão CWB</strong>
+    <p>Procura onde mais tem EW123 no mesmo galpão, ignorando a A-03-02 (que acabou de zerar). Encontra <strong>Loc B-12-04 com 8 unidades</strong>, da mesma empresa NetAir.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Aparece uma nova linha na tela do João</strong>
+    <p>Logo abaixo da linha original (agora marcada "Picado 2/5"), surge: "Realoc · EW123 · 3 unid · Loc B-12-04 · NetAir". Toast confirma: "Encontramos outra loc pras 3 unidades restantes".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>João caminha até a B-12-04</strong>
+    <p>Encontra exatamente as 8 unidades esperadas. Pega 3 e bipa.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Linha de realocação fica "Picado"</strong>
+    <p>O item EW123 agora soma 2 + 3 = 5 unidades. O pedido todo está coberto.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Pedido avança pra próximo status</strong>
+    <p>Quando João bipa todos os SKUs do pedido, status passa de "em separação" pra "separado". A próxima etapa é embalagem.</p>
+  </div>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Resultado</div>
+  Pedido #48217 saiu separado em uma única passagem, sem precisar chamar supervisor — mesmo com a A-03-02 tendo só 40% do que o sistema acreditava. O ajuste de inventário aconteceu automaticamente em paralelo.
+</div>
+
+<h2 id="estados">4. Estados e transições</h2>
+<p>Cada linha de picking (a original do item ou as realocações criadas em cascata) passa pelos seguintes estados:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando picking</span></td>
+      <td>O sistema sugeriu essa loc e está esperando o operador pegar a quantidade.</td>
+      <td>Pedido foi aprovado e entrou em separação — OU — uma realocação anterior foi parcial e o sistema criou essa nova linha.</td>
+      <td>Operador bipa tudo (vai pra "Picado") ou usa o modal Parcial (vai pra "Picado parcial").</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Picado</span></td>
+      <td>A quantidade pedida foi 100% coberta nessa loc. Linha terminal — não muda mais.</td>
+      <td>Operador confirmou bipe normal OU usou Parcial informando qty igual à pedida.</td>
+      <td>Não sai — é estado final.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-neutral">Picado parcial</span></td>
+      <td>Operador pegou menos que o pedido. A linha guarda quantas foram pegas e fica read-only. O residual virou uma nova linha de realocação (ou virou pendência).</td>
+      <td>Operador confirmou o modal Parcial com qty &lt; qty pedida.</td>
+      <td>Não sai — é estado final. O residual vive em outra linha.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Cancelada</span></td>
+      <td>Uma realocação que o operador descartou explicitamente (ex: sabia que aquela loc também estava vazia). Linha sumiu da fila ativa.</td>
+      <td>Operador clicou em "Cancelar" no card da realocação pendente.</td>
+      <td>Não sai — é estado final.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">Pedido em pendente_realocacao</span></td>
+      <td>Status do PEDIDO inteiro (não da linha). Acontece quando o sistema esgotou opções no galpão e o operador não escolheu encaminhar nem criar OC.</td>
+      <td>Cascade não achou outra loc E operador fechou o modal sem decisão.</td>
+      <td>Supervisor entra, decide manualmente: encaminhar pra outro galpão, criar OC, ou retomar com nova loc.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O caminho feliz é "pega parcial → acha outra loc → termina". Mas a vida tem variações. Veja como o sistema reage:</p>
+
+<div class="scenario">
+  <div class="scenario-title">A — A próxima loc TAMBÉM dá parcial (cascade duplo)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Sistema realocou 3 unid pra B-12-04, mas ao chegar lá, João encontra só 1 unidade.<br/>
+    <strong>O que o sistema faz:</strong> João aciona o modal Parcial de novo na linha de realocação. Sistema dá baixa de 1, marca a B-12-04 como zerada, e busca uma terceira loc — ignorando A-03-02 E B-12-04. Encontra C-08-01 com saldo, cria nova linha com 2 unid pendentes.<br/>
+    <strong>O usuário vê:</strong> Linha "Realoc · B-12-04" fica "Picado 1/3". Nova linha "Realoc · C-08-01 · 2 unid" aparece logo abaixo.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">B — Esgotou o galpão (sem cobertura)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Após 2 realocações em cascata, ainda faltam 2 unidades, e o galpão CWB não tem mais nenhuma loc com EW123.<br/>
+    <strong>O que o sistema faz:</strong> Não cria nova linha. Em vez disso, abre automaticamente o modal "Sem cobertura no galpão" com três opções: <strong>Encaminhar</strong> pra outro galpão (ex: SP), <strong>Criar OC</strong> (comprar do fornecedor), ou <strong>Pendente</strong> (deixa pro supervisor decidir depois).<br/>
+    <strong>O usuário vê:</strong> Modal cobrindo a tela. Operador escolhe uma opção; se fechar sem escolher, pedido vai pra status "pendente realocação" e some da fila ativa dele.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">C — Loc estava completamente vazia (qty = 0)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> João chega na A-03-02 e a caixa está vazia. Zero unidades.<br/>
+    <strong>O que o sistema faz:</strong> João abre o modal Parcial, deixa qty = 0, marca "Esta loc estava vazia" (texto do checkbox muda automaticamente quando qty=0). Sistema não dá baixa nenhuma, mas registra o ajuste pra zerar o saldo fantasma e busca outra loc com as 5 unidades inteiras.<br/>
+    <strong>O usuário vê:</strong> Linha original vira "Picado 0/5". Nova realocação aparece com 5 unid na próxima loc disponível.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">D — Loc não zerou, só tinha menos do que o pedido</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Loc A-03-02 deveria ter 5, João pegou 3 e ainda restam 2 unidades visíveis na prateleira. A loc não esvaziou.<br/>
+    <strong>O que o sistema faz:</strong> João informa qty=3 e <strong>deixa o checkbox "loc zerou" desmarcado</strong>. Sistema dá baixa só de 3, NÃO faz ajuste de inventário (saldo de 2 segue íntegro pro próximo pedido), e busca outra loc pras 2 unidades restantes.<br/>
+    <strong>O usuário vê:</strong> Linha "Picado 3/5". Realocação de 2 unid em outra loc.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E — Outra wave já reservou a loc sugerida</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Sistema buscou cobertura e encontrou B-12-04, mas entre achar e mostrar pro João, outro operador na wave paralela reservou aquela posição.<br/>
+    <strong>O que o sistema faz:</strong> No momento de confirmar o parcial, detecta o conflito de reserva e devolve erro "posição reservada". Não cria a linha de realocação dupla. Operador tenta novamente — sistema busca a próxima loc livre.<br/>
+    <strong>O usuário vê:</strong> Toast vermelho "essa posição já foi reservada, tentando outra". Em segundos, nova realocação aparece com loc diferente.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">F — Realocação de outra empresa (vira empréstimo)</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido era da NetAir, mas a única loc restante no galpão CWB com EW123 pertence à empresa NetParts (mesmo grupo Autopeças).<br/>
+    <strong>O que o sistema faz:</strong> Cria a realocação normalmente, mas marca como empréstimo. Saldo da NetParts é debitado, NetAir fica devedora de 2 unidades de EW123. Aparece no relatório de saldos devedores.<br/>
+    <strong>O usuário vê:</strong> A nova linha de realocação tem um marcador discreto "empréstimo · NetParts". João nem precisa pensar nisso — picka normal.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">G — Operador cancela uma realocação pendente</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Sistema criou realocação em D-05-09, mas João sabe (de cabeça ou olhando) que essa loc já está vazia — sem precisar caminhar até lá.<br/>
+    <strong>O que o sistema faz:</strong> João clica no botão "Cancelar" da linha de realocação. A linha vira "Cancelada", e o residual permanece sem cobertura. <strong>Não dispara cascade automático</strong> — operador precisa abrir Parcial em outra linha ou pedir nova busca explicitamente.<br/>
+    <strong>O usuário vê:</strong> Linha some da fila ativa (ou aparece esmaecida). Item segue com qty incompleta — exige nova ação manual.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">H — Tentar fazer Parcial em linha já picada</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> João clicou em Parcial por engano em uma linha que já estava marcada "Picado".<br/>
+    <strong>O que o sistema faz:</strong> Bloqueia a operação. Não permite refazer parcial em algo terminal — o ledger seria duplicado, o que quebraria contagens.<br/>
+    <strong>O usuário vê:</strong> Toast vermelho "essa linha já foi finalizada". Pra corrigir, operador usa o "Desfazer parcial" (que estorna a movimentação) ou chama supervisor.
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

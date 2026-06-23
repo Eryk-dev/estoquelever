@@ -1,0 +1,1575 @@
+{
+  "clusters": [
+    {
+      "cluster": "IDEMPOTENCIA",
+      "primitiva": "Guarda de estado/concorrência antes de mutar: (a) status-guard idempotente — antes de processar, conferir o estado atual da linha e tratar a 2ª chamada como no-op que retorna o mesmo resultado; (b) claim atômico no DB — quando o status-guard tem janela TOCTOU (read-then-act com efeitos no ledger no meio), trocar por UPDATE condicional que reivindica a linha (.eq no status esperado + checar rows afetadas) ou RPC com SELECT FOR UPDATE / advisory lock; (c) idempotency-key estável gerada uma vez no cliente e deduplicada no servidor. NÃO é um lock global — é por (pedido | item | sessão | devolução).",
+      "infra_existente": "JÁ EXISTE e deve ser reusado: (1) Backend de vendas/criar JÁ deduplica por idempotency_key (route.ts:170-189 lê payload_original->>idempotency_key e retorna o pedido existente) — P071 é só hoistar a key no front. (2) RPC siso_processar_bip (20260311_add_separacao_columns.sql:57) usa FOR UPDATE OF pi SKIP LOCKED + quantidade_bipada = quantidade_bipada + 1 (incremento relativo atômico) — modelo exato pra um siso_desfazer_bip do P021. (3) Parcial route JÁ tem claim atômico (Pass A: UPDATE ... SET separacao_marcado=true ... .eq('separacao_marcado', false), parcial/route.ts:616-620) — padrão de reivindicação por UPDATE condicional reusável em P052/P073/P081. (4) prepararPedidosDasOcsParaEmbalagem JÁ tem short-circuit idempotente por status (compras-embalagem.ts:116-119 ja_separados) — falta só o status-guard no UPDATE (linha 154-157). (5) wms_inserir_movimentacao (lock pessimista) e execution-worker (claim atômico + backoff) já são atômicos por si. (6) Botões da UI já usam disabled={isPending}/{enviando}/{loading} (concluir checklist:1032, submit venda:543, parcial-modal:151) — base pro debounce do P018.",
+      "correcoes": [
+        {
+          "ids": [
+            "P003"
+          ],
+          "titulo": "Trava por-pedido no reprocessamento de webhook (evita reservas duplas)",
+          "mecanismo": "O reprocessar não tem nenhum lock e a única idempotência em processWebhookWms (webhook-processor-wms.ts:437-456) só barra estoque_lancado===true; um pedido pendente (transferencia/oc) ou propria-antes-da-fila passa duas vezes e o loop de reservarAtomico (linha 583-606) cria R duplicada por item, dobrando reservado. Criar RPC nova wms_lock_pedido(p_pedido_id text) que faz pg_advisory_xact_lock(hashtext(p_pedido_id)) e envolver a chamada processWebhook dentro dela — OU, mais simples sem advisory: antes de reservar, conferir se já existe mov R viva (origem_tipo='reserva_pedido') pra (pedido,produto) e pular (torna o passo 8 idempotente). Decisão do dono é 'trava: um processamento por vez por pedido' → advisory lock por pedido_id é o mecanismo direto.",
+          "local": "src/app/api/wms/webhook/reprocessar/route.ts:90 (chamada processWebhook) + src/lib/webhook-processor-wms.ts:582-606 (loop de reservarAtomico)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [],
+          "notas": "Confirmado: reprocessar/route.ts não tem lock; o guard estoque_lancado em :443 não cobre pedido pendente. Reservas são criadas via reservarAtomico (wms_reservar_atomico, tipo R) sem dedup. Gotcha CLAUDE.md #2: pedido_id é TEXT, então hashtext(text) serve direto pro advisory lock. Não há nenhum pg_advisory no codebase hoje (grep vazio) — RPC é nova."
+        },
+        {
+          "ids": [
+            "P052"
+          ],
+          "titulo": "Status-guard atômico em classificarDevolucao (rejeita 2ª chamada)",
+          "mecanismo": "classificarDevolucao lê d.status no início (devolucoes.ts:118 'if status != aguardando_classificacao throw') mas só grava status='classificada' no FIM (linha 327-331), depois de TODOS os inserirMovimentacao. Janela TOCTOU enorme: 2 cliques passam o guard e ambos rodam o switch, criando movs duplicadas. Trocar o read-then-throw por um CLAIM atômico no começo: UPDATE siso_devolucoes_pendentes SET status='classificando' WHERE id=? AND status='aguardando_classificacao' e checar rowCount===0 → segunda chamada não reivindica → retorna/throw 'já em classificação'. No fim seta 'classificada'. Reusa o padrão de claim por UPDATE condicional já usado no parcial Pass A.",
+          "local": "src/lib/wms/devolucoes.ts:101-118 (guard) e :327-331 (update final)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Decisão do dono é exatamente 'verificar status antes de processar; rejeita 2a chamada'. Precisa de um status intermediário 'classificando' (ou usar claim só com WHERE status='aguardando_classificacao' num UPDATE no-op-detector). CHECK do status na tabela pode precisar aceitar 'classificando' — verificar constraint; se houver CHECK enumerado, vira migration. Mexe em ledger (inserirMovimentacao) → risco alto."
+        },
+        {
+          "ids": [
+            "P071"
+          ],
+          "titulo": "Gerar idempotency_key uma vez ao abrir o form de venda manual",
+          "mecanismo": "O backend JÁ deduplica (vendas/criar/route.ts:173-189: lê payload_original->>idempotency_key, status!=cancelado, retorna pedido existente com idempotente:true). O bug é 100% frontend: crypto.randomUUID() é chamado DENTRO do submit (nova/page.tsx:183), gerando key nova a cada clique → backend não reconhece como duplicata. Hoistar a key pra um useState inicializado uma vez (useState(() => crypto.randomUUID())) no mount do form; usar essa key em todo submit; regenerar SÓ após sucesso (nova venda). Botão já tem disabled={enviando} (linha 543) + guard if(enviando)return (linha 167), então é exatamente o caso 'se o disable falhar, backend reconhece'.",
+          "local": "src/app/wms/vendas/nova/page.tsx:183 (mover pra useState no componente, ~linha 121 junto dos outros useState)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Infra de dedup do servidor 100% pronta e testada (comentário 'P3 #7.7'). Correção mínima e cirúrgica: 1 useState + reset no onSuccess. Risco baixo (só front). Atende literal a nota do dono."
+        },
+        {
+          "ids": [
+            "P021"
+          ],
+          "titulo": "Desfazer-bip decrementa exatamente 1 atômico (lost-update fix)",
+          "mecanismo": "desfazer-bip/route.ts:84-103 faz read (currentBipada) → compute newBipada=currentBipada-1 → UPDATE com valor ABSOLUTO, sem WHERE quantidade_bipada=currentBipada. Dois cliques lêem 3, ambos gravam 2 → lost update. Decisão do dono: 'sempre diminui exatamente 1'. Mecanismo: decremento relativo no DB. Como supabase-js não faz column=column-1 em .update(), criar RPC siso_desfazer_bip(p_pedido_id text, p_produto_id) espelhando siso_processar_bip (FOR UPDATE OF pi SKIP LOCKED; SET quantidade_bipada = GREATEST(quantidade_bipada-1,0), bipado_completo = (quantidade_bipada-1)>=quantidade_pedida) e devolver o novo valor — a route consome igual ao bipar (bipar/route.ts:46 já chama siso_processar_bip). Recompor a lógica de reversão de status do pedido (embalado→em_separacao etc, linhas 117-186) em volta do retorno da RPC.",
+          "local": "src/app/api/wms/separacao/desfazer-bip/route.ts:84-115 (substituir read+update por chamada à RPC)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": true,
+          "depende_de": [],
+          "notas": "Modelo pronto: siso_processar_bip (20260311_add_separacao_columns.sql:57) é o espelho exato (incremento). Não toca ledger diretamente (só quantidade_bipada, que é contador de conferência), por isso risco médio e não alto. A reversão de cutover (reverterCutoverSeRetrocedeu, :175) continua fora da RPC, no app."
+        },
+        {
+          "ids": [
+            "P073"
+          ],
+          "titulo": "Concluir idempotente: pedido já 'separado' não re-dispara efeitos",
+          "mecanismo": "concluir/route.ts já é parcialmente idempotente — o UPDATE pra separado tem .eq('status_separacao','em_separacao') (linha 233), então a 2ª chamada não re-grava status. MAS o bucketing (linhas 103-147) joga o pedido já-separado de volta em 'separados' (itens continuam separacao_marcado=true), e os efeitos colaterais re-disparam: dispararCutoverSePronto (285-292), preCriarAgrupamentos (297), registrarEventos separacao_concluida (273-281). Decisão do dono: '2o clique retorna a mesma resposta (ok, X concluídos, Y pendentes)' SEM re-efeito. Fix: no SELECT de items, trazer também siso_pedidos.status_separacao; no bucketing, se o pedido JÁ está 'separado', classificar como ja_separado (reportar como concluído na resposta) mas EXCLUIR do separadosCompletos que dispara cutover/agrupamento/evento. Reusa o padrão ja_separados de compras-embalagem.ts:116-119.",
+          "local": "src/app/api/wms/separacao/concluir/route.ts:43-48 (add join status pedido) e :99-147 (bucketing) e :273-308 (efeitos só pra quem transitou)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "O guard .eq('em_separacao') já evita corromper status; o gap real é efeito-colateral duplicado (evento duplicado no histórico, cutover/agrupamento re-disparados). dispararCutoverSePronto é descrito como idempotente (comentário linha 284) mas re-disparar é desperdício e o registrarEventos NÃO é idempotente. Risco médio: cutover toca ledger se mal-disparado."
+        },
+        {
+          "ids": [
+            "P081",
+            "P080"
+          ],
+          "titulo": "Cross-dock: status-guard no UPDATE pra separado (não atropela em_separacao + idempotente)",
+          "mecanismo": "prepararPedidosDasOcsParaEmbalagem (compras-embalagem.ts) já tem short-circuit pra status==='separado' (ja_separados, :116-119) — isso cobre boa parte do P080 (idempotência). Os gaps: (1) P081 — PACKABLE_STATUSES inclui 'em_separacao' (:9), e o UPDATE pra 'separado' (:154-157) NÃO tem .eq('status_separacao', estado-esperado): há TOCTOU entre o SELECT (:85) e o UPDATE, e pior, atropela um pedido que um operador moveu manualmente pra em_separacao. (2) P080 — entre o SELECT e o UPDATE duas execuções concorrentes do trigger podem ambas pegar o pedido em aguardando_separacao. Fix único: adicionar .eq('status_separacao', pedido.status_separacao) (o valor lido) no UPDATE da linha 154-157 → vira claim atômico (rows afetadas=0 ⇒ alguém mudou, pula). Para honrar a decisão do P081 ('não atropelar separação manual em_separacao'), remover 'em_separacao' de PACKABLE_STATUSES ou tratá-lo como ignorado quando há operador ativo. crossdock-trigger.ts:74-90 já filtra por todosRecebidos, mas o UPDATE de status mora aqui.",
+          "local": "src/lib/compras-embalagem.ts:7-12 (PACKABLE_STATUSES) e :154-157 (UPDATE sem status-guard)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "MERGE: P080 (idempotência 'já rodou') e P081 (status-guard antes de mudar) caem no MESMO UPDATE de compras-embalagem.ts:154-157 — um claim atômico .eq('status_separacao', valor_lido) resolve os dois. Files dos dois P-IDs são null no JSON, mas o trigger é crossdock-trigger.ts→prepararPedidosDasOcsParaEmbalagem. Decisão do P081 pede explicitamente não sobrescrever em_separacao manual → também ajustar PACKABLE_STATUSES."
+        },
+        {
+          "ids": [
+            "P072"
+          ],
+          "titulo": "marcar-item: status-guard idempotente quando já marcado",
+          "mecanismo": "O POST de marcar-item (marcado===true) não confere separacao_marcado: o SELECT (:44-46) nem traz a coluna e não há early-return. 2º clique re-roda pickItemAtomico (:141) — se a R já foi consumida, buscarReservaPendentePorProduto retorna null e cai em buscarLocComMaiorSaldoNoGalpao (:124) gerando OUTRO S → dupla baixa. Decisão do dono: 'ID único por marcação; clicar 100x conta 1'. Fix idempotente reusando estado existente: incluir separacao_marcado no SELECT e, no topo do bloco marcado, se item.separacao_marcado===true && quantidade_pega===quantidade_pedida, retornar o item como já-marcado (no-op idempotente) sem nova mov. Para fechar a corrida fina, fazer o UPDATE de :221-231 com .eq('separacao_marcado', false) (claim) ANTES do pick, abortando se 0 rows.",
+          "local": "src/app/api/wms/separacao/marcar-item/route.ts:42-48 (add separacao_marcado no select) e :82-93 (guard idempotente antes do pick)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Mesmo arquivo do P013/P014/P015 mas mecanismo distinto (idempotência, não atomicidade do estorno). Toca caminho de pick (L+S via pickItemAtomico) → risco alto. O claim .eq('separacao_marcado', false) é o mesmo padrão do parcial Pass A. Gotcha #6: pickMovPicking não é idempotente — por isso o guard tem que vir ANTES da baixa."
+        },
+        {
+          "ids": [
+            "P043"
+          ],
+          "titulo": "Devolver item de compra idempotente (descarta clique repetido)",
+          "mecanismo": "devolver/route.ts:44-58 faz UPDATE incondicional do item pra aguardando_compra + ordem_compra_id=null e sempre retorna ok:true + re-dispara registrarEvento (:62). 2º clique: item já está aguardando_compra/OC null, UPDATE 'sucede' de novo, cancelOcIfEmpty no-opa (compras-utils.ts:183 retorna cedo com ordemCompraId null), mas o histórico ganha um evento 'compra_item_devolvido' duplicado e o operador vê ok:true enganoso. Decisão do dono (op2): 'ID único no servidor, descartar cópias'. Mecanismo reusando estado: tornar o UPDATE um claim — .eq('id', itemId).neq('compra_status','aguardando_compra') (ou .not('ordem_compra_id','is',null)); se 0 rows afetadas, é repetição → retornar resposta idempotente {ok:true, ja_devolvido:true} SEM re-registrar evento nem re-chamar cancelOcIfEmpty.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/devolver/route.ts:44-60",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Não precisa de idempotency-key cross-request (overkill p/ esse fluxo): o próprio status do item é a chave natural — claim por UPDATE condicional atende a nota 'descartar cópias idênticas'. cancelOcIfEmpty já é safe com OC null. Risco baixo (não toca ledger)."
+        },
+        {
+          "ids": [
+            "P055"
+          ],
+          "titulo": "Unique parcial: uma sessão de inventário ativa por galpão+dia",
+          "mecanismo": "criarSessao (inventario.ts:50-65) faz INSERT sem checar duplicata; a route (inventario/route.ts:48-80) também não. 2 cliques criam 2 sessões. Decisão do dono: 'banco rejeita sessão duplicada por galpão+data'. Mecanismo: migration com índice único parcial em siso_inventario_sessoes: CREATE UNIQUE INDEX uq_inv_sessao_galpao_dia ON siso_inventario_sessoes (galpao_id, (criado_em::date)) WHERE status IN ('planejada','em_andamento'). No criarSessao, capturar o erro de unique violation (23505) e re-throw como mensagem amigável 'já existe sessão ativa neste galpão hoje' (a route já encaminha pro wmsErrorResponse 400, :81-90).",
+          "local": "src/lib/wms/inventario.ts:50-66 (catch do 23505) + nova migration sobre siso_inventario_sessoes",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": true,
+          "depende_de": [],
+          "notas": "ATENÇÃO schema: a tabela LIVE é a do rewrite (20260512_wms_inventario_rewrite.sql ALTERa adicionando nome/tamanho_pool — bate com o código que insere tamanho_pool). NÃO tem coluna 'data' dedicada no rewrite; usar (criado_em::date). O 20260529_wms_inventario.sql tem programada_para mas parece uma 2ª definição paralela — confirmar no banco staging qual está ativa antes de escolher a coluna do índice. Risco médio: índice único pode falhar ao aplicar se já houver duplicatas em staging."
+        },
+        {
+          "ids": [
+            "P018"
+          ],
+          "titulo": "Debounce de 2s no botão Parcial (frontend)",
+          "mecanismo": "Decisão do dono é puramente frontend: 'desabilitar o botão por 2s após o 1º clique'. O backend (parcial/route.ts) já tem validação (:136-143 retorna 409 se já processado) + claim atômico Pass A (:616-620), mas a corrida descrita pelo dono é o 2º clique chegar com atraso e escorregar antes do claim. O botão 'Parcial' do checklist (checklist/page.tsx:1097-1098) só abre o modal; o confirm do modal (parcial-modal.tsx:149-156) já tem disabled={loading} — mas loading só vira true dentro de handleParcialConfirm (:732). Fix: adicionar um cooldown de 2s no onParcial/onConfirm — setState de bloqueio com setTimeout, mantendo o botão disabled por 2000ms após o 1º clique, independente da latência da resposta.",
+          "local": "src/app/wms/separacao/checklist/page.tsx:1097-1098 (onParcial) e/ou src/components/wms/separacao/parcial-modal.tsx:149-156 (onConfirm)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Mecanismo é DIFERENTE do resto do cluster: é debounce de UI, não idempotência de servidor. O backend já barra a maioria via 409+Pass A; o dono escolheu explicitamente a opção 1 (trava de UI 2s) e não a transação. Por isso fica isolado (não merge com os de servidor). P019 (mesmo botão, file null) é op1=transação tudo-ou-nada — NÃO está neste cluster, é mecanismo distinto."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P080",
+          "P081"
+        ]
+      ],
+      "noops": []
+    },
+    {
+      "cluster": "ATOMICIDADE — passos multi-etapa (N movs no ledger + UPDATE de status / linhas-ponte) que hoje rodam como chamadas independentes fora de transação; falha no meio deixa estado partido (saldo mexido sem status, ou ledger meio-estornado) e bloqueia retry/avanço do pedido.",
+      "primitiva": "Estender o padrão já consagrado de RPC plpgsql atômica (espelhar wms_confirmar_guarda_atomico / wms_replenishment_intra_galpao / wms_pick_item_atomico): uma função plpgsql que faz SELECT ... FOR UPDATE na linha-âncora (pedido/devolucao/sessao/transferencia/pendencia), chama wms_inserir_movimentacao N vezes E executa o(s) UPDATE(s) de status na MESMA transação. Qualquer RAISE EXCEPTION dá rollback automático de tudo. O TypeScript vira um wrapper fino que chama .rpc() e propaga erro. Para os caminhos de ESTORNO/DESFAZER, criar RPCs inversas (estorno de N movs + reset de status numa tx) — o ledger imutável já tem estornarMovimentacao idempotente, falta só envelopá-lo.",
+      "infra_existente": "JÁ EXISTE e deve ser reusado: (1) wms_inserir_movimentacao — único write atômico do ledger, com FOR UPDATE, validação de coerência e update do cache, chamável de dentro de plpgsql (assim como em wms_replenishment_intra_galpao). (2) Três RPCs-modelo que JÁ fazem 'N movs + status na mesma tx': wms_confirmar_guarda_atomico (FOR UPDATE na pendência + replenishment + UPDATE status), wms_replenishment_intra_galpao (par S+E numa tx), wms_pick_item_atomico (L+S numa tx — usado pelo path FORWARD de marcar-item). (3) estornarMovimentacao (ledger.ts:363) com guards de idempotência ('já estornada'/'já é estorno') e wms_estornar_parcial_movimentacao para residual. (4) Padrão de 'compensating estorno' best-effort já tentado em receberEstoque/receber-oc (mostra a intenção, mas é justamente o que falha — substituir por rollback transacional real). (5) Rota /saldo-recebimento-orfao + tela de pendências para o 'painel listando entradas com problema' do P028. Convenção crítica: siso_movimentacoes.origem_id/pedido_id são TEXT; passar como text nas RPCs (não uuid).",
+      "correcoes": [
+        {
+          "ids": [
+            "P012"
+          ],
+          "titulo": "Iniciar separação: consolidar ANTES de marcar em_separacao",
+          "mecanismo": "Reordenar o fluxo: mover a chamada da RPC siso_consolidar_produtos_separacao (hoje em 167-182, DEPOIS do UPDATE) para ANTES do UPDATE de status. Se a consolidação falhar, retorna erro sem ter tocado em status_separacao — nenhum pedido fica órfão em em_separacao. Não envolve ledger; é pura reordenação + remover o comentário 'Orders are already updated' (linha 177). Não precisa de transação DB: basta que o UPDATE só rode após consolidação bem-sucedida.",
+          "local": "src/app/api/wms/separacao/iniciar/route.ts:141-182 (mover bloco 167-182 para antes de 141-161)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: UPDATE em_separacao em 142-150, RPC consolidar em 168-171; o próprio código admite 'Orders are already updated' em 177. Cluster bate parcialmente — aqui não há ledger nem N-movs, é só ordenação de efeitos colaterais. Não confundir com os outros (não precisa de RPC nova)."
+        },
+        {
+          "ids": [
+            "P014"
+          ],
+          "titulo": "Desmarcar item (checkbox): estorno S+L tudo-ou-nada",
+          "mecanismo": "Criar RPC inversa de wms_pick_item_atomico (ex: wms_desmarcar_item_atomico) que recebe os mov_ids dos links (saida + liberacao_reserva) e, numa única transação plpgsql: estorna a S (gera E) e re-cria a R (ressuscita reserva_pedido) na ordem S-antes-de-L (preservando invariante I2), deleta as linhas de siso_pedido_item_mov_links e dá UPDATE no item (separacao_marcado=false, quantidade_pega=null, mov_saida_id=null) — tudo ou nada. Substitui o loop TS de 258-316 que hoje só faz logger.warn e segue (não desfaz). Reusar a lógica de estornarLiberacaoReserva/estornarMovimentacao dentro do plpgsql ou portá-la pra SQL.",
+          "local": "src/app/api/wms/separacao/marcar-item/route.ts:258-332 (bloco else 'Desmarcar')",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_pick_item_atomico (existente, modelo inverso)"
+          ],
+          "notas": "Confirmado: loop 258-293 pega cada link e chama estornarMovimentacao/estornarLiberacaoReserva em try/catch que só warna (287-292); se um falha, item fica marcado mas estoque não devolvido. O path FORWARD (marcar) já é atômico via pickItemAtomico (141-164) — só o reverso está quebrado. Decisão do dono = 'desfazimento tudo-ou-nada'."
+        },
+        {
+          "ids": [
+            "P019"
+          ],
+          "titulo": "Marcar parcial/checkbox: baixa S + liberação R + update item numa tx",
+          "mecanismo": "O par L+S do pick já é atômico via wms_pick_item_atomico (marcar-item 141-164). O gap residual de P019: APÓS o pick atômico, o insert em siso_pedido_item_mov_links (210-212) e o UPDATE do item (221-231) rodam soltos — se a rede cair entre o pick e o update do item, a S/L já saíram mas o item nunca fica marcado (exatamente o sintoma descrito). Estender wms_pick_item_atomico (ou wrapper novo) pra também gravar os mov_links e setar separacao_marcado/quantidade_pega/mov_saida_id na mesma RPC, eliminando a janela. Nota: P019 file=null e flow='parcial' — ver também a rota /separacao/parcial que tem a mesma estrutura de 2-movs + update; aplicar o mesmo wrap lá.",
+          "local": "src/app/api/wms/separacao/marcar-item/route.ts:141-231 (pick + links + update); checar também src/app/api/wms/separacao/parcial/route.ts",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_pick_item_atomico"
+          ],
+          "notas": "Cluster bate, mas com nuance: o ledger (L+S) JÁ é atômico — o que falta é puxar o UPDATE de siso_pedido_itens + mov_links PARA DENTRO da mesma transação. Decisão do dono = 'op1' (transação tudo-ou-nada; se internet cai, estoque volta). Sem ver /parcial inteiro não confirmo se é a mesma RPC; marcar como dependência de leitura."
+        },
+        {
+          "ids": [
+            "P023"
+          ],
+          "titulo": "Reversão de cutover (estorno S + recria R) tudo-ou-nada",
+          "mecanismo": "Criar RPC wms_reverter_cutover_atomico(p_pedido_id text, p_usuario_id, p_motivo) que numa única transação plpgsql: faz SELECT FOR UPDATE no pedido, lê todas as saídas S do pedido (via origem_id nf_venda + mov_saida_id dos itens), para cada uma estorna (E) E re-cria a R (par), e só então seta estoque_lancado=false/nf_estoque_lancado=false. Se QUALQUER estorno ou recriação de R falha → RAISE EXCEPTION → rollback total (nem a flag muda). Substitui o loop TS 290-341 e o UPDATE incondicional da flag em 343-346. O bloco de idempotência (pula S com E counter, 275-284) vira o lookup FOR-UPDATE dentro da RPC.",
+          "local": "src/lib/wms/cutover.ts:286-375 (loop + flush da flag); caller src/app/api/wms/separacao/desfazer-bip/route.ts:175-185",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao",
+            "wms_reservar_atomico"
+          ],
+          "notas": "Confirmado: loop 290-341 conta saidasEstornadas/reservasRecriadas/reservasFalhadas e segue mesmo com falha; flag estoque_lancado=false setada em 343-346 SEMPRE, mesmo com reservasFalhadas>0 (só grava status_alerta). É o caso clássico '3 de 5 estornados, flag falsa'. cutover.ts é backstop crítico — risco alto. Caller desfazer-bip ainda chama via .catch() fire-and-forget (175-185): trocar pra await + propagar erro."
+        },
+        {
+          "ids": [
+            "P028"
+          ],
+          "titulo": "Recebimento manual: mov E + pendência de guarda tudo-ou-nada",
+          "mecanismo": "Criar RPC wms_receber_estoque_atomico que para cada item faz, numa única transação: wms_inserir_movimentacao(E) + INSERT em siso_wms_pendencias_guarda. Se a pendência falha (FK quebrada, loc destino sumida) → RAISE EXCEPTION → rollback da mov E também. Substitui o padrão best-effort atual de movimentacoes.ts:172-240 (insere mov, tenta criarPendencia, no catch tenta estornar — e se o estorno TAMBÉM falha, deixa 'mov órfã' + log forte, 225-237). Para o requisito 'tela listando entradas com problema' do dono: já existe /api/wms/saldo-recebimento-orfao — apontar a UI pra ele. Aplicar o MESMO wrap em receber-oc.ts:135-246 (mesma estrutura mov E + criarPendencia + compensating estorno).",
+          "local": "src/lib/wms/movimentacoes.ts:172-240 (receberEstoque); src/lib/wms/receber-oc.ts:135-246 (receberItensViaOC)",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "P028 file=null mas 'atualiza qty + grava histórico, se histórico falha só faz (1), marca aviso no painel' = exatamente receberEstoque. Já há compensating estorno (intenção certa) que é JUSTAMENTE o que falha — substituir por rollback real da tx. /saldo-recebimento-orfao confirma o 'painel de pendências'. Decisão do dono = 'tudo-ou-nada trancado + tela'."
+        },
+        {
+          "ids": [
+            "P037"
+          ],
+          "titulo": "Troca de SKU em compra: update do item + auditoria numa tx",
+          "mecanismo": "Hoje o UPDATE de siso_pedido_itens (186-199) e o registrarEventos (213) são dois writes independentes. Decisão do dono = tudo-ou-nada. Opção mínima: mover o registrarEventos pra ANTES do retorno e, se quiser garantia real, envolver UPDATE+INSERT-histórico numa RPC plpgsql trivial (sem ledger). PORÉM: ler o código revela que registrarEventos é fire-and-forget SAFE (historico-service.ts:148-185 — captura tudo, nunca throw, só logger.warn). Logo o sintoma da ficha ('lança erro, operador vê erro ao salvar, dado já gravado') NÃO ocorre mais no código atual: a auditoria falha em silêncio, não derruba a request. A correção verdadeira aqui é cosmética/observabilidade, não atomicidade de saldo.",
+          "local": "src/app/api/wms/compras/trocar-sku/route.ts:186-199 (update) e 213-231 (registrarEventos)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "DISCREPÂNCIA confirmada lendo o código: a ficha P037 descreve registrarEventos lançando erro, mas registrarEventos/registrarEvento são fire-and-forget safe (nunca throw — historico-service.ts:5,107,159,180). Sem ledger envolvido. Provável que a ficha mire o estado antigo. Pragmaticamente é quase no-op de risco; agrupável com P036 (mesma rota/linhas 186-199), que é o fix de verdade aqui (bloquear troca com compra ativa). Recomendo tratar P037 como observabilidade, não como tx crítica."
+        },
+        {
+          "ids": [
+            "P049",
+            "P050"
+          ],
+          "titulo": "Classificar devolução: 1-3 movs + flip de status numa tx única",
+          "mecanismo": "Criar RPC wms_classificar_devolucao_atomico que recebe (devolucao_id, classificacao, tripla, qty, tags, loc_quarentena_id) e numa transação: SELECT FOR UPDATE da devolução (guarda status='aguardando_classificacao' — resolve também o P052 de duplo-clique), executa os N movs conforme a classe (íntegra=1 E; avariado=E+S+E quarentena; garantia=E+S fornecedor; troca_sku=1 E) via wms_inserir_movimentacao, e dá UPDATE status='classificada'. Qualquer falha → rollback (nem mov nem status). Substitui classificarDevolucao TS (194-323 movs soltos + 325-334 update). Para o caso avariado-sem-quarentena, manter a decisão do P051 (bloquear) validando ANTES, dentro da mesma RPC.",
+          "local": "src/lib/wms/devolucoes.ts:101-340 (classificarDevolucao). P049=movs 212-269 + status 325-334; P050=mov íntegra 194-206 + status 325-334",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "P049 e P050 são a MESMA função classificarDevolucao — P050 é o caso íntegra (1 mov E + status), P049 é o caso avariado (3 movs + status). Um único RPC resolve ambos. Decisão idêntica: 'tudo-ou-nada movs+status'. Toca também P051 (validar quarentena antes) e P052 (FOR UPDATE = trava 2o clique) — a RPC já entrega esses de brinde se desenhada com o FOR UPDATE + validação prévia."
+        },
+        {
+          "ids": [
+            "P056"
+          ],
+          "titulo": "Estornar sessão de inventário: estorno em bloco tudo-ou-nada",
+          "mecanismo": "Criar RPC wms_estornar_sessao_inventario_atomico(p_sessao_id, p_usuario_id, p_motivo) que numa transação: FOR UPDATE na sessão, para cada divergência aplicada estorna a mov (E↔S via lógica de estornarMovimentacao portada/chamada) e reseta divergencia.status='pendente', depois seta sessao.status='revisao'. Se um estorno bate saldo negativo → RAISE EXCEPTION com nome do produto → rollback total (nenhuma divergência desfeita). Substitui o loop TS 1190-1215 que hoje faz throw no meio deixando as primeiras 49 estornadas. O dono pede explicitamente 'aviso claro do produto que ficaria negativo' — incluir na mensagem do RAISE.",
+          "local": "src/lib/wms/inventario.ts:1183-1215 (estornarSessaoInventario)",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "Confirmado: loop 1190-1215, throw err em 1209 no meio = estorno parcial. Família com P060 (mesma sessao_inventario, direção inversa) e com P061 (mesma tabela, mas P061 NÃO é cluster — decisão lá é 'desfaz o que consegue', oposto). Cuidado: P056 quer tudo-ou-nada, P061 quer best-effort — NÃO unificar a fundo, são funções/decisões diferentes."
+        },
+        {
+          "ids": [
+            "P057"
+          ],
+          "titulo": "Contagem inline no pick: mov + contagem + divergência numa tx",
+          "mecanismo": "Criar RPC wms_registrar_contagem_inline_atomico que faz numa transação: getOrCreate da sessão contínua, a mov de reconciliação (inventario_ganho/perda) via wms_inserir_movimentacao, o INSERT em siso_inventario_contagens, o upsert em siso_inventario_divergencias e o upsert de loc na sessão. Tudo ou nada. Substitui contagem-inline.ts:99-172 que o PRÓPRIO comentário (99-106) admite ser não-atômico ('limitação aceita v1 ... revisitar com RPC transacional se virar problema'). A RPC remove a janela onde a mov sai mas a contagem não grava.",
+          "local": "src/lib/wms/contagem-inline.ts:99-172 (registrarContagemInline)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "Confirmado e AUTODECLARADO: comentário 99-106 diz textualmente '⚠ NÃO-ATÔMICO (limitação aceita v1)' e sugere 'uma RPC transacional'. Bate 1:1 com o cluster e com a decisão do dono ('contagem + saldo numa transação única'). O mais limpo do cluster — sem ambiguidade."
+        },
+        {
+          "ids": [
+            "P060"
+          ],
+          "titulo": "Aplicar divergências de inventário: aplica tudo-ou-nada",
+          "mecanismo": "Criar RPC wms_aplicar_sessao_inventario_atomico(p_sessao_id, p_usuario_id) que numa transação: FOR UPDATE na sessão (guarda status='aprovada', com no-op idempotente se já 'aplicada'), para cada divergência aprovada com delta!=0 gera a mov (E ganho/S perda, carregando custo_medio no ganho) e seta divergencia.status='aplicada'+mov_aplicada_id, libera locks e seta sessao.status='aplicada'. Se uma divergência falha (saldo mudou → coerência) → RAISE EXCEPTION → rollback de TODAS (nenhuma fica meio-aplicada). Substitui o loop TS ~1012-1100 que hoje dá throw no meio (1063) deixando D1/D2 aplicadas e a sessão sem transicionar. Preservar o branch de idempotência UNIQUE (23505) como no-op dentro da RPC.",
+          "local": "src/lib/wms/inventario.ts:1012-1103 (loop de aplicação; ref da ficha 1095-1100 é o UPDATE final de status)",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "Confirmado: loop 1012-1077 com inserirMovimentacao+update por divergência; throw err em 1063 (branch não-UNIQUE) no meio = D1/D2 aplicadas, D3 não, sessão não vira 'aplicada' (UPDATE condicional 1096-1100 só roda no fim). Família direta de P056 (mesma sessão, direção oposta) — um par de RPCs (aplicar/estornar) cobre ambos. Decisão do dono = 'descartar tudo e voltar ao estado anterior'."
+        },
+        {
+          "ids": [
+            "P067"
+          ],
+          "titulo": "Desfazer recebimento de transferência: estorno legs + reset numa tx",
+          "mecanismo": "Criar RPC wms_desfazer_recebimento_transferencia_atomico que numa transação: FOR UPDATE no header (guarda status='recebida' — também fecha a porta dos P062/P066/P068 de concorrência), estorna cada leg E (mov_entrada_id dos itens), reseta os itens (mov_entrada_id=null, localizacao_destino_id=null) e volta o header pra 'em_transito'. Qualquer falha → rollback total (nenhuma mercadoria devolvida, papelada intacta). Substitui transferencias.ts:628-662 onde o loop estorna legs (throw em 641) ANTES de resetar itens/header (646-662) — se quebra no meio, devolve estoque mas não ajusta itens/header.",
+          "local": "src/lib/wms/transferencias.ts:588-665 (desfazerRecebimentoTransferencia)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "P067 file=null mas o título/flow ('Desfazer o recebimento de transferência entre galpões') casa exatamente com desfazerRecebimentoTransferencia (588). Confirmado: estorno em loop 628-643, reset itens 646-652 e header 655-662 SÓ depois — partial se loop falha. O FOR UPDATE no header desta RPC complementa o lock pedido em P062/P066/P068 (mesma tabela). Decisão = 'tudo-ou-nada'."
+        },
+        {
+          "ids": [
+            "P075"
+          ],
+          "titulo": "Venda manual baixa_direta: criar N saídas e estorno de limpeza atômicos",
+          "mecanismo": "Mover a baixa_direta inteira pra RPC wms_criar_venda_baixa_direta_atomico: numa transação cria o pedido+itens e as N movs S (split por loc) via wms_inserir_movimentacao; se QUALQUER mov falha → RAISE EXCEPTION → rollback automático de TODAS as saídas + pedido (elimina o rollbackBaixaDireta manual de 515-538 que hoje, ao falhar um estorno, loga 'DADOS POSSIVELMENTE INCONSISTENTES' e deleta o pedido mesmo assim). O FOR UPDATE nas linhas de siso_estoque das triplas envolvidas (feito por wms_inserir_movimentacao) já entrega o 'trancar a prateleira durante o estorno' pedido pelo dono — não precisa de lock manual separado, e a trava auto-libera no fim da tx.",
+          "local": "src/app/api/wms/vendas/criar/route.ts:507-660 (bloco baixa_direta + rollbackBaixaDireta 515-538)",
+          "esforco": "L",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "Confirmado: rollbackBaixaDireta 515-538 itera estornarMovimentacao; no catch (523-534) loga inconsistência e segue deletando pedido (536-537). Com tx real o rollback nem precisa de estorno manual — o PostgreSQL desfaz as S não-commitadas. Decisão do dono ('trancar prateleira + tudo-ou-nada nas 3 saídas + trava auto-libera') é exatamente o que o FOR UPDATE da RPC dá de graça."
+        },
+        {
+          "ids": [
+            "P077"
+          ],
+          "titulo": "Cancelar venda: as N devoluções (estornos S) como bloco indivisível",
+          "mecanismo": "Criar RPC wms_cancelar_venda_manual_atomico(p_pedido_id text, p_usuario_id, p_motivo) que numa transação: FOR UPDATE no pedido (idempotente se já 'cancelado'), busca as movs S origem_tipo='venda_manual' do pedido (filtro origem_detalhes->>pedido_id_manual), estorna TODAS (E counter) e só então seta status='cancelado'. Se um estorno falha → RAISE EXCEPTION → rollback total (nenhuma devolvida, pedido segue ativo). Substitui o loop TS de vendas-cancelamento.ts:105-121 + UPDATE 124-127 onde, se o 3o estorno dá throw (119), os 2 primeiros já foram revertidos mas o pedido NÃO vira cancelado. Manter o guard de idempotência ('já estornada') dentro da RPC.",
+          "local": "src/lib/wms/vendas-cancelamento.ts:105-127 (caminho baixa_direta do cancelarVendaManual)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "wms_inserir_movimentacao"
+          ],
+          "notas": "P077 file='flow-055' (sem path) mas título/flow ('Cancelamento de Vendas', 3 devoluções como bloco) = caminho baixa_direta de cancelarVendaManual. Confirmado: loop 105-121 estorna 1-a-1 com throw no meio (119), status='cancelado' só em 124-127 depois. Mesma família estrutural de P075 (criar vs cancelar venda manual) — par de RPCs simétrico. Decisão = 'as 3 devoluções como bloco indivisível; só cancela se devolver as 3'."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P049",
+          "P050"
+        ],
+        [
+          "P056",
+          "P060"
+        ]
+      ],
+      "noops": []
+    },
+    {
+      "cluster": "LOCK_CONCORRENCIA — serialização de operações multi-movimento na mesma prateleira / transferência",
+      "primitiva": "Claim cooperativo via UPDATE condicional no header da entidade (status / coluna `*_em_andamento_por`) ANTES de emitir a sequência de movs no ledger. A primitiva NÃO é um lock novo de prateleira — `wms_inserir_movimentacao` JÁ serializa cada mov individual por `(produto,galpão,loc)` com `SELECT FOR UPDATE`. O buraco do cluster está no nível de ORQUESTRAÇÃO: sequências de várias movs (E+S de devolução avariada; estornos de cancelamento de transferência) não têm exclusão mútua entre si nem contra a operação inversa. O fix é serializar a operação inteira no header (claim atômico estrito), exatamente o pattern que `receberTransferencia` e `iniciarGuarda` já implementam.",
+      "infra_existente": "REUSAR, não construir: (1) `receberTransferencia` (transferencias.ts:261-404) já tem o claim estrito — `UPDATE ... SET recebimento_em_andamento_por=user WHERE id AND status='em_transito' AND recebimento_em_andamento_por IS NULL` retornando rows; loser leva 0 rows → 409 code='TRANSFERENCIA_OUTRO_RECEBIMENTO'. Coluna criada em migration 20260527_p3_transferencia_recebimento_em_andamento.sql. (2) `iniciarGuarda` (guarda.ts:332-396) mesmo pattern com `iniciada_por` (claim tolerante a re-entrada do mesmo user). (3) `wms_inserir_movimentacao` (20260508_wms_foundation.sql:198-202) já é o lock pessimista per-prateleira (FOR UPDATE em siso_estoque). (4) Tabela `siso_localizacao_locks` EXISTE mas é só pra cycle-count de inventário (motivo CHECK ∈ cycle_count/contagem_completa/manutencao) e só é LIDA (roteamento exclui locs travadas do picking) — NÃO serve como mutex de escrita e NÃO deve ser estendida pra isso. (5) `desfazer-recebimento` chama `desfazerRecebimentoTransferencia` que volta header pra em_transito antes de recancelar — caminho a respeitar.",
+      "correcoes": [
+        {
+          "ids": [
+            "P062",
+            "P066",
+            "P068"
+          ],
+          "titulo": "Cancelamento de transferência deve respeitar o lock de recebimento (exclusão mútua simétrica receber↔cancelar)",
+          "mecanismo": "Em `cancelarTransferencia` (transferencias.ts:448-562), antes de estornar qualquer leg, fazer o MESMO claim estrito que `receberTransferencia` já usa: reivindicar o header com UPDATE condicional `WHERE id=$1 AND status='em_transito' AND recebimento_em_andamento_por IS NULL` retornando rows. Se 0 rows: re-ler `recebimento_em_andamento_por` e lançar 409 code='TRANSFERENCIA_OUTRO_RECEBIMENTO' (mesma forma de erro do receber) — satisfaz decisão P066 'botão cancelar cinza enquanto recebimento ativo' e P062 'só quem está recebendo cancela'. Ao terminar o cancelamento (sucesso OU erro), zerar o campo no mesmo UPDATE que seta status='cancelada' (e best-effort no catch). Lado simétrico (P068, 'travar transferência durante cancelamento'): adicionar coluna `cancelamento_em_andamento_por` e fazer `receberTransferencia` checá-la no claim (adicionar `.is('cancelamento_em_andamento_por', null)` no UPDATE de receber, e `cancelarTransferencia` seta essa coluna no início). Assim receber e cancelar nunca rodam concorrentes nos dois sentidos. O claim do header já é serializado pelo UNIQUE-ness do row + condição atômica do UPDATE; não precisa RPC nova se reusar o pattern do receber. Migration só pra ADD COLUMN `cancelamento_em_andamento_por uuid` (espelha 20260527). Nota: o body de estorno em si já é idempotente (estornarMovimentacao rejeita double-estorno) — a correção é só impedir o INÍCIO concorrente.",
+          "local": "src/lib/wms/transferencias.ts:448-562 (cancelarTransferencia — adicionar claim no topo, antes da linha 475; release junto do UPDATE status='cancelada' linha 552-559) + transferencias.ts:299-305 (receberTransferencia — adicionar `.is('cancelamento_em_andamento_por', null)` no UPDATE de claim) + nova migration ADD COLUMN cancelamento_em_andamento_por",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": true,
+          "depende_de": [
+            "primitiva-claim-header (já existe em receberTransferencia)"
+          ],
+          "notas": "CONFIRMA a hipótese do cluster com correção: NÃO é 'lock de prateleira' nem advisory lock — é o claim de header que já existe pro lado receber e falta pro lado cancelar. `cancelarTransferencia` lê status na linha 469 e segue sem reivindicar nada; `receberTransferencia` já reivindica (linha 299-305) mas não checa cancelamento. P062/P066/P068 são LITERALMENTE a mesma race (cancelar vs receber em transferência), variando só qual lado descreve o sintoma. A nota do P062 pede 'timeout 30min libera lock se a tela cair' — o doc da migration 20260527 já reconhece que o lock é transient/best-effort (campo fica preso se o processo morre; admin limpa). Implementar o timeout-30min exige um cron de varredura OU um TTL (comparar `recebida_em`/timestamp do claim) — vale como item separado de baixo risco, não bloqueia o fix do mutex."
+        },
+        {
+          "ids": [
+            "P054"
+          ],
+          "titulo": "Classificação de devolução avariada: claim atômico do status pra serializar a sequência E+S na mesma prateleira",
+          "mecanismo": "O lock pessimista per-prateleira que a decisão P054 pede JÁ EXISTE dentro de `wms_inserir_movimentacao` (FOR UPDATE em siso_estoque) — cada mov individual nunca negativa sozinha (ledger.ts:170-175 valida client-side + RPC revalida com FOR UPDATE). O bug real é de ORQUESTRAÇÃO: o branch 'avariado' (devolucoes.ts:212-271) emite uma SEQUÊNCIA — E na loc origem, depois S pra quarentena (ou S de ajuste se sem quarentena) — e o guard `if (d.status !== 'aguardando_classificacao')` (devolucoes.ts:118) é uma LEITURA não-atômica. Dois classificar concorrentes ambos passam o guard, e suas movs E/S interleavam → estado meio-feito (E aplicado, S não) e saldo pode negativar entre os dois. Fix mínimo que satisfaz 'operações não se cruzam, saldo sempre positivo': reivindicar a devolução atomicamente — trocar a leitura do guard por um UPDATE condicional `UPDATE siso_devolucoes_pendentes SET status='classificando' (ou em_andamento_por=user) WHERE id=$1 AND status='aguardando_classificacao' RETURNING id`; se 0 rows → erro 409 'já em classificação/classificada'. Como há UMA devolução por classify, esse claim de header serializa a sequência inteira sem precisar tocar no ledger nem criar lock de prateleira. Isso também resolve o duplo-clique (família P052, que cita o mesmo arquivo). NÃO criar tabela de lock de prateleira — seria over-engineering e conflita com a infra existente.",
+          "local": "src/lib/wms/devolucoes.ts:101-118 (classificarDevolucao — substituir o SELECT+guard das linhas 103-118 por UPDATE condicional de claim) e branch afetado em :209-271; reforço de leitura em ledger.ts:95-105 (validarCoerencia já protege saldo negativo per-mov, confirmado)",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [
+            "primitiva-claim-header"
+          ],
+          "notas": "REFINA a hipótese: 'lock pessimista na prateleira / timeout' está parcialmente errado como descrição do remédio. O lock de prateleira já existe (FOR UPDATE na RPC); o que falta é serializar a TRANSAÇÃO LÓGICA (claim de status), não a prateleira. Migration=false porque dá pra usar um status transient já existente OU mudar status='aguardando_classificacao'→ algo intermediário no mesmo UPDATE (a tabela siso_devolucoes_pendentes já tem coluna status). Se quiser idempotência mais forte tipo 'em_andamento_por' precisaria de ADD COLUMN, mas o claim por status basta. Conflito potencial com P052 (mesmo arquivo, mesma race de duplo-clique) — devem ser corrigidos juntos: o claim de status mata os dois. Observação honesta: o sub-sintoma 'entra como danificado mas não sai pra quarentena' também tem um caminho legítimo no código (branch else linha 257-269 faz ajuste_manual quando não há quarentena) — então parte do 'meia entrada/meia saída' descrito no today é interleaving de concorrência, e a outra parte é o caso sem-quarentena (coberto pelo P051, fora deste cluster)."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P062",
+          "P066",
+          "P068"
+        ]
+      ],
+      "noops": []
+    },
+    {
+      "cluster": "RESERVA_CANCELAMENTO",
+      "primitiva": "Wirar o helper idempotente liberarReserva({pedido_id, motivo:'cancelamento'}) (libera TODAS as R do pedido via L no ledger atômico) em todo caminho de cancelamento que hoje só muda status sem soltar a reserva — e, no caminho admin de estorno, cancelar a tarefa pendente na fila. NÃO é UM helper só: a hipótese do cluster ('helper único que libera reserva E cancela a tarefa') é PARCIALMENTE verdadeira — release de reserva e cancel-da-fila são duas primitivas distintas que já existem separadas. Reserva = liberarReserva/estornarReservaIndividual (reservas.ts); fila = update status='cancelado' WHERE pedido_id AND status='pendente' (já usado em compras-cancelar e checkAndCancelPedidoIfAllTerminal).",
+      "infra_existente": "JÁ EXISTE e deve ser reusado, sem construir nada novo: (1) liberarReserva({pedido_id,motivo,usuario_id}) em src/lib/wms/reservas.ts:38-85 — busca R do pedido (origem_tipo='reserva_pedido', tipo='R'), insere L via inserirMovimentacao, idempotente (pula se já existe L no pedido). Referência de uso correto: src/lib/wms/vendas-cancelamento.ts:76 e src/app/api/wms/compras/itens/[itemId]/equivalente/confirmar/route.ts:135 (comentário diz literalmente 'a R fica órfã, liberar antes'). (2) estornarReservaIndividual({reserva_id,motivo}) em reservas.ts:135 — per-R, idempotente via estorno_de=R.id; usar quando precisa soltar SÓ a R de UM item (R é keyed por pedido_id, não por pedido_item_id — filtrar por produto_id do item). (3) Idiom de cancelar fila: supabase.from('siso_fila_execucao').update({status:'cancelado',atualizado_em}).eq('pedido_id',id).eq('status','pendente') — exato em src/app/api/wms/compras/pedidos/[pedidoId]/cancelar/route.ts:153-160 e src/lib/compras-utils.ts:158-162. (4) Worker já tem 2 guardas: claim só pega status='pendente' (execution-worker.ts:128) e pula job se siso_pedidos.status==='cancelado' (execution-worker.ts:156-171). (5) Worker pós-NF (executarEstoquePosNfWms) é idempotente POR reserva via estorno_de (execution-worker-wms.ts:103-130) — não re-libera uma R já estornada.",
+      "correcoes": [
+        {
+          "ids": [
+            "P034"
+          ],
+          "titulo": "Recusar pedido (rejeitado) deve liberar as reservas R na hora",
+          "mecanismo": "No branch decisao==='rejeitado' do aprovar, APÓS o update que marca status='cancelado'/decisao_final='rejeitado'/status_separacao=null, chamar await liberarReserva({pedido_id: pedidoId, motivo:'cancelamento', usuario_id: operadorId}). Pedidos transferencia chegam aqui como 'pendente' COM R criadas no webhook (webhook-processor-wms.ts:583-606), e o branch hoje não solta nada — R fica zumbi 30 dias. liberarReserva é idempotente. Envolver em try/catch que loga mas não derruba o 200 (mesmo padrão do vendas-cancelamento, que porém propaga; aqui pode logar e seguir já que o pedido já está cancelado).",
+          "local": "src/app/api/wms/pedidos/aprovar/route.ts:68-98 (inserir a chamada entre o update das linhas 70-84 e o registrarEvento da linha 85)",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: webhook cria R para propria E transferencia (webhook-processor-wms.ts:583). OC não reserva. Import liberarReserva já parcialmente presente no arquivo (linha 8 importa reservarAtomico/estornarReservaIndividual de @/lib/wms/reservas — adicionar liberarReserva ao import). Risco medio só porque mexe em saldo, mas o helper é o caminho atômico padrão e idempotente."
+        },
+        {
+          "ids": [
+            "P038"
+          ],
+          "titulo": "Cancelar pedido inteiro (todos itens terminais) deve liberar R no ato, não esperar o cron de 1h",
+          "mecanismo": "Em checkAndCancelPedidoIfAllTerminal, no ramo que efetivamente cancela o pedido (após o update de siso_pedidos e o update da fila), chamar await liberarReserva({pedido_id: pedidoId, motivo:'cancelamento'}). Hoje a função cancela pedido+fila mas NÃO solta R — as 5 unidades ficam apartadas até cleanupReservasExpiradas (cron ~1h) ou admin. Como aqui o pedido INTEIRO morre, soltar TODAS as R do pedido (liberarReserva por pedido_id) é correto. Idempotente.",
+          "local": "src/lib/compras-utils.ts:147-169 (inserir a chamada logo após o update da fila nas linhas 158-162, dentro do bloco que já decidiu cancelar)",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "O range citado no raio-x (149-162) é exatamente o bloco cancel-pedido + cancel-fila SEM release. Itens em aguardando_compra PODEM ter R (ex.: pedido transferencia que virou compra) — confirmado pelo comentário em equivalente/confirmar:131-133 que trata 'R órfã'. Precisa importar liberarReserva de ./wms/reservas em compras-utils.ts (hoje só importa logger/createServiceClient). compras-utils é módulo puro-ish de helpers; adicionar dependência de reservas é aceitável (reservas já depende de ledger)."
+        },
+        {
+          "ids": [
+            "P039"
+          ],
+          "titulo": "Confirmar cancelamento de UM item deve soltar a R desse item",
+          "mecanismo": "Em cancelamento/confirmar, após o update que marca o item 'cancelado', soltar a reserva. Como R é keyed por pedido_id (não por pedido_item_id — confirmado na RPC wms_reservar_atomico que grava p_origem_id:=p_pedido_id sem item), NÃO usar liberarReserva (soltaria R de itens ainda ativos do mesmo pedido). Caminho correto: (a) se checkAndCancelPedidoIfAllTerminal retornar pedidoCancelado=true, o release do pedido inteiro já vem de P038 — não fazer nada extra aqui; (b) se o pedido continua vivo, buscar as R do pedido (origem_id=pedido_id, tipo='R') filtrando por produto_id = item.produto_id resolvido p/ uuid WMS, e chamar estornarReservaIndividual por cada R, idempotente via estorno_de.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts:73-82 (após checkAndCancelPedidoIfAllTerminal e dentro do if !pedidoCancelado, junto do checkAndReleasePedidos)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [
+            "P038"
+          ],
+          "notas": "Sutileza real: item cancelado isoladamente NÃO pode usar liberarReserva (global por pedido). item.produto_id é tiny_produto_id (gotcha #1) — precisa resolver pra uuid WMS via siso_produto_empresas antes de casar com R.produto_id. Por isso esforço M, não S. Depende de P038 pra cobrir o caso 'esse era o último item ativo'. O select atual (linha 29) não traz produto_id resolvido — vai precisar do empresa_origem_id do pedido pra resolver."
+        },
+        {
+          "ids": [
+            "P040"
+          ],
+          "titulo": "Bloquear cancelamento de item que já tem quantidade separada/bipada",
+          "mecanismo": "NÃO é release de reserva — é GUARD (decisão do dono é bloquear, não compensar). Antes do update que zera quantidade_bipada/separacao_marcado/bipado_*, ler esses campos + mov_saida_id do item e, se separacao_marcado===true OU quantidade_bipada>0 OU mov_saida_id!=null, retornar 409 com mensagem clara: 'Item já foi separado (X unidades bipadas). Desfaça a separação antes de cancelar.' Hoje o update zera quantidade_bipada:0/separacao_marcado:false sem estornar o S correspondente — deixa mov S órfã e auditoria quebrada. Bloquear evita o estado quebrado.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts:27-31 (ampliar o select pra incluir quantidade_bipada, separacao_marcado, mov_saida_id) + nova checagem antes do update das linhas 51-67",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "As linhas 58-63 (quantidade_bipada:0, separacao_marcado:false, bipado_completo:false, bipado_em/por:null) são exatamente o reset cego citado no raio-x:58-60. Guard puro, não toca ledger → risco baixo. Importante: mensagem precisa instruir 'desfaça a separação antes' (a nota do dono pede instrução clara, não só erro). O reset desses campos no update deve ser removido OU só executado quando o guard passa (item sem separação)."
+        },
+        {
+          "ids": [
+            "P008"
+          ],
+          "titulo": "Estorno admin do pedido deve cancelar a tarefa pendente na fila",
+          "mecanismo": "Mecanismo DIFERENTE dos outros 4 (é cancel-de-fila, não release-de-reserva). No estornar route, após estornar S+R e marcar o pedido, adicionar: (1) supabase.from('siso_fila_execucao').update({status:'cancelado',atualizado_em:now}).eq('pedido_id',pedidoId).eq('status','pendente') — idêntico ao idiom de compras-cancelar:153-160; e (2) também setar status:'cancelado' no update do pedido (hoje seta SÓ status_separacao:'cancelado' na linha 93), pra ativar a guarda já existente do worker (execution-worker.ts:163 só pula job se siso_pedidos.status==='cancelado'). Com a fila cancelada o worker nem reivindica o job (claim filtra status='pendente', linha 128).",
+          "local": "src/app/api/wms/pedidos/[id]/estornar/route.ts:91-94 (update do pedido — adicionar status:'cancelado') + inserir o update de siso_fila_execucao logo após, antes do registrarEvento da linha 96",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Verifiquei: o double-L do MESMO R já é evitado pelo guard estorno_de do worker (execution-worker-wms.ts:103-130). O gap REAL é (a) job pendente não é cancelado e (b) estornar seta só status_separacao, então a guarda worker:163 (status==='cancelado') NÃO dispara — o worker ainda lançaria o S do pedido estornado. A decisão do dono ('cancelar a tarefa na fila') é defense-in-depth correto. Pequeno conflito a observar: setar status='cancelado' além de status_separacao pode mudar como o pedido aparece no painel — alinhar com o resto (compras-cancelar usa status='cancelado'+status_separacao=null). Worker pós-NF não re-libera R já estornada, mas pode inserir S — daí a importância de matar o job."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P034",
+          "P038"
+        ]
+      ],
+      "noops": []
+    },
+    {
+      "cluster": "GUARD_VALIDACAO",
+      "primitiva": "Guarda de pré-voo (pre-flight check) que roda ANTES da operação perigosa e ou (a) bloqueia com mensagem acionável (qty=0, galpão misto, quarentena ausente, estado já lançado, permissão), ou (b) calcula a quantidade segura e avisa sem bloquear (estornos que negativariam). Quase tudo é uma checagem cirúrgica adicionada no topo da rota/função-serviço; nenhuma RPC nova é necessária — o lock atômico de saldo já vive em wms_inserir_movimentacao/validarCoerencia.",
+      "infra_existente": "REUSAR: (1) validarCoerencia() em ledger.ts:44-63 já lança 'qty deve ser > 0' e 'saldo insuficiente' — a causa-raiz de P001/P065/P070 é essa exception chegar TARDE e sem contexto; a correção é antecipá-la com mensagem clara. (2) Leitura de saldo vivo: sb.from('siso_estoque').select('saldo,reservado').match(tripla) (padrão em ledger.ts:165-169) — base pros pre-checks de P065/P070. (3) userCan()/userCanAny() (permissions.ts) e requireWarehouseAccess (auth.ts:62-88) — P069 precisa de userCan('operacoes.ajuste_manual') APÓS o requireWarehouseAccess. (4) wmsErrorResponse() (api-errors.ts) para shapes 4xx. (5) siso_pedidos.estoque_lancado (flag canônica de 'lançado', cutover.ts/execution-worker-wms.ts) — base do guard de P047. (6) estornarMovimentacao() já lê a mov original (qty+tripla) em ledger.ts:370-416, então um pre-check de saldo é trivial de plugar.",
+      "correcoes": [
+        {
+          "ids": [
+            "P001"
+          ],
+          "titulo": "Recusar pedido inteiro se qualquer item tem quantidade=0 no webhook",
+          "mecanismo": "Em processWebhookWms, após resolverItensWms (linha 385) e antes de rotear/upsert, varrer itensResolvidos: se algum item com produtoIdWms tem quantidade<=0, abortar o pedido inteiro — gravar siso_webhook_logs.status='erro' com motivo claro ('item qty=0 do Tiny') e retornar {ok:false,status:'erro'} sem criar pedido/reservas. Reusa a semântica de validarCoerencia (qty>0) mas antecipada pro ponto de entrada com mensagem de negócio, em vez de deixar estourar lá no reservarAtomico.",
+          "local": "src/lib/webhook-processor-wms.ts:385-397",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: quantidade é copiada cru do Tiny (resolverItensWms l.93 'quantidade: item.quantidade') e itensPraRotear (l.397) não filtra qty>0. O 'file' do acionável (ledger.ts:46) aponta o SINTOMA (validarCoerencia 'qty deve ser > 0'), não a causa — a validação OPCAO 1 do dono é no INGRESSO do pedido, que é aqui. Hipótese do cluster bate 100%."
+        },
+        {
+          "ids": [
+            "P017"
+          ],
+          "titulo": "Permitir quantidade_pega=0 no parcial só quando loc_zerou=true",
+          "mecanismo": "No bloco de validação de body da rota parcial (l.68-81), adicionar guard: se quantidade_pega===0 && loc_zerou===false → 400 com mensagem 'Para registrar 0 itens marque a prateleira como vazia (loc_zerou)'. Mantém o resto do fluxo (qty=0 + loc_zerou=true continua válido — gera o ajuste de loc zerada legitimamente).",
+          "local": "src/app/api/wms/separacao/parcial/route.ts:68-81",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: validação atual aceita quantidade_pega>=0 (l.70) sem cruzar com loc_zerou. 'file' veio null no acionável; achei via grep (distribuirQtyPega + loc_zerou). Bate com a hipótese (qty=0 perigoso). Atenção: a rota tem dois modos (item e realocação) mas a validação de body é compartilhada no topo, então um único guard cobre ambos."
+        },
+        {
+          "ids": [
+            "P031"
+          ],
+          "titulo": "Bloquear concluir-oc quando o pedido tem itens de galpões diferentes",
+          "mecanismo": "No loop por pedido (l.241-246), trocar o 'uniqueOcGalpaoIds[0] ?? null' silencioso por: se uniqueOcGalpaoIds.length>1 → NÃO atualizar pra 'separado'; mover o pid de separados→pendentes (ou coletar em lista 'bloqueados') e retornar no payload um aviso vermelho ('Pedido X tem compras de N galpões — conclua manualmente'). Operador separa na mão.",
+          "local": "src/app/api/wms/separacao/concluir-oc/route.ts:241-260",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: l.245 dedupa galpões e l.246 pega só o primeiro, ignorando o resto sem avisar (today bate exato). Risco médio: precisa decidir o que fazer com os itens já marcados 'recebido' no passo 2 (l.163-185) ANTES do bloqueio — idealmente mover o bloqueio pra antes do passo 2, ou reverter compra_status. A decisão do dono (op1 = bloquear) é clara."
+        },
+        {
+          "ids": [
+            "P036"
+          ],
+          "titulo": "Bloquear troca de SKU quando o item já tem compra ativa (já comprado)",
+          "mecanismo": "No início de trocar-sku, após buscar items (l.50-60), incluir no select compra_status+ordem_compra_id e validar: se algum item tem ordem_compra_id != null OU compra_status já em estado comprado/recebido → 409 com mensagem ('Não dá pra trocar SKU: item já tem OC ativa. Cancele/devolva a compra antes'). Antes do UPDATE em l.186-195.",
+          "local": "src/app/api/wms/compras/trocar-sku/route.ts:50-60 (guard) + 186-195 (update protegido)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: o select atual (l.52) NÃO traz compra_status/ordem_compra_id e o update (l.186-199, exatamente o range do 'file') roda sem checar estado da compra. 'comprado_em'/'ordem_compra_id' são os sinais de compra ativa (vistos em devolver/route.ts l.30,49-51). Bate com a hipótese (estado já comprado = perigoso)."
+        },
+        {
+          "ids": [
+            "P047"
+          ],
+          "titulo": "Impedir devolução de item quando o pedido já está lançado, com instrução de como destravar",
+          "mecanismo": "No início da rota devolver, após buscar o item (l.28-32), buscar siso_pedidos.estoque_lancado do item.pedido_id; se estoque_lancado===true → 409 com mensagem ACIONÁVEL ('Pedido já teve estoque lançado (saída no ledger). Desfaça a separação/voltar-etapa antes de devolver o item à fila de compra'). NÃO só falhar — a nota do dono exige instrução clara.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/devolver/route.ts:28-58",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: rota faz update direto pra 'aguardando_compra' (l.44-56) sem olhar o estado do pedido. estoque_lancado é a flag canônica de 'lançado' (execution-worker-wms.ts:52, cutover.ts:76). 'today' descreve exatamente: pedido fica 'lançado' mas item vira 'aguardando_compra'. Nota do dono é literal: bloquear COM instrução, não só 500."
+        },
+        {
+          "ids": [
+            "P051"
+          ],
+          "titulo": "Bloquear classificação 'avariado' quando não existe quarentena no galpão",
+          "mecanismo": "Em classificarDevolucao, mover o lookup da loc de quarentena (hoje em l.225-235, DEPOIS do E) pra ANTES do inserirMovimentacao tipo E (l.212). Se não houver quarentena, throw com aviso vermelho ('Galpão sem localização de quarentena — cadastre antes de classificar avaria') ANTES de mexer no saldo. Remove o branch else (l.257-270) que hoje some com o item via ajuste_manual S.",
+          "local": "src/lib/wms/devolucoes.ts:209-271",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: hoje faz E (l.212), busca quarentena (l.225), e no else (l.257-270) faz S ajuste_manual que zera o item — peça 'desaparece' (today bate exato). Risco médio: P049/P050 querem a classificação inteira como bloco tudo-ou-nada (cluster de TRANSAÇÃO, fora deste). Este guard (validar quarentena antes do E) é complementar e deve idealmente entrar JUNTO com a atomicidade de P049/P050 pra não introduzir um ponto de falha parcial novo."
+        },
+        {
+          "ids": [
+            "P058"
+          ],
+          "titulo": "Bloquear digitar contagem quando a sessão já saiu de em_andamento",
+          "mecanismo": "No topo de registrarContagem, após validar a loc (l.496-520), adicionar leitura de siso_inventario_sessoes.status pra input.sessao_id; se status != 'em_andamento' (ex revisao/aprovada/aplicada/finalizada) → throw claro ('Sessão já foi finalizada/aprovada — peça ao supervisor pra abrir nova contagem'). Hoje só valida o status da LOC, não da sessão.",
+          "local": "src/lib/wms/inventario.ts:488-520",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: registrarContagem valida lr.status da loc (l.506) e lock (l.511-520) mas NUNCA lê o status da sessão. StatusSessao inclui em_andamento/revisao/aprovada/aplicada (l.11-14). O 'file' do acionável (l.193-250) apontava entrarParty (reentrada), mas o ponto real onde números são gravados é registrarContagem (l.488). Corrigir aqui cobre todos os callers de entrada de contagem."
+        },
+        {
+          "ids": [
+            "P065"
+          ],
+          "titulo": "Avisar (sem bloquear) quanto dá pra devolver antes de desfazer recebimento de transferência",
+          "mecanismo": "Em desfazerRecebimentoTransferencia, antes do loop de estorno (l.628), fazer um dry-run: pra cada item com mov_entrada_id, ler siso_estoque.saldo da tripla destino e comparar com a quantidade da mov de entrada. Se algum saldo < qty (estorno negativaria), retornar/anexar um aviso transparente ('item X: só dá pra devolver Y de Z — o resto já saiu/foi vendido; confira com a separação') em vez de deixar estourar 'saldo insuficiente' no meio. Nota do dono: transparência, NÃO bloqueio rígido.",
+          "local": "src/lib/wms/transferencias.ts:619-643",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: l.628-643 chama estornarMovimentacao cego; estornarMovimentacao→inserirMovimentacao tipo S→validarCoerencia lança 'saldo insuficiente' (ledger.ts:50-52) no meio do loop, deixando estorno PARCIAL (overlap com cluster de transação P067/P063). Risco alto: mexe em ledger/saldo e tem família concorrente (P062/P066/P068 = lock; P067 = tudo-ou-nada). O escopo DESTE P065 é só o pre-check/aviso; a atomicidade parcial é de outro cluster. Idealmente coordenar com P067."
+        },
+        {
+          "ids": [
+            "P069"
+          ],
+          "titulo": "Validar operacoes.ajuste_manual no backend do ajuste (e do estorno de ajuste)",
+          "mecanismo": "Na rota POST /api/wms/ajuste, após requireWarehouseAccess (l.27-28), adicionar checagem específica: if(!userCan(auth.user,'operacoes.ajuste_manual')) return 403. requireWarehouseAccess passa pra QUALQUER perm de operação/inventário/cadastro — não é equivalente a ajuste_manual. Aplicar o MESMO guard em /api/wms/ajuste/[id]/estornar (l.22-23), que tem a idêntica brecha.",
+          "local": "src/app/api/wms/ajuste/route.ts:27-28 e src/app/api/wms/ajuste/[id]/estornar/route.ts:22-23",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: front gateia can('operacoes.ajuste_manual') (page.tsx:18) mas o backend usa requireWarehouseAccess que é userCanAny de 11 perms (auth.ts:67-80), inclusive guarda/receber/inventario.executar — logo um operador sem ajuste_manual passa. Falha de segurança real (today/why batem). Importar userCan (já existe em permissions.ts)."
+        },
+        {
+          "ids": [
+            "P070"
+          ],
+          "titulo": "Rejeitar desfazer ajuste já consumido por saídas, com mensagem clara",
+          "mecanismo": "Em estornarAjuste, após validar origem_tipo='ajuste_manual' (l.481-485) e antes de chamar estornarMovimentacao, ler a mov original (quantidade, tripla) e o saldo vivo de siso_estoque dessa tripla; se a mov foi entrada E e saldo_atual < quantidade (já houve saídas) → throw mensagem clara ('Não dá pra desfazer: este ajuste de +N já foi consumido em saídas. Para corrigir o saldo, faça um novo ajuste'). Substitui o 'saldo insuficiente' cru por mensagem de negócio.",
+          "local": "src/lib/wms/movimentacoes.ts:466-491",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Confirmado: estornarAjuste delega cego a estornarMovimentacao→inserirMovimentacao tipo S→validarCoerencia lança 'saldo insuficiente: anterior=5 qty=20' (ledger.ts:50-52) — exatamente o cenário ACD-003 (ajuste +20, pedido 15, desfazer falha -15). Mesma PRIMITIVA do P065 (pre-check de saldo antes do estorno) mas domínio/arquivo diferente e decisão diferente (P070 REJEITA, P065 só avisa). Risco médio: toca caminho de estorno de saldo."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P069"
+        ]
+      ],
+      "noops": [
+        "P042"
+      ]
+    },
+    {
+      "cluster": "RETRY_REANIMACAO — retry automático visível + reanimar pedido dormindo quando estoque chega",
+      "primitiva": "Tornar transições de status/enqueue DURÁVEIS e VISÍVEIS: (1) idempotência via índice único `uq_fila_release_pedido` (23505 = sucesso, não erro), (2) retry com backoff (reusar o que o worker já faz, OU rotear a transição falha por um job na fila em vez de loop in-process que morre com o request), (3) NUNCA engolir erro silenciosamente — ou faz o caller falhar pro operador, ou marca o pedido/OC pra um sweep reprocessar. A infra de drenagem já existe (pg_cron worker-heartbeat + reclaim-zombies); o gap é nos pontos que escrevem ANTES da fila ou FORA dela.",
+      "infra_existente": "JÁ EXISTE e deve ser reusado: (a) índice parcial `uq_fila_release_pedido` em siso_fila_execucao(pedido_id) WHERE tipo='lancar_estoque' AND status='pendente' (migration 20260527_fila_execucao_release_unique.sql) — torna o insert idempotente. (b) Padrão canônico de tratar queueError: compras-release.ts:216-230 (code 23505 → skip idempotente, log info; resto → erro). (c) pg_cron `worker-heartbeat` (a cada 1min, drena jobs pendentes mesmo sem kick HTTP) + `worker-reclaim-zombies` (a cada 5min, re-pende jobs travados em 'executando' >5min) — migration 20260324_worker_heartbeat_cron.sql. (d) Worker processQueue tem backoff exponencial (30s base, dobra, cap 120s), tentativas/max_tentativas=3, proximo_retry_em (execution-worker.ts:209-270). (e) kickWorker() pra acordar o loop singleton. (f) reservarAtomico / wms_inserir_movimentacao pro lado do ledger. NÃO há helper genérico de retry de write DB — o primitivo durável correto é a própria fila+worker.",
+      "correcoes": [
+        {
+          "ids": [
+            "P005"
+          ],
+          "titulo": "Enqueue do lancar_estoque resiliente em aprovar (retry + 23505-tolerante + não-silencioso)",
+          "mecanismo": "No bloco do queueError (aprovar/route.ts:352-359) parar de engolir o erro. Reusar EXATAMENTE o padrão de compras-release.ts:216-230: se queueError.code==='23505' → tratar como sucesso idempotente (já há job pendente, o uq_fila_release_pedido garantiu). Para falha real (não-23505): tentar reinserir 2-3x in-process (o insert é barato e idempotente pelo índice) e, se persistir, NÃO retornar ok:true cego — ou retornar 500 pro operador (status do pedido já está 'executando', então retornar erro parcial com instrução 'pedido aprovado mas separação não disparou, reprocessar'), ou setar uma flag no pedido (ex compra_estoque_lancado_alerta-like) que um sweep/worker-heartbeat reprocessa. Observação: a drenagem durável (worker-heartbeat) só ajuda se a LINHA existir — por isso o foco é garantir o insert. Aplicar o MESMO hardening no gêmeo em webhook-processor-wms.ts:622-628 (que hoje nem checa erro do insert).",
+          "local": "src/app/api/wms/pedidos/aprovar/route.ts:352-359 (gêmeo: src/lib/webhook-processor-wms.ts:622-628)",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [
+            "uq_fila_release_pedido (já existe)"
+          ],
+          "notas": "CONFIRMADO lendo o código: linha 358 tem o comentário literal '// Don't fail — the order status is already updated' e o erro só vai pro logger.error. kickWorker (378-385) roda mesmo com queueError, mas drena NADA pra esse pedido se o insert falhou. A 'tolerância a duplicatas' que a decisão pede JÁ está pronta no índice único — o gap é só não distinguir 23505 e não ter retry. Risco medio: mexe no caminho de aprovação, mas a mudança é cirúrgica no error handling."
+        },
+        {
+          "ids": [
+            "P048"
+          ],
+          "titulo": "cancelOcIfEmpty com retry 3x e propagação de falha ao operador (não-silencioso)",
+          "mecanismo": "Mudar cancelOcIfEmpty de void→Promise<{ok:boolean; error?:string}>. Nos dois pontos que hoje só fazem logger.warn+return (select error 190-195 e update error 222-228), envolver o UPDATE de status da OC num loop de 3 tentativas com backoff curto (ex 0/300/900ms). Se todas falharem, retornar {ok:false}. No caller devolver/route.ts:60, capturar o resultado e, se ok:false, retornar erro ao operador (ex 500 com mensagem 'item devolvido mas status da compra não atualizou — reprocessar') em vez do atual ok:true cego (linha 81). NÃO usar a fila aqui (é só um UPDATE de status de OC, não toca ledger) — retry in-process curto basta pela decisão.",
+          "local": "src/lib/compras-utils.ts:178-234 (pontos 190-195 e 222-228); caller src/app/api/wms/compras/itens/[itemId]/devolver/route.ts:60,81",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "CONFIRMADO: cancelOcIfEmpty é void e tanto o select-error (190-195) quanto o update-error (222-228) só fazem logger.warn+return — o item já foi devolvido (route.ts:44-58) mas a OC fica com status stale e o operador vê ok:true. Decisão pede op1+op2: 3 tentativas E erro visível. Risco baixo: só status de OC, sem saldo/ledger. cancelOcIfEmpty é chamado em VÁRIOS lugares (devolver, cancelamento/confirmar, cancelar-pedido) — mudar a assinatura pra retornar resultado é seguro porque hoje todos ignoram o void; revisar cada caller pra decidir quem propaga o erro (devolver propaga; os outros podem manter best-effort)."
+        },
+        {
+          "ids": [
+            "P082"
+          ],
+          "titulo": "Transição reconciliada (→aguardando_nf) durável com retry 3x e alerta visível",
+          "mecanismo": "Em transicionarPedidoSeReconciliado (reconciliador-oc.ts:268-286), a UPDATE que flipa validacao_oc/aguardando_compra → executando/aguardando_nf hoje só faz logger.logError+return se pedidoUpdErr. Trocar por retry 3x com os delays da nota (30s, 5min, 10min). Como o reconciliador é fire-and-forget (roda fora do request, disparado por mov E no ledger), um setTimeout in-process morreria — o caminho DURÁVEL é enfileirar um job de retry da transição (novo tipo, ex 'reconciliar_transicao' com payload {pedidoId}) que o worker re-tenta pelo backoff que JÁ tem (execution-worker.ts:209-270), drenado pelo worker-heartbeat cron. Em vez de novo tipo, alternativa mais barata: setar uma flag no pedido (ex flag_reconciliacao_pendente) que a varredura pós-entrada (varredura-validacao-oc.ts) ou um sweep re-tenta. Na exaustão (3x), gravar alerta visível: logger.logError severity critical + flag no pedido pro painel mostrar 'reconciliação travou'.",
+          "local": "src/lib/wms/reconciliador-oc.ts:268-286 (UPDATE de transição); alerta em 278-285",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": true,
+          "depende_de": [
+            "P035 (define o status de partida correto)"
+          ],
+          "notas": "CONFIRMADO: 268-286 faz UPDATE condicional (.in status_separacao) e em pedidoUpdErr só loga e retorna — sem retry, sem alerta visível. A nota é LEI: 30s/5min/10min (explicitamente NÃO 1h, contraria o cap de 120s do worker — por isso talvez NÃO reusar o backoff do worker e sim agendar via proximo_retry_em custom, ou job dedicado com schedule próprio). migration=true se criar novo tipo de job (CHECK de tipo na fila) ou nova coluna de flag/alerta. Risco medio: não toca saldo, mas mexe no orquestrador de reanimação que já teve vários fixes recentes (commits 8380f94, c72191b)."
+        },
+        {
+          "ids": [
+            "P035"
+          ],
+          "titulo": "Pedido OC parcialmente cancelado volta a 'pendente' em vez de dormir",
+          "mecanismo": "Raiz: ao cancelar a compra de um item (cancelamento/confirmar/route.ts:54 seta compra_status='cancelado', que NÃO está em COMPRA_PENDENTE do reconciliador), se o pedido não fica 100% terminal ele permanece em validacao_oc/aguardando_compra e o reconciliador-oc nunca re-arma o item cancelado (query linha 69 filtra .in compra_status COMPRA_PENDENTE). Conforme a decisão (op1='voltar pedido para pendente'): quando uma compra/item é cancelada e o pedido NÃO foi totalmente cancelado, resetar o pedido pra status='pendente'/status_separacao=null (volta ao começo da fila → re-roteia do zero via rotearPedidoDoBanco no próximo ciclo) em vez de deixá-lo em limbo OC. Implementar no caller de cancelamento (após checkAndCancelPedidoIfAllTerminal retornar pedidoCancelado=false): se sobram itens mas o pedido perdeu cobertura OC, voltar pra pendente. Limpar reservas/estado de compra do item cancelado junto.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/cancelamento/confirmar/route.ts:73-82 (após checkAndCancelPedidoIfAllTerminal); raiz do filtro em src/lib/wms/reconciliador-oc.ts:38-39,69",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [],
+          "notas": "CONFIRMADO o mecanismo do limbo: compra_status='cancelado' não casa COMPRA_PENDENTE=['oc_pendente','aguardando_compra'] (reconciliador-oc.ts:39,69), então estoque que chega nunca religa o item cancelado. A decisão é 'voltar pedido pra pendente'. ATENÇÃO/conflito: há DOIS caminhos de cancelamento — item (cancelamento/confirmar) e pedido inteiro (compras/pedidos/[id]/cancelar:143-151, que corretamente seta status='cancelado'). P035 é o caso PARCIAL (um item cancelado, pedido sobrevive). Voltar pra 'pendente' precisa limpar reservas R do pedido antes (senão re-roteamento conta saldo errado) — por isso risco ALTO: re-roteamento + reservas. Verificar interação com checkAndReleasePedidos (compras-release.ts:78-83 já pula release quando todos itens cancelados)."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P082",
+          "P048"
+        ]
+      ],
+      "noops": []
+    },
+    {
+      "cluster": "AUDITORIA_BUGS_LOGICA — erro nunca silencioso no histórico + bugs pontuais de estorno/busca/snapshot",
+      "primitiva": "Estorno via ledger feito CORRETO: (a) quando há saída separada, gravar a entrada-contra-mov de verdade (não só nular o link); (b) loops de undo devem ser tolerantes/parciais via wms_estornar_parcial_movimentacao + coletar-e-reportar erros em vez de throw no meio; (c) lookup determinístico de movs do evento (devolucao_id / origem_id), com fallback por classificada_em+origem_tipo pro histórico legado. Em paralelo: erro de separação SEMPRE vira evento \"erro\" no histórico (observabilidade), não só logger.warn.",
+      "infra_existente": "REUSAR, não construir: (1) estornarMovimentacao() em ledger.ts:363 — estorno full idempotente (rejeita double-estorno). (2) RPC wms_estornar_parcial_movimentacao (migration 20260518_realocacao_fix_pack_rpc_estorno_parcial.sql) — já trackeia qty_estornada e valida qty_estornada+p_qty>quantidade; usada hoje em desfazer-parcial/route.ts:94 — É o caminho pronto pra P078. (3) registrarEvento()/registrarEventos() em historico-service.ts:109 com EventoPedido \"erro\" JÁ no type (linha 60) mas nunca emitido em separação — pronto pra P006. (4) coluna siso_movimentacoes.devolucao_id + classificada_em pra lookup de devolução (devolucoes.ts). (5) cancelOcIfEmpty() em compras-utils.ts:178 — já recalcula status de OC, só falta o ramo \"comprado\". (6) reservas-picking.ts pickItemAtomico (L+S atômico) e estornarLiberacaoReserva — caminho atômico do pick.",
+      "correcoes": [
+        {
+          "ids": [
+            "P006"
+          ],
+          "titulo": "Erro de separação sempre registrado no histórico (evento 'erro')",
+          "mecanismo": "Nos pontos de FALHA das rotas de separação (marcar-item, parcial, iniciar) que hoje só fazem logger.warn/logError e retornam 409/400/500, adicionar chamada registrarEvento({pedidoId, evento:'erro', usuarioId, detalhes:{etapa, pedido_item_id, sku, motivo, localizacao_id?, qty_faltante?}}). registrarEvento é fire-and-forget safe (nunca throw) e o tipo 'erro' já existe — só não é usado em separação. Cobrir: marcar-item catch do pickItemAtomico (route.ts:167-179), parcial nas saídas de erro de baixa, iniciar nos pontos de RPC consolidar falha (iniciar/route.ts:174).",
+          "local": "src/app/api/wms/separacao/marcar-item/route.ts:167-179 (+ parcial/route.ts blocos de erro de baixa, iniciar/route.ts:174); helper em src/lib/historico-service.ts:109",
+          "esforco": "M",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Hipótese do cluster CONFIRMADA. Infra 100% pronta: evento 'erro' no type (historico-service.ts:60), registrarEvento safe. Cirúrgico: só ADICIONAR chamadas nos catch existentes, não muda fluxo. Confirma 'nada silencioso' do owner."
+        },
+        {
+          "ids": [
+            "P046"
+          ],
+          "titulo": "Devolver item de compra já separado deve estornar a saída (não só nular o link)",
+          "mecanismo": "Em devolver/route.ts, ANTES de buildCompraFieldReset() (que zera mov_saida_id em compras-utils.ts:28), se item.mov_saida_id existir, chamar estornarMovimentacao({mov_id:item.mov_saida_id, usuario_id, motivo}) pra gerar a E contra-mov que devolve o saldo à prateleira. Buscar mov_saida_id no SELECT (hoje não está selecionado — route.ts:30). estornarMovimentacao é idempotente (rejeita double-estorno), seguro contra duplo-clique.",
+          "local": "src/app/api/wms/compras/itens/[itemId]/devolver/route.ts:30 (add mov_saida_id ao select) e :44-58 (estornar antes do reset); buildCompraFieldReset em src/lib/compras-utils.ts:27-29",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "CONFIRMADO: buildCompraFieldReset() nula mov_saida_id sem estornar a S → saldo fica decrementado. CONFLITO com P047 (mesma rota): P047 quer BLOQUEAR devolução se pedido já lancado. P046 (op1) quer auto-estornar. Owner separou: P046 trata item separado isoladamente, P047 trata pedido-inteiro-lancado. Implementar P046 (estorno) e P047 (guard) juntos é coerente — ver depende_de."
+        },
+        {
+          "ids": [
+            "P045"
+          ],
+          "titulo": "OC volta pra 'comprado' quando nenhum item chegou (em vez de manter status atual)",
+          "mecanismo": "Em cancelOcIfEmpty(), o ramo final (nem allRecebido nem someRecebido) hoje faz `return` (mantém status). Trocar pra newStatus='comprado' (string usada em comprar/route.ts:145 e ordens/route.ts:143). Mantém 'parcialmente_recebido' quando someRecebido e 'recebido' quando todos. Decisão do owner (op2) bate exatamente com o JSDoc da função (linha 173-176) que JÁ promete esse comportamento mas o código não cumpre o ramo 'nenhum'.",
+          "local": "src/lib/compras-utils.ts:212-214 (ramo `else { return; }`)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "NÃO é bug de estorno — é status incorreto de OC (status semântico). 'em compra' do owner = string 'comprado' no código (confirmado em comprar/route.ts:145). Cirúrgico: 2 linhas. Risco baixo, não toca ledger."
+        },
+        {
+          "ids": [
+            "P053"
+          ],
+          "titulo": "Desclassificar devolução antiga (sem devolucao_id) via fallback por data+tipo",
+          "mecanismo": "Em desclassificarDevolucao, o lookup atual é só .eq('devolucao_id', id) (devolucoes.ts:447-451) — devoluções pré-fix-final-B têm devolucao_id NULL → retorna 0 movs, estoque não volta. Adicionar fallback: SE a busca por devolucao_id retornar 0 E d.classificada_em existir, buscar movs por janela [classificada_em - 2s, classificada_em + 2s] com origem_tipo IN (devolucao_cliente_integra, devolucao_cliente_avariada, devolucao_cliente_troca_sku, devolucao_fornecedor_enviada, transferencia_localizacao, ajuste_manual) e estorno_de IS NULL, e estornar essas. As movs de classificar compartilham origem_id (origemCompartilhado, devolucoes.ts:123) — usar isso pra agrupar é ainda mais determinístico se houver 1 mov com devolucao_id; senão cair no tempo.",
+          "local": "src/lib/wms/devolucoes.ts:447-451 (bloco de lookup) — JSDoc do gap está em :408-411",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Hipótese 'busca por data+tipo' CONFIRMADA literalmente. Risco médio: janela temporal pode pegar mov de outra devolução do mesmo produto no mesmo instante — mitigar restringindo por produto_id/galpao da devolução. origem_id compartilhado (linha 123) é a chave mais segura que data pura."
+        },
+        {
+          "ids": [
+            "P061"
+          ],
+          "titulo": "Desfazer sessão de inventário: continuar e reportar item que falhou (não throw no meio)",
+          "mecanismo": "O loop estornarSessaoInventario (inventario.ts:1190-1215) hoje faz `throw err` na 1a falha não-idempotente (linha 1209) → para no meio (49 desfeitos, resto não). Decisão do owner (P061): 'desfazer o que consegue e avisar exatamente qual item falhou'. Trocar throw por: coletar {divergencia_id, mov_id, erro} num array de falhas, continuar o loop, e ao final retornar {movsEstornadas, falhas:[...]}. A rota que chama deve devolver 200 com a lista de falhas (não 500). NÃO mexer no UPDATE condicional de status (já idempotente).",
+          "local": "src/lib/wms/inventario.ts:1196-1210 (try/catch dentro do for); rota chamadora estorno de sessão",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "CONFLITO DIRETO com P056 (NÃO neste cluster): P056 decide 'tudo-ou-nada' no MESMO loop (inventario.ts:1183-1215). P061 decide 'parcial + reportar'. São o mesmo código com decisões opostas. RESOLVER ANTES de implementar: P061 (parcial-tolerante) é mais simples (sem savepoint), P056 (atômico) exige envolver os N estornos numa RPC/transação única. Recomendo seguir P061 (decisão mais recente/específica do owner pro desfazer) e marcar P056 como superseded, OU pedir desempate ao owner. estornarMovimentacao já é idempotente (linha 1205 trata 'já estornada')."
+        },
+        {
+          "ids": [
+            "P078"
+          ],
+          "titulo": "Reverter replenishment após estorno parcial: estornar só o residual",
+          "mecanismo": "reverterReplenishment (movimentacoes.ts:646-680) usa estornarMovimentacao (FULL) em cada mov do par S+E. Se já houve estorno parcial (qty_estornada>0), o full throw em ledger.ts:388 ('use wms_estornar_parcial_movimentacao'). Trocar o loop pra: pra cada mov, ler quantidade e qty_estornada; calcular residual=quantidade-qty_estornada; se residual>0, chamar RPC wms_estornar_parcial_movimentacao({p_mov_id, p_qty:residual, p_usuario_id, p_observacoes}). Espelha exatamente o padrão JÁ usado em desfazer-parcial/route.ts:94 (que documenta o porquê em :74-84). Manter o skip idempotente de 'já estornada'.",
+          "local": "src/lib/wms/movimentacoes.ts:664-678 (loop estornarMovimentacao); RPC já existe (migration 20260518_realocacao_fix_pack_rpc_estorno_parcial.sql)",
+          "esforco": "S",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Hipótese 'estorno parcial' CONFIRMADA. Infra PRONTA — RPC wms_estornar_parcial_movimentacao já existe e é usada em desfazer-parcial. Risco médio só por tocar ledger/saldo, mas a RPC já é atômica+lock. Precisa SELECT de quantidade+qty_estornada antes (hoje só seleciona id em :655-657)."
+        },
+        {
+          "ids": [
+            "P074"
+          ],
+          "titulo": "Exigir NF só quando a operação precisa; ignorar quando não precisa",
+          "mecanismo": "No worker (execution-worker-wms.ts:64-78), upsertNotaFiscal falha → hoje só logger.warn e segue, gravando S com nota_fiscal_id=null. A S usa origem_tipo='nf_venda' (linha 162), que ESTÁ em NF_REQUIRED (ledger.ts:146-153) — então pra venda a NF É necessária. Decisão do owner: 'exigir NF só quando a operação precisa; ignorar/continuar quando não precisa (ex ajuste de posição)'. Implementar: (a) tornar a falha de upsertNotaFiscal um erro DURO para nf_venda (lançar/abortar o job pra ele retentar pelo backoff do worker, em vez de gravar S órfã sem NF) — alinhado ao P048/P082 'nada silencioso'; (b) deixar warn-e-continua só pras origens fora de NF_REQUIRED. Como NF_REQUIRED já distingue isso em ledger.ts, a regra do owner ≈ promover o warn de ledger.ts:154-160 a throw para o subconjunto NF_REQUIRED, e o worker tratar a falha como retry.",
+          "local": "src/lib/execution-worker-wms.ts:64-78 (try/catch do upsert) + src/lib/wms/ledger.ts:146-160 (NF_REQUIRED warn que deveria ser enforce p/ subset)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "PARCIALMENTE já é o comportamento (warn-e-continua). Gotcha #5 do CLAUDE.md + comentário em ledger.ts:140-145 explicam que o enforce foi RELAXADO em 2026-05-27 porque /receber, /parcial e legacy populam null legitimamente. Endurecer só p/ nf_venda exige cuidado: confirmar que execução pós-NF SEMPRE tem nota_fiscal_id/chave (pedido.nota_fiscal_id). Risco: reintroduzir o 500 que motivou o relaxe. Recomendo escopo mínimo: abortar job (retry) só quando origem_tipo='nf_venda' E não há nem nota_fiscal_id nem chave."
+        },
+        {
+          "ids": [
+            "P013"
+          ],
+          "titulo": "Tela de separação recarrega estado real ao reconectar",
+          "mecanismo": "Puramente frontend. O backend (marcar-item) já é fail-loud e atômico (pickItemAtomico). O problema é que após queda de rede a tela mostra estado stale. Habilitar refetchOnReconnect:true nas queries da página de separação (ou no QueryClient default em providers.tsx:14-24, onde só refetchOnWindowFocus:false está setado) e/ou invalidar a query de itens do pedido no onReconnect. Garante que o checkbox reflita separacao_marcado real do servidor.",
+          "local": "src/components/providers.tsx:14-24 (defaults do QueryClient) ou src/app/wms/separacao/page.tsx (query específica)",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "NÃO é bug de ledger/estorno — é UI/cache. Backend já correto. Risco baixo. Não bate com a sub-hipótese de estorno; é o 'mostrar estado real' da família P013/P073 (idempotência+UI)."
+        }
+      ],
+      "merge_groups": [
+        [
+          "P046",
+          "P047"
+        ]
+      ],
+      "noops": [
+        "P004",
+        "P041",
+        "P059"
+      ]
+    },
+    {
+      "cluster": "CUSTOM_RAIZ_UX — decisões estruturais (não deletar loc com itens; mostrar todos itens do kit) + UX/cadastro pontual",
+      "primitiva": "Não há UMA primitiva única: o cluster é heterogêneo. O fio condutor real é \"preferir transparência/visibilidade a esconder ou descartar dados\" (mostrar todos itens do kit, mostrar excesso como ganho, não deletar loc com saldo, default visível de lead-time, esconder vendedor inativo). Cada P-ID tem mecanismo próprio. A única infra de engenharia compartilhada de fato reusável é o ledger via inserirMovimentacao/wms_inserir_movimentacao (P033) e o par \"validar antes + helper que move estoque\" para localizações (P063).",
+      "infra_existente": "JÁ EXISTE e deve ser reusado: (1) origem_tipo 'inventario_ganho' já é valor válido no CHECK do ledger (20260520_ledger_simplificado.sql:74) — P033 só precisa emitir mais um mov E via inserirMovimentacao, sem migration. (2) desativarLocalizacao (localizacoes.ts:121-133) JÁ bloqueia desativação quando há saldo>0; e a rota substituir-e-excluir (localizacoes/[id]/substituir-e-excluir/route.ts) JÁ implementa 'mover itens p/ outra loc, depois desativar' via replenishmentIntraGalpao — exatamente o que a nota do P063 pede. (3) vendas/criar/route.ts:159 JÁ rejeita vendedor alvo com ativo===false — padrão a espelhar p/ P076. (4) nova/page.tsx:98 JÁ filtra u.ativo no dropdown — padrão correto a copiar pros outros 2 dropdowns. (5) O caminho 'encontrei sem cadastro' em validar-oc-item/route.ts:269-350 (mov E em loc bipada) é o padrão 'inventário em loc sem etiqueta' citado na nota do P029.",
+      "correcoes": [
+        {
+          "ids": [
+            "P002"
+          ],
+          "titulo": "Componente de kit sem tiny_produto_id na empresa: parar de descartar — sempre virar linha visível p/ baixa manual",
+          "mecanismo": "Em resolverItensWms/expandir-kit, trocar o `continue` (que descarta o componente sem mapeamento Tiny) por um push do componente em `expandido` mesmo sem tinyProdutoId, marcando-o como 'sem_cadastro_tiny'. O 3D não precisa do Tiny ID p/ rotear/deduzir (usa produtoIdWms=componente_id). O bloqueador real é a gravação em siso_pedido_itens: produto_id é escrito como item.tinyProdutoId e o onConflict é (pedido_id, produto_id) — componente sem Tiny ID não tem produto_id válido. Opções: (a) gravar produto_id sintético/placeholder derivado do produtoIdWms e flag sem_cadastro_tiny=true; (b) tornar produto_id nullable e usar produto_id_tiny como chave alternativa. UI de separação então mostra o item com aviso 'sem código Tiny — baixa manual'. Confirmar com dono qual estratégia de PK.",
+          "local": "src/lib/webhook-processor-wms.ts:238-246 (o continue) + ponto de gravação em src/lib/webhook-processor-wms.ts:542-560 (upsert siso_pedido_itens com onConflict pedido_id,produto_id)",
+          "esforco": "L",
+          "risco": "medio",
+          "migration": true,
+          "depende_de": [],
+          "notas": "REFUTA a parte 'UX pontual' da hipótese: NÃO é cosmético. O componente descartado nunca vira siso_pedido_itens (continue na linha 245), logo não roteia, não reserva, não aparece no checklist. ResolvedItem.tinyProdutoId é tipado `number` não-nullable (linha 45) e produto_id é parte do conflict key — por isso 'mostrar todos os itens' exige decidir a chave do item sem Tiny ID (migration provável). Decisão do dono é LEI: nunca rejeitar por falta de Tiny ID; baixa manual > enviar incompleto."
+        },
+        {
+          "ids": [
+            "P007"
+          ],
+          "titulo": "Cancelamento durante separação: cancelar só o não-pego; item já picado volta por entrada manual",
+          "mecanismo": "Hoje cancelarVendaManual (vendas-cancelamento.ts:61-64) BLOQUEIA cancelamento se status_separacao ∈ {em_separacao, separado, embalado} — manda usar voltar-etapa. A decisão do dono muda o comportamento: permitir cancelar, liberando reserva R só dos itens NÃO picados (mov_saida_id IS NULL / quantidade_pega=0), marcar pedido cancelado, e NÃO tentar reverter automaticamente os itens já picados — esses ficam pra reentrada manual pelo operador (mov E manual). Implementar: substituir o throw por um caminho que (1) particiona itens em picados vs não-picados, (2) libera R dos não-picados via liberarReserva por item, (3) registra evento listando os itens picados que precisam de devolução manual. NÃO estornar mov S dos picados automaticamente (a nota diz 'devolver item pego manualmente').",
+          "local": "src/lib/wms/vendas-cancelamento.ts:60-65 (bloco que hoje faz throw em separação ativa)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "PARCIALMENTE bate com hipótese: não é 'noop'. O código atual é mais conservador que a decisão (bloqueia tudo). A decisão pede cancelamento parcial seletivo + devolução manual do picado — preserva auditoria sem auto-estorno. Atenção: liberarReserva atual é por pedido inteiro (motivo); pode precisar de variante por item p/ não soltar R de item ainda em uso. Verificar assinatura de liberarReserva antes."
+        },
+        {
+          "ids": [
+            "P029"
+          ],
+          "titulo": "Validação OC 'Encontrei': exigir bipar prateleira E código de barras do produto antes de confirmar",
+          "mecanismo": "Na rota validar-oc-item ação 'encontrei', hoje só valida que a loc bipada pertence ao galpão (route.ts:170-200 p/ o caminho com qty_contada; 285-300 p/ o legado 'sem cadastro'). Adicionar: receber também o GTIN/código de barras bipado do produto e validar contra siso_produtos.gtin (ou siso_produto_empresas) do item antes de emitir o par/contagem. Se não bater, retornar 422 'produto bipado não corresponde ao item'. Reusar o padrão já existente de 'encontrei sem cadastro' (mov E em loc bipada, linhas 301-333) como o 'botão de confirmação manual igual inventário' citado na nota. É UX + uma checagem de igualdade — sem ledger novo.",
+          "local": "src/app/api/wms/separacao/validar-oc-item/route.ts:170-200 (resolução de locAlvoId) e :285-300 (validação de loc no caminho legado)",
+          "esforco": "M",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "BATE com a hipótese (UX/cadastro pontual). Confirmado: a rota aceita localizacao_id/localizacao_codigo e valida só o galpão da loc, nunca o produto — operador pode digitar/bipar loc errada sem bloqueio. O gtin do item já existe em siso_produtos (gravado em pedido_itens.gtin no webhook). O fluxo 'encontrei sem cadastro' (mov E em loc bipada) é literalmente o pattern 'entrada em loc sem etiqueta' que a nota referencia."
+        },
+        {
+          "ids": [
+            "P033"
+          ],
+          "titulo": "Recebimento com brinde/excesso: aceitar qty>solicitada e lançar excedente como inventario_ganho",
+          "mecanismo": "Em compras/receber/route.ts o loop limita qtyParaEsteItem=Math.min(remaining, faltante) (linhas 116-120) — o excesso (remaining após cobrir todos os itens da OC) fica órfão: nunca alocado, nenhuma mov E gerada. Mecanismo: após o loop por SKU, se sobrar `remaining > 0`, emitir UMA mov E extra via inserirMovimentacao com origem_tipo='inventario_ganho' (valor JÁ válido no CHECK) na loc RECEBIMENTO do galpão resolvido (reusar gravarMovEntradaCompra ou um helper irmão), tags empresa/fornecedor + motivo 'brinde/excesso recebimento OC'. Assim saldo físico bate (12 entram, não 10) e o ganho é rastreável.",
+          "local": "src/app/api/wms/compras/receber/route.ts:116-120 (cap em faltante) e :210-213 (decremento de remaining) — ponto de injeção do excedente após o for de `sorted`",
+          "esforco": "M",
+          "risco": "alto",
+          "migration": false,
+          "depende_de": [],
+          "notas": "Risco alto pois ESCREVE no ledger (saldo). Mas reusa 100% infra existente: origem_tipo 'inventario_ganho' já no CHECK (20260520_ledger_simplificado.sql:74) e inserirMovimentacao já é o write atômico. SEM migration. Tangencia a hipótese 'UX pontual' mas o mecanismo é ledger — classifiquei pelo mecanismo real. Decisão do dono (op3): aceitar qualquer qty e registrar excesso como ganho automático."
+        },
+        {
+          "ids": [
+            "P063"
+          ],
+          "titulo": "Raiz: não permitir excluir/desativar localização que contém itens — obrigar transferir antes",
+          "mecanismo": "A RAIZ que o dono escolheu JÁ está majoritariamente implementada: desativarLocalizacao (localizacoes.ts:121-133) bloqueia desativação se saldo>0 ('não é possível desativar: localização tem saldo'), e a rota substituir-e-excluir já move TODO saldo p/ outra loc (replenishmentIntraGalpao) antes de desativar. Gaps a fechar: (1) o check só olha saldo>0 — uma loc com reservado>0 mas saldo=reservado, ou loc que é localizacao_destino_id pendente de transferência/guarda em aberto, ainda poderia ser desativada; ampliar o guard p/ também bloquear se a loc é destino de pendência de guarda aberta ou perna de transferência em trânsito. (2) O cenário concreto do P063 (cancelamento de transferência reinsere leg S na localizacao_origem_id que pode ter sido desativada) — garantir que a loc origem não possa ser desativada enquanto houver transferência não-terminal referenciando-a. Reforçar desativarLocalizacao com esses 2 checks adicionais e cobrir a rota DELETE (localizacoes/[id]/route.ts:62-83) que hoje só chama o helper.",
+          "local": "src/lib/wms/localizacoes.ts:121-133 (desativarLocalizacao — ampliar os checks) + src/app/api/wms/localizacoes/[id]/route.ts:62-83 (DELETE) + cobre o sintoma em src/lib/wms/transferencias.ts:497-536 (cancelamento reinsere em localizacao_origem_id)",
+          "esforco": "M",
+          "risco": "medio",
+          "migration": false,
+          "depende_de": [],
+          "notas": "BATE FORTE com a hipótese (decisão estrutural 'não deletar loc com itens'). Surpresa: a infra-base já existe — não é construir do zero, é FECHAR GAPS no guard existente (reservado, destino de pendência, perna de transferência). A nota do dono reenquadra a raiz: em vez de tornar o cancelamento de transferência atômico, eliminar a precondição (loc deletada com caixa dentro). Família P062/P066/P068 (locks de transferência) NÃO se fundem aqui — são outro cluster (concorrência); P063 é o eixo 'cadastro de loc'."
+        },
+        {
+          "ids": [
+            "P076"
+          ],
+          "titulo": "Vendedor inativo não aparece no dropdown de atribuição/reatribuição",
+          "mecanismo": "Os dropdowns de vendedor consomem GET /api/wms/admin/usuarios (que retorna o campo ativo mas não filtra). O frontend filtra só por cargo 'vendedor'. Adicionar `&& u.ativo` ao filtro em DOIS pontos: vendas/page.tsx:101 (filtro do dashboard) e vendas/[id]/page.tsx:384 (modal de reatribuição — o cenário literal do P076). nova/page.tsx:98 JÁ filtra u.ativo — não mexer. Defesa em profundidade opcional (recomendada): espelhar em vendas/[id]/vendedor/route.ts:66-91 a rejeição de alvo inativo que vendas/criar/route.ts:159 já faz, pois a rota PATCH hoje só valida role, não ativo.",
+          "local": "src/app/wms/vendas/[id]/page.tsx:384 e src/app/wms/vendas/page.tsx:101 (filtros dos dropdowns); opcional backend: src/app/api/wms/vendas/[id]/vendedor/route.ts:66-91",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": false,
+          "depende_de": [],
+          "notas": "BATE com hipótese (UX pontual). Confirmada a assimetria que o raio-x apontou: criar/route.ts:159 já bloqueia inativo, mas vendedor/route.ts:66-92 não. Decisão do dono é só 'nem aparecer no dropdown' (Modo 2) — fix mínimo é frontend. nova/page.tsx já está correto (noop)."
+        },
+        {
+          "ids": [
+            "P079"
+          ],
+          "titulo": "Lead-time vazio do fornecedor preferencial: assumir 7 dias por padrão na cobertura",
+          "mecanismo": "Na materialized view siso_cobertura_estoque (definição VIVA = 20260520f_mviews.sql, a recriação 3D), o CTE lead_pref (linhas 55-59) traz lead_time_dias_medio que pode ser NULL; no CASE de status_cobertura a cláusula 'lead_time_risco' só dispara quando lp.lead_time_dias_medio IS NOT NULL (linha 73), então lead-time vazio cai silenciosamente em 'ok'. Fix: COALESCE(lp.lead_time_dias_medio, 7) tanto na coluna lead_time_medio (linha 68) quanto na comparação do CASE (linha 73), e remover/ajustar o guard IS NOT NULL. Nova migration que recria a MV (DROP+CREATE) + atualizar o arquivo. NÃO forçar preenchimento (a nota proíbe).",
+          "local": "supabase/migrations/20260520f_mviews.sql:55-59 (CTE lead_pref) e :68,73 (uso de lead_time na coluna e no CASE) — exige nova migration recriando siso_cobertura_estoque",
+          "esforco": "S",
+          "risco": "baixo",
+          "migration": true,
+          "depende_de": [],
+          "notas": "BATE com hipótese (cadastro pontual). CONFIRMEI a ordem real de migrations: 20260605_wms_excecoes_dashboards.sql ainda tem empresa_dona_id (versão 4D antiga, commit def452f); 20260520f_mviews.sql é a recriação 3D POSTERIOR (commit 18f2a55) e é a definição viva — o raio-x acertou o arquivo. Como é MV (não query em runtime), o fix é DROP+CREATE numa migration nova aplicada em staging via mcp apply_migration."
+        }
+      ],
+      "merge_groups": [],
+      "noops": []
+    }
+  ],
+  "plano": {
+    "resumo": "Os 68 problemas colapsam em ~7 primitivas de engenharia, das quais 2 dominam: (A) o claim atômico de header (UPDATE condicional .eq(status_esperado) checando rows afetadas) que serializa e torna idempotente ~20 problemas de duplo-clique/concorrência reusando o padrão já vivo em receberTransferencia/parcial Pass A; e (B) o envelope de RPC plpgsql atômica (N movs no ledger + UPDATE de status na mesma tx, espelhando wms_pick_item_atomico/wms_confirmar_guarda_atomico) que resolve ~15 problemas de estado-partido. O resto são guards de pré-voo, wiring do liberarReserva idempotente já existente, hardening de enqueue/retry sobre a fila durável que já existe, e bugs pontuais cirúrgicos. Quase nada é infra nova — é reusar primitivas consagradas nos pontos onde faltam. A tese: construir/padronizar A e B primeiro, depois aplicá-las domínio por domínio do menor blast-radius (devoluções, inventário) ao maior (cutover, vendas), com bugs pontuais e UX por último.",
+    "primitivas": [
+      {
+        "nome": "Claim atômico de header (UPDATE condicional + checar rows afetadas)",
+        "problemas_cobertos": 18,
+        "construir_uma_vez": "Padronizar o idiom 'UPDATE entidade SET status=novo (ou *_em_andamento_por=user) WHERE id=$1 AND status=esperado RETURNING id; se 0 rows -> 409/no-op idempotente'. Aplicado em headers de pedido/devolução/sessão/transferência/item antes de qualquer sequência de movs ou efeito colateral. Não é lock global nem tabela de lock nova — é reivindicação por linha. Para o lado simétrico de transferência, ADD COLUMN cancelamento_em_andamento_por uuid.",
+        "infra_reusada": "receberTransferencia (transferencias.ts:299-305 com recebimento_em_andamento_por, migration 20260527_p3) · parcial Pass A (parcial/route.ts:616-620 .eq('separacao_marcado',false)) · iniciarGuarda (guarda.ts:332-396 iniciada_por) · short-circuit ja_separados (compras-embalagem.ts:116-119) · backend de vendas já deduplica por idempotency_key (criar/route.ts:170-189)"
+      },
+      {
+        "nome": "RPC plpgsql atômica: N movs no ledger + UPDATE(s) de status numa tx",
+        "problemas_cobertos": 13,
+        "construir_uma_vez": "Função plpgsql que faz SELECT FOR UPDATE na linha-âncora, chama wms_inserir_movimentacao N vezes E executa o(s) UPDATE de status na MESMA transação; qualquer RAISE EXCEPTION dá rollback total. TS vira wrapper fino .rpc(). Inclui as RPCs inversas (estorno de N movs + reset de status). Lembrar: origem_id/pedido_id são TEXT.",
+        "infra_reusada": "wms_inserir_movimentacao (write atômico único, chamável de plpgsql) · 3 RPCs-modelo wms_pick_item_atomico (20260528) / wms_confirmar_guarda_atomico (20260527_p3) / wms_replenishment_intra_galpao (20260527_p3) · estornarMovimentacao idempotente (ledger.ts:363) · wms_estornar_parcial_movimentacao (20260518) pro residual"
+      },
+      {
+        "nome": "Wiring do liberarReserva idempotente em todo cancelamento + cancel-de-fila",
+        "problemas_cobertos": 5,
+        "construir_uma_vez": "Plugar liberarReserva({pedido_id,motivo:'cancelamento'}) (libera TODAS as R do pedido via L atômico) em cada caminho de cancelamento que hoje só muda status; estornarReservaIndividual quando é só 1 item (R é keyed por pedido_id — filtrar por produto_id WMS resolvido); e o idiom de cancelar a tarefa pendente da fila no caminho admin.",
+        "infra_reusada": "liberarReserva (reservas.ts:38-85, idempotente) · estornarReservaIndividual (reservas.ts:135) · idiom cancel-fila (compras/pedidos/[id]/cancelar/route.ts:153-160) · guards do worker (claim status='pendente' + pula status='cancelado')"
+      },
+      {
+        "nome": "Guard de pré-voo (pre-flight check antes da operação perigosa)",
+        "problemas_cobertos": 11,
+        "construir_uma_vez": "Checagem cirúrgica no topo da rota/serviço que (a) bloqueia com mensagem acionável (qty<=0, galpão misto, quarentena ausente, estoque já lançado, perm faltante, SKU bipado != item) ou (b) calcula a qty segura e AVISA sem bloquear (estornos que negativariam). Antecipa a exception de validarCoerencia com contexto de negócio.",
+        "infra_reusada": "validarCoerencia (ledger.ts:44-63) · leitura saldo vivo siso_estoque · userCan/userCanAny + requireWarehouseAccess · wmsErrorResponse (api-errors.ts) · flag siso_pedidos.estoque_lancado"
+      },
+      {
+        "nome": "Enqueue/transição durável: 23505-tolerante + retry + nunca silencioso",
+        "problemas_cobertos": 4,
+        "construir_uma_vez": "Padronizar o tratamento de queueError: code 23505 = sucesso idempotente (índice único garantiu o job), falha real = retry curto in-process OU rotear via job na fila (nunca loop in-process que morre com o request) e NUNCA retornar ok:true cego — propagar erro ao operador ou marcar flag pra sweep. Para transições fora-de-request (reconciliador), job dedicado com schedule próprio (30s/5min/10min, não o cap de 120s do worker).",
+        "infra_reusada": "índice uq_fila_release_pedido (20260527) · padrão canônico compras-release.ts:216-230 · pg_cron worker-heartbeat + reclaim-zombies (20260324) · backoff do worker (execution-worker.ts:209-270) · kickWorker"
+      },
+      {
+        "nome": "Estorno-via-ledger correto + undo tolerante + lookup determinístico no histórico",
+        "problemas_cobertos": 6,
+        "construir_uma_vez": "(a) onde há saída separada, gravar a E contra-mov de verdade (não só nular o link); (b) loops de undo coletam-e-reportam falhas via wms_estornar_parcial_movimentacao no residual em vez de throw no meio; (c) lookup de movs do evento por devolucao_id/origem_id com fallback por classificada_em+origem_tipo pro legado; (d) erro de separação SEMPRE vira evento 'erro' no histórico.",
+        "infra_reusada": "estornarMovimentacao (ledger.ts:363) · wms_estornar_parcial_movimentacao (20260518) · registrarEvento com tipo 'erro' já no type (historico-service.ts:60) · coluna devolucao_id + classificada_em"
+      },
+      {
+        "nome": "Visibilidade de dados (não esconder/descartar) + UX de cadastro",
+        "problemas_cobertos": 7,
+        "construir_uma_vez": "Fio condutor de transparência: componente de kit sem tiny_produto_id sempre vira linha visível pra baixa manual (decidir PK do item sem Tiny ID); excesso de recebimento vira inventario_ganho; não desativar loc com saldo/reservado/pendência; default de lead-time 7d na MV; esconder vendedor inativo nos dropdowns; bipar SKU além da loc no 'Encontrei'.",
+        "infra_reusada": "origem_tipo 'inventario_ganho' já no CHECK (20260520_ledger_simplificado.sql:74) · desativarLocalizacao já bloqueia saldo>0 + rota substituir-e-excluir · vendas/criar/route.ts:159 já rejeita inativo · MV siso_cobertura_estoque (20260520f)"
+      }
+    ],
+    "fases": [
+      {
+        "ordem": 1,
+        "nome": "Fundação atômica e de claim (primitivas A e B)",
+        "objetivo": "Construir/padronizar as 2 primitivas dominantes — o claim de header e o envelope de RPC plpgsql atômica — junto com a migration de coluna de lock simétrico de transferência e o helper de RPC inversa de estorno. Nada de aplicação ainda; só as peças reusáveis e os fixes de claim que NÃO tocam ledger pesado.",
+        "problemas": [
+          "P052",
+          "P054",
+          "P062",
+          "P066",
+          "P068",
+          "P012"
+        ],
+        "esforco_total": "M-L (1 migration ADD COLUMN + ~3 claims + reordenação)",
+        "racional": "Tudo que vem depois (estornos atômicos, idempotência de pick/cutover) depende do padrão de claim e do envelope de RPC estarem provados. P052/P054 (claim de status em classificarDevolucao) e P062/P066/P068 (claim simétrico de transferência) são as aplicações mais limpas do claim — exercitam o padrão em domínio de baixo-médio blast-radius e já fecham races reais. P012 é pura reordenação (consolidar antes de marcar) sem ledger — quick win que valida 'efeito colateral só após sucesso'. NÃO tocar ledger em massa aqui."
+      },
+      {
+        "ordem": 2,
+        "nome": "RPCs atômicas de devolução e inventário (menor blast-radius operacional)",
+        "objetivo": "Aplicar o envelope de RPC atômica nos fluxos de devolução e inventário — domínios com volume menor e estado bem delimitado por sessão/devolução, ideais pra estrear a primitiva B em produção.",
+        "problemas": [
+          "P049",
+          "P050",
+          "P051",
+          "P056",
+          "P060",
+          "P057",
+          "P055"
+        ],
+        "esforco_total": "L (4-5 RPCs novas + 1 migration de índice único)",
+        "racional": "Devolução (P049/P050 merge, +P051 guard de quarentena dentro da RPC) e inventário (P056/P060 par aplicar/estornar, P057 contagem inline auto-declarada não-atômica, P055 unique de sessão) são famílias coesas, com modelos diretos, e o claim de status (fase 1, P052/P054) já cobre o duplo-clique de brinde. Vêm antes do cutover/vendas porque o blast-radius de uma RPC de inventário/devolução mal-feita é contível. ATENÇÃO: resolver o conflito P056(atômico) vs P061(parcial) ANTES — ver conflitos."
+      },
+      {
+        "ordem": 3,
+        "nome": "RPCs atômicas de separação/pick, cutover e transferência (alto blast-radius do ledger)",
+        "objetivo": "Estender a primitiva B aos caminhos críticos de pick (desmarcar/marcar tudo-ou-nada), reversão de cutover, recebimento manual/OC e desfazer recebimento de transferência. São os que mais mexem em saldo — só depois da primitiva provada nas fases 1-2.",
+        "problemas": [
+          "P014",
+          "P019",
+          "P072",
+          "P023",
+          "P028",
+          "P067",
+          "P065"
+        ],
+        "esforco_total": "L-XL (5-6 RPCs incl. inversas + 2-3 migrations)",
+        "racional": "cutover.ts é backstop crítico (P023); marcar-item é o caminho quente de pick (P014/P019/P072); receber-oc/manual escreve E+pendência (P028); desfazer transferência (P067) reusa o claim de header da fase 1. Maior risco do roadmap — exige a primitiva validada antes. P065 (pre-check/aviso de desfazer transferência) entra junto de P067 porque é o mesmo arquivo/loop e a coordenação evita introduzir ponto de falha parcial novo."
+      },
+      {
+        "ordem": 4,
+        "nome": "Vendas manuais atômicas + reserva/cancelamento durável",
+        "objetivo": "Atomizar criar/cancelar venda baixa_direta (N saídas/estornos como bloco) e wirar o liberarReserva idempotente + cancel-de-fila em todos os caminhos de cancelamento e estorno admin.",
+        "problemas": [
+          "P075",
+          "P077",
+          "P034",
+          "P038",
+          "P039",
+          "P040",
+          "P008",
+          "P007"
+        ],
+        "esforco_total": "L (2 RPCs de venda + ~5 wirings de reserva/fila + 1 guard)",
+        "racional": "P075/P077 são par simétrico de venda manual (RPC). O cluster de reserva (P034/P038/P039/P040/P008) é majoritariamente wiring de helpers JÁ existentes — baixo risco unitário mas precisa do liberarReserva entendido (P039 depende de P038). P007 (cancelamento parcial seletivo na separação) muda comportamento conservador e toca reserva — agrupa aqui. Ordem 4 porque depende do entendimento de reserva/estorno consolidado nas fases anteriores."
+      },
+      {
+        "ordem": 5,
+        "nome": "Resiliência de enqueue/reanimação e reconciliador",
+        "objetivo": "Endurecer os pontos que escrevem ANTES da fila ou FORA dela: enqueue de lancar_estoque, cancelOcIfEmpty, transição reconciliada, e o limbo de OC parcialmente cancelado.",
+        "problemas": [
+          "P005",
+          "P048",
+          "P082",
+          "P035",
+          "P074"
+        ],
+        "esforco_total": "M (hardening de error-handling + 1 possível novo tipo de job/flag)",
+        "racional": "Depende da fila durável (já existe) e do entendimento de cancelamento (fase 4). P035 (OC parcial volta a pendente) toca re-roteamento+reservas (risco alto) e precisa de P034/P038 prontos pra limpar R antes de re-rotear. P082 depende de P035 (define status de partida). P074 (exigir NF só p/ nf_venda) é hardening do worker — cuidado pra não reintroduzir o 500 do relaxe de 2026-05-27."
+      },
+      {
+        "ordem": 6,
+        "nome": "Bugs pontuais de estorno/busca + idempotência leve + observabilidade",
+        "objetivo": "Correções cirúrgicas que não dependem das fundações: estorno correto na devolução de compra, status de OC, fallback de desclassificação legada, reverter replenishment parcial, idempotência de concluir/desfazer-bip/marcar-item leve, debounce e refetch de UI.",
+        "problemas": [
+          "P046",
+          "P047",
+          "P045",
+          "P053",
+          "P078",
+          "P061",
+          "P006",
+          "P021",
+          "P073",
+          "P003",
+          "P043",
+          "P018",
+          "P013",
+          "P071"
+        ],
+        "esforco_total": "M (vários S/M independentes)",
+        "racional": "Bugs pontuais por último (regra de ordenação). Muitos são S, baixo risco, paralelizáveis. P046+P047 (merge: estornar + guard de pedido lançado na mesma rota). P061 fica aqui (parcial-tolerante) APÓS resolver o conflito com P056. P003 (advisory lock no reprocessar) é a única peça de infra nova de lock — isolada porque não há advisory no codebase hoje. P071/P018/P013 são frontend puro (quick wins)."
+      },
+      {
+        "ordem": 7,
+        "nome": "Decisões estruturais de cadastro/UX e dados visíveis",
+        "objetivo": "Mudanças estruturais e de visibilidade: kit sem Tiny ID vira linha de baixa manual, excesso de recebimento vira ganho, guard de loc com itens, lead-time default, vendedor inativo nos dropdowns, bipar SKU no Encontrei.",
+        "problemas": [
+          "P002",
+          "P033",
+          "P063",
+          "P079",
+          "P076",
+          "P029",
+          "P031",
+          "P017",
+          "P036",
+          "P037",
+          "P069"
+        ],
+        "esforco_total": "M-L (P002 é L com migration de PK; resto S/M)",
+        "racional": "P002 (kit sem Tiny ID) é estrutural com decisão de PK pendente (migration) — isolar pra não bloquear. P033 (excesso->ganho) escreve ledger mas reusa origem_tipo existente. P063 fecha gaps de guard já existente. P031/P017/P036/P069 são guards de pré-voo independentes (poderiam subir, mas agrupados por afinidade de domínio cadastro/UX). P037 é quase no-op (observabilidade — registrarEvento já é fire-and-forget safe), agrupa com P036 (mesma rota)."
+      }
+    ],
+    "prs": [
+      {
+        "titulo": "Migration: ADD COLUMN cancelamento_em_andamento_por em siso_transferencias_galpao",
+        "problemas": [
+          "P068"
+        ],
+        "fase": 1,
+        "esforco": "S",
+        "migration": true
+      },
+      {
+        "titulo": "Claim simétrico receber<->cancelar transferência (cancelarTransferencia reivindica header; receber checa cancelamento_em_andamento_por)",
+        "problemas": [
+          "P062",
+          "P066",
+          "P068"
+        ],
+        "fase": 1,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Claim de status em classificarDevolucao (UPDATE condicional -> classificando) — fecha duplo-clique e serializa sequência E+S",
+        "problemas": [
+          "P052",
+          "P054"
+        ],
+        "fase": 1,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Iniciar separação: consolidar ANTES de marcar em_separacao (reordenação)",
+        "problemas": [
+          "P012"
+        ],
+        "fase": 1,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "RPC wms_classificar_devolucao_atomico (N movs + status; valida quarentena antes do E)",
+        "problemas": [
+          "P049",
+          "P050",
+          "P051"
+        ],
+        "fase": 2,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_aplicar_sessao_inventario_atomico (aplica divergências tudo-ou-nada)",
+        "problemas": [
+          "P060"
+        ],
+        "fase": 2,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_estornar_sessao_inventario_atomico (estorno em bloco tudo-ou-nada) — APÓS desempate P056 vs P061",
+        "problemas": [
+          "P056"
+        ],
+        "fase": 2,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_registrar_contagem_inline_atomico (mov + contagem + divergência numa tx)",
+        "problemas": [
+          "P057"
+        ],
+        "fase": 2,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "Migration: índice único parcial de sessão de inventário por galpão+dia + catch 23505 amigável",
+        "problemas": [
+          "P055"
+        ],
+        "fase": 2,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_desmarcar_item_atomico (estorno S + recria R + limpa links + reset item, tudo-ou-nada)",
+        "problemas": [
+          "P014"
+        ],
+        "fase": 3,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "Estender wms_pick_item_atomico p/ gravar mov_links + setar item na mesma RPC (marcar/parcial)",
+        "problemas": [
+          "P019"
+        ],
+        "fase": 3,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "marcar-item: status-guard idempotente (separacao_marcado no select + claim antes do pick)",
+        "problemas": [
+          "P072"
+        ],
+        "fase": 3,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "RPC wms_reverter_cutover_atomico (estorno S + recria R + flag numa tx) + caller await",
+        "problemas": [
+          "P023"
+        ],
+        "fase": 3,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_receber_estoque_atomico (mov E + pendência de guarda tudo-ou-nada) em receber manual e receber-oc",
+        "problemas": [
+          "P028"
+        ],
+        "fase": 3,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_desfazer_recebimento_transferencia_atomico (estorno legs + reset numa tx)",
+        "problemas": [
+          "P067"
+        ],
+        "fase": 3,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "Pre-check/aviso de saldo ao desfazer recebimento de transferência (sem bloquear)",
+        "problemas": [
+          "P065"
+        ],
+        "fase": 3,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "RPC wms_criar_venda_baixa_direta_atomico (N saídas + pedido tudo-ou-nada)",
+        "problemas": [
+          "P075"
+        ],
+        "fase": 4,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_cancelar_venda_manual_atomico (N estornos como bloco indivisível)",
+        "problemas": [
+          "P077"
+        ],
+        "fase": 4,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "Recusar pedido (rejeitado) libera R via liberarReserva + cancelamento inteiro libera R no ato",
+        "problemas": [
+          "P034",
+          "P038"
+        ],
+        "fase": 4,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Cancelar UM item solta a R desse item (estornarReservaIndividual, resolvendo produto_id WMS)",
+        "problemas": [
+          "P039"
+        ],
+        "fase": 4,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Bloquear cancelar item já separado/bipado (guard 409 com instrução)",
+        "problemas": [
+          "P040"
+        ],
+        "fase": 4,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Estorno admin cancela tarefa pendente da fila + seta status='cancelado'",
+        "problemas": [
+          "P008"
+        ],
+        "fase": 4,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Cancelamento durante separação: cancela só o não-pego; picado vira reentrada manual",
+        "problemas": [
+          "P007"
+        ],
+        "fase": 4,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Enqueue lancar_estoque resiliente (23505-tolerante + retry + não-silencioso) em aprovar e webhook",
+        "problemas": [
+          "P005"
+        ],
+        "fase": 5,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "cancelOcIfEmpty com retry 3x e propagação de falha ao operador",
+        "problemas": [
+          "P048"
+        ],
+        "fase": 5,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "OC parcialmente cancelado volta a 'pendente' (limpa R, re-roteia) + transição reconciliada durável com retry/alerta",
+        "problemas": [
+          "P035",
+          "P082"
+        ],
+        "fase": 5,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "Worker: exigir NF dura só p/ nf_venda (retry), warn-e-continua p/ resto",
+        "problemas": [
+          "P074"
+        ],
+        "fase": 5,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Devolver item de compra: estornar a S antes de nular o link + bloquear se pedido já lançado",
+        "problemas": [
+          "P046",
+          "P047"
+        ],
+        "fase": 6,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "OC volta pra 'comprado' quando nenhum item chegou (ramo else de cancelOcIfEmpty)",
+        "problemas": [
+          "P045"
+        ],
+        "fase": 6,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Desclassificar devolução legada: fallback por classificada_em+origem_tipo+produto",
+        "problemas": [
+          "P053"
+        ],
+        "fase": 6,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "reverterReplenishment: estornar só o residual via wms_estornar_parcial_movimentacao",
+        "problemas": [
+          "P078"
+        ],
+        "fase": 6,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "estornarSessaoInventario parcial-tolerante: coletar falhas e reportar (NÃO throw no meio)",
+        "problemas": [
+          "P061"
+        ],
+        "fase": 6,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Erro de separação sempre vira evento 'erro' no histórico",
+        "problemas": [
+          "P006"
+        ],
+        "fase": 6,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "RPC siso_desfazer_bip (decremento relativo atômico) + concluir idempotente sem re-efeito",
+        "problemas": [
+          "P021",
+          "P073"
+        ],
+        "fase": 6,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "RPC wms_lock_pedido (advisory) no reprocessar webhook OU dedup de R viva",
+        "problemas": [
+          "P003"
+        ],
+        "fase": 6,
+        "esforco": "M",
+        "migration": true
+      },
+      {
+        "titulo": "Devolver item de compra idempotente (claim por status, descarta clique repetido)",
+        "problemas": [
+          "P043"
+        ],
+        "fase": 6,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Frontend: debounce 2s no Parcial + idempotency_key hoistada na venda + refetchOnReconnect na separação",
+        "problemas": [
+          "P018",
+          "P071",
+          "P013"
+        ],
+        "fase": 6,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Kit sem tiny_produto_id vira linha visível pra baixa manual (decidir PK do item)",
+        "problemas": [
+          "P002"
+        ],
+        "fase": 7,
+        "esforco": "L",
+        "migration": true
+      },
+      {
+        "titulo": "Recebimento com excesso: aceitar qty>solicitada e lançar excedente como inventario_ganho",
+        "problemas": [
+          "P033"
+        ],
+        "fase": 7,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Não desativar/excluir loc com saldo/reservado/pendência/perna de transferência (fechar gaps do guard)",
+        "problemas": [
+          "P063"
+        ],
+        "fase": 7,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Lead-time default 7d na MV siso_cobertura_estoque (COALESCE)",
+        "problemas": [
+          "P079"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": true
+      },
+      {
+        "titulo": "Vendedor inativo some dos dropdowns de atribuição/reatribuição",
+        "problemas": [
+          "P076"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Validar OC 'Encontrei': bipar SKU/GTIN do produto além da prateleira",
+        "problemas": [
+          "P029"
+        ],
+        "fase": 7,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Bloquear concluir-oc com itens de galpões diferentes (aviso, separa manual)",
+        "problemas": [
+          "P031"
+        ],
+        "fase": 7,
+        "esforco": "M",
+        "migration": false
+      },
+      {
+        "titulo": "Parcial: permitir quantidade_pega=0 só quando loc_zerou=true",
+        "problemas": [
+          "P017"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Bloquear troca de SKU com compra ativa + observabilidade da auditoria",
+        "problemas": [
+          "P036",
+          "P037"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Validar operacoes.ajuste_manual no backend do ajuste e do estorno de ajuste",
+        "problemas": [
+          "P069"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": false
+      },
+      {
+        "titulo": "Rejeitar desfazer ajuste já consumido por saídas, com mensagem clara",
+        "problemas": [
+          "P070"
+        ],
+        "fase": 7,
+        "esforco": "S",
+        "migration": false
+      }
+    ],
+    "riscos_globais": [
+      "RPCs que escrevem no ledger (fases 2-4) são alto risco: qualquer regressão em wms_inserir_movimentacao corrompe saldo. Mitigar com testes de cenário (npm run scenarios) e integration contra staging ANTES de cada merge — nunca prod. cutover.ts (P023) é backstop crítico recentemente mexido.",
+      "Lembrar gotchas de TEXT: origem_id/pedido_id são TEXT (não uuid) em todas as RPCs novas — uma migration anterior que os fez uuid quebrou todos os callers de wms_reservar_atomico. hashtext(text) serve direto pro advisory lock de P003.",
+      "produto_id de siso_pedido_itens é tiny_produto_id, não uuid WMS — P039 e P002 precisam resolver via siso_produto_empresas filtrando por empresa_origem_id. Qualquer JOIN errado aqui silenciosamente erra a reserva/baixa.",
+      "Schema de inventário ambíguo: 20260512_wms_inventario_rewrite.sql vs 20260529_wms_inventario.sql parecem definições paralelas. Confirmar no banco staging QUAL está ativa antes do índice único de P055 e das RPCs de inventário (P056/P057/P060).",
+      "Índices únicos novos (P055 sessão, e o uq já existente) podem FALHAR ao aplicar se já houver duplicatas em staging — limpar/dedupar antes de aplicar a migration.",
+      "P074 (endurecer NF) corre o risco de reintroduzir o 500 que motivou o relaxe de 2026-05-27 (gotcha #5). Escopo mínimo obrigatório: abortar job só quando origem_tipo='nf_venda' E falta nota_fiscal_id E falta chave.",
+      "P082 exige schedule próprio (30s/5min/10min) que contraria o cap de 120s do worker — NÃO reusar o backoff do worker; job dedicado ou proximo_retry_em custom. O orquestrador de reanimação teve vários fixes recentes (8380f94, c72191b) — alto risco de regressão.",
+      "Mudar status do pedido (P008 setar status='cancelado' além de status_separacao) muda como o pedido aparece no painel — alinhar com o resto (compras-cancelar usa status='cancelado'+status_separacao=null) pra não criar inconsistência de exibição.",
+      "CHECK legado siso_fila_execucao.filial_execucao IN ('CWB','SP') ainda existe — qualquer novo tipo de job (P082) ou insert precisa respeitar/contornar esse CHECK."
+    ],
+    "quick_wins": [
+      "P071",
+      "P012",
+      "P045",
+      "P040",
+      "P069",
+      "P070",
+      "P076",
+      "P017",
+      "P079",
+      "P008",
+      "P018",
+      "P013"
+    ],
+    "conflitos": [
+      "CONFLITO DIRETO P056 vs P061: MESMO código (estornarSessaoInventario, inventario.ts:1190-1215, throw err no meio), decisões OPOSTAS do dono — P056='tudo-ou-nada' (RPC atômica, fase 2), P061='desfaz o que consegue e reporta qual item falhou' (parcial-tolerante, fase 6). NÃO podem coexistir. Re-confirmar com o dono qual vale; recomendação: P061 parece a decisão mais recente/específica pro 'desfazer' — se for, P056 vira superseded e some da fase 2. RESOLVER ANTES de codar qualquer um.",
+      "P046 (auto-estornar S ao devolver item separado, op1) vs P047 (BLOQUEAR devolução se pedido já lançado) — MESMA rota /compras/itens/[itemId]/devolver. O dono separou os escopos (P046=item separado isolado; P047=pedido-inteiro-lançado), e o merge_group os une num PR. Confirmar a precedência: se o pedido está lançado E o item tem mov_saida_id, qual ganha — bloqueio (P047) ou estorno (P046)? Ordem do guard importa.",
+      "P037: a ficha descreve registrarEvento lançando erro na troca de SKU, mas o código atual mostra registrarEvento/registrarEventos como fire-and-forget SAFE (nunca throw — historico-service.ts). O sintoma da ficha NÃO ocorre no código atual. Tratar P037 como observabilidade/cosmético, NÃO como atomicidade crítica. O fix real da rota é P036 (bloquear troca com compra ativa). Re-confirmar com o dono se a ficha mirava estado antigo.",
+      "P002 (kit sem tiny_produto_id) exige DECISÃO DE PK pendente: produto_id de siso_pedido_itens é parte do onConflict (pedido_id,produto_id) e ResolvedItem.tinyProdutoId é tipado number não-nullable. Para 'sempre mostrar o item' é preciso escolher: (a) produto_id sintético/placeholder + flag sem_cadastro_tiny, ou (b) produto_id nullable + chave alternativa. Migration provável. Re-confirmar a estratégia com o dono ANTES de codar.",
+      "P018 (debounce de UI 2s) vs P019 (transação tudo-ou-nada no MESMO botão Parcial): o dono escolheu mecanismos DIFERENTES pra mesma ação — op1 de UI (P018) e op1 de transação (P019). Não são o mesmo fix; não fundir. Confirmar que ambos são desejados (defense-in-depth) e não substitutos.",
+      "P035 ('voltar pedido pra pendente' no cancelamento parcial de OC) re-roteia do zero, mas precisa LIMPAR as reservas R do pedido antes (senão re-roteamento conta saldo errado). Depende de P038/P039 (release de reserva) estarem prontos e corretos. Verificar interação com checkAndReleasePedidos (compras-release.ts já pula release quando todos itens cancelados). Risco alto — re-roteamento + reservas.",
+      "P003: o dono pediu 'trava: um processamento por vez por pedido' → advisory lock. Mas NÃO há nenhum pg_advisory no codebase hoje (confirmado, grep vazio). Alternativa mais simples sem infra nova: dedup checando mov R viva por (pedido,produto) antes de reservar. Re-confirmar se o dono prefere advisory lock (mecanismo novo) ou a dedup idempotente (menos invasiva)."
+    ]
+  }
+}

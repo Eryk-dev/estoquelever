@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reservar o que tenho + comprar o que falta — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item.fail::before { background: var(--red); }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+
+  .hyp { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin: 16px 0; }
+  .hyp-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .hyp-letter { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
+  .hyp-title { font-size: 17px; font-weight: 600; }
+  .hyp-body { font-size: 14.5px; color: var(--zinc-700); margin-bottom: 12px; }
+  .hyp-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hyp-a { border-left: 4px solid var(--red); }
+  .hyp-b { border-left: 4px solid var(--green); }
+  .hyp-c { border-left: 4px solid var(--cyan); }
+  .hyp-d { border-left: 4px solid var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Reservar o que tenho + comprar o que falta + despachar tudo junto</h1>
+  <p class="subtitle">Pedido com cobertura parcial: travar o estoque que já existe, comprar só a diferença e juntar tudo na hora de despachar.</p>
+  <p class="meta">Validação de fluxo · 2026-05-29 · linguagem de negócio (sem detalhe técnico) · Feature #2 (revertida, em redecisão)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal (e onde quebra)</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+    <li><a href="#hipoteses">Hipóteses de abordagem (pra decidir)</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Quando chega um pedido e você tem <strong>parte</strong> das peças mas não todas, hoje o pedido inteiro fica esperando virar compra. A ideia desta feature é: <strong>travar</strong> as peças que você já tem (pra ninguém usar elas em outro pedido), <strong>comprar só</strong> as que faltam, e quando a compra chegar, <strong>juntar tudo e despachar de uma vez</strong>. O nó da questão <strong>NÃO</strong> é "o sistema não sabe pegar de dois lugares" — ele sabe (já existe a realocação, que manda o operador pegar o resto noutra prateleira e fecha "5 de 5"). O problema é mais estreito: <strong>a trava (reserva) fica colada numa prateleira</strong>. As 2 que você travou ficam reservadas na prateleira A; as 3 compradas chegam em OUTRO lugar (a doca / prateleira B). Na hora de separar, o sistema procura a reserva no lugar onde está pegando e <strong>não acha a reserva da parte comprada</strong>. Resultado: ou tira do estoque "órfão" (some peça), ou o item fica preso em "parcial" sem fechar os 5.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Parar de "perder" o estoque que já tenho enquanto espero a compra do resto — sem comprar peça a mais nem deixar o pedido sem proteção.
+</div>
+
+<div class="callout callout-danger">
+  <div class="callout-title">Por que foi revertida</div>
+  Na prática, a reserva das peças que eu já tinha ficou amarrada à prateleira onde elas estavam — e as compradas chegaram em outra. Quando a separação tentava fechar o pedido, não encontrava a reserva da parte comprada no lugar certo: ou baixava estoque "órfão" (some peça), ou o item empacava em "parcial". Este HTML existe pra decidir <strong>como</strong> fazer isso direito antes de tentar de novo.
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Quando isso NÃO é problema (pra não confundir)</div>
+  Se forem <strong>10 pedidos de 1 unidade</strong> com 5 numa prateleira e 5 em outra, roda liso: cada pedido quer só 1 peça, então qualquer prateleira com saldo resolve — nenhuma linha precisa "juntar dois lugares". O aperto só aparece quando <strong>uma única linha</strong> precisa de mais peças do que existem num único lugar E parte delas está travada numa prateleira diferente de onde a compra chegou.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal (e onde quebra)</h2>
+<p>O caminho que a feature queria seguir — com o ponto vermelho marcando exatamente onde ela quebra hoje:</p>
+
+<div class="diagram">
+  <div class="diagram-title">Do pedido ao despacho · ponto de quebra em vermelho</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Chega Pedido #4821<br/>precisa 5x SKU EW123<br/>Galpão CWB] --> B{Tenho os 5<br/>em estoque?}
+  B -->|Sim, completo| C[Separa e despacha normal]
+  B -->|Tenho 2, faltam 3| D[Trava as 2 que tenho<br/>reserva na prateleira A-03-02<br/>ninguem mais usa]
+  D --> E[Comprador compra as 3<br/>com fornecedor Tiger]
+  E --> F[Chegam as 3<br/>na doca / prateleira B]
+  F --> G[Sistema libera<br/>'agora tem os 5, pode separar']
+  G --> H{A reserva esta no mesmo<br/>lugar do estoque?}
+  H -->|2 reservadas na A<br/>3 compradas na B| J[Separacao nao acha a reserva<br/>da parte comprada<br/>baixa orfa = some estoque<br/>OU item preso em parcial]
+  H -->|Tudo no mesmo lugar| K[Pega os 5, embala<br/>imprime etiqueta, despacha]
+  style C fill:#dcfce7
+  style D fill:#fef3c7
+  style K fill:#dcfce7
+  style J fill:#fee2e2
+  </pre>
+</div>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Tracemos um caso concreto pra ver o fluxo na prática:</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Pedido <strong>#4821</strong> entra pelo Mercado Livre às 14h32: <strong>5 unidades do SKU EW123</strong> (fornecedor Tiger), empresa NetAir, galpão <strong>CWB</strong>. No CWB existem só <strong>2 unidades</strong>, paradas na prateleira <strong>A-03-02</strong>.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>Chega o pedido</strong>
+    <p>Pedido #4821 pede 5× EW123 no galpão CWB.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Sistema confere o estoque</strong>
+    <p>CWB tem só 2 unidades (na prateleira A-03-02). Faltam 3.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Trava as 2 que já tenho</strong>
+    <p>As 2 unidades da A-03-02 ficam "reservadas pro Pedido #4821". Se outro pedido pedir EW123, o sistema não deixa contar com essas 2.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Abre a compra das 3 que faltam</strong>
+    <p>Cai na fila do comprador: "comprar 3× EW123 do fornecedor Tiger". O Pedido #4821 fica aguardando essa compra.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Comprador compra</strong>
+    <p>Emite a ordem de compra; o fornecedor Tiger envia as 3 unidades.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Chegam as 3 na doca</strong>
+    <p>Operador recebe na doca RECEBIMENTO do CWB. Agora a peça EW123 está em DOIS lugares: 2 travadas na prateleira A-03-02 + 3 recém-chegadas na doca.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Pedido libera pra separação</strong>
+    <p>O sistema diz "agora existem os 5, Pedido #4821 pode ser separado".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Operador João pega as 2 reservadas</strong>
+    <p>A tela manda ele pegar 5× EW123. Ele vai até a prateleira A-03-02 e pega as 2 numa boa — a reserva delas está exatamente ali.</p>
+  </div>
+  <div class="stepper-item fail">
+    <strong>Vai buscar as 3 compradas — e a reserva não está lá</strong>
+    <p>As 3 estão na doca (ou na prateleira B). O João até consegue ir pegar fisicamente, mas a <strong>reserva dessas 3 nunca foi colada nesse lugar</strong> — ela teria que existir em B, e não existe.</p>
+  </div>
+  <div class="stepper-item fail">
+    <strong>Aqui quebra</strong>
+    <p>O sistema não acha a reserva da parte comprada no lugar onde o João está pegando. Resultado: ou tira as 3 do estoque sem casar com reserva (baixa órfã → somem 3× EW123 do controle), ou o item fica preso em "parcial" sem fechar os 5 e o Pedido #4821 empaca.</p>
+  </div>
+</div>
+
+<h2 id="estados">4. Estados e transições</h2>
+<p>O <strong>item do pedido</strong> (no caso, os 5× EW123 do Pedido #4821) passa pelos seguintes estados:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">Cobertura parcial detectada</span></td>
+      <td>Pedido chegou, tenho parte (2) mas não tudo (5).</td>
+      <td>Pedido novo cujo estoque não cobre a quantidade pedida.</td>
+      <td>Operador/sistema decide travar o que tem e comprar o resto.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Parte travada · parte em compra</span></td>
+      <td>As 2 estão reservadas; as 3 viraram ordem de compra.</td>
+      <td>Decisão de cobrir parcial.</td>
+      <td>A compra é recebida na doca.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando a compra chegar</span></td>
+      <td>Esperando as 3 unidades do fornecedor.</td>
+      <td>Ordem de compra emitida.</td>
+      <td>Operador recebe as peças na doca.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Pronto pra separar (juntando)</span></td>
+      <td>Já existem os 5, mas em 2 lugares diferentes.</td>
+      <td>Compra recebida.</td>
+      <td>Separação consolida os 5. <strong>Hoje trava aqui.</strong></td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Despachado</span></td>
+      <td>Os 5 saíram juntos, etiqueta impressa.</td>
+      <td>Separação completa das 5 unidades.</td>
+      <td>Fim do fluxo.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O que acontece quando o caminho feliz é interrompido — cada um é uma decisão que precisamos tomar:</p>
+
+<div class="scenario">
+  <div class="scenario-title">As travadas e as compradas caem em galpões diferentes</div>
+  <div class="scenario-flow"><strong>Situação:</strong> as 2 estão travadas no CWB, mas a compra das 3 chega no SP.<br/><strong>O que o sistema faz (a definir):</strong> não dá pra juntar fisicamente sem transferir — precisa decidir se transfere as 2 pro SP (ou as 3 pro CWB) antes de separar, ou se separa de 2 galpões.<br/><strong>O usuário vê:</strong> ou um aviso "transfira primeiro", ou um pedido que separa em duas pontas.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Outro pedido tenta usar a mesma peça enquanto espero a compra</div>
+  <div class="scenario-flow"><strong>Situação:</strong> chega o Pedido #4990 que também quer EW123, e as 2 do CWB estão travadas pro #4821.<br/><strong>O que o sistema faz:</strong> não deixa o #4990 contar com essas 2 — elas estão reservadas.<br/><strong>O usuário vê:</strong> o #4990 enxerga EW123 como "sem saldo livre" e vai pra compra. <span class="badge badge-success">este é o ganho da feature</span></div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">A compra é cancelada / o fornecedor não entrega</div>
+  <div class="scenario-flow"><strong>Situação:</strong> as 3 nunca chegam.<br/><strong>O que o sistema faz (a definir):</strong> precisa de uma saída pras 2 que ficaram travadas — destravar e devolver pro estoque livre, ou avisar o comprador pra decidir.<br/><strong>O usuário vê:</strong> um alerta "compra do #4821 caiu, libere ou reabra a compra".</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Chega só parte da compra</div>
+  <div class="scenario-flow"><strong>Situação:</strong> o fornecedor manda 2 das 3 unidades.<br/><strong>O que o sistema faz (a definir):</strong> agora tem 2 travadas + 2 chegadas = 4, ainda falta 1. Despacha parcial agora ou espera a última?<br/><strong>O usuário vê:</strong> a escolha "mandar 4 agora e o resto depois" ou "segurar tudo até completar 5".</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">O cliente cancela o pedido depois que a compra já chegou</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Pedido #4821 é cancelado quando já existem os 5 (2 travadas + 3 recebidas).<br/><strong>O que o sistema faz (a definir):</strong> destravar as 2 e jogar as 3 recebidas pro estoque livre, cada uma na localização certa.<br/><strong>O usuário vê:</strong> o estoque de EW123 no CWB volta a subir; nada fica fantasma.</div>
+</div>
+
+<h2 id="hipoteses">6. Hipóteses de abordagem (pra decidir)</h2>
+<p>O problema real é sempre o mesmo: <strong>"as peças que vou despachar juntas estão em lugares diferentes, e a separação hoje só pega de um lugar"</strong>. Há quatro caminhos pra resolver isso, do mais ambicioso ao mais conservador:</p>
+
+<div class="hyp hyp-a">
+  <div class="hyp-head"><span class="hyp-letter" style="color:var(--amber)">A</span><span class="hyp-title">A reserva acompanha — separar o mesmo item de vários lugares</span></div>
+  <div class="hyp-body">Pegar o mesmo item de 2+ lugares numa linha só <strong>já existe</strong> hoje (a realocação manda o operador pegar o resto noutra prateleira e fecha "5 de 5"). O que falta pra esta feature é fazer a <strong>reserva acompanhar</strong>: soltar a reserva da prateleira A e deixar a realocação trabalhar, ou registrar reserva nos dois lugares. É a abordagem mais poderosa — resolve até peças em <strong>galpões diferentes</strong> (com transferência). Como mexe na trava do estoque (foi onde quebrou), exige cuidado redobrado pra não baixar órfão.</div>
+  <div class="hyp-tags"><span class="badge badge-warning">esforço médio</span><span class="badge badge-warning">risco médio</span><span class="badge badge-success">resolve a dor</span><span class="badge badge-success">cobre galpões diferentes</span></div>
+</div>
+
+<div class="hyp hyp-b">
+  <div class="hyp-head"><span class="hyp-letter" style="color:var(--green)">B</span><span class="hyp-title">Junta na prateleira primeiro — guarda guiada</span></div>
+  <div class="hyp-body">Quando a compra das 3 chega, o sistema manda o operador <strong>guardar as 3 na MESMA prateleira</strong> onde estão as 2 (A-03-02). Aí a separação enxerga 5 num lugar só e funciona <strong>sem mudar nada</strong> no coração do estoque. O "juntar" acontece no físico, não no software. Custo: um passo físico a mais (levar as 3 até a prateleira). Limite: não resolve quando as peças estão em galpões diferentes (cai no cenário de transferência).</div>
+  <div class="hyp-tags"><span class="badge badge-success">esforço baixo</span><span class="badge badge-success">risco baixo</span><span class="badge badge-success">resolve a dor</span><span class="badge badge-warning">só mesmo galpão</span><span class="badge badge-warning">passo físico extra</span></div>
+</div>
+
+<div class="hyp hyp-c">
+  <div class="hyp-head"><span class="hyp-letter" style="color:var(--cyan)">C</span><span class="hyp-title">Roteia a compra direto pro lugar reservado — automático</span></div>
+  <div class="hyp-body">Variação da B, mas o sistema já <strong>sugere/força</strong> a guarda das 3 na prateleira reservada (A-03-02), sem o operador ter que pensar onde colocar. Mais fluido pro operador, ainda seguro (continua sendo "tudo num lugar só" na hora de separar). Mesmo limite da B: só funciona quando reservadas e compradas estão no mesmo galpão.</div>
+  <div class="hyp-tags"><span class="badge badge-warning">esforço médio</span><span class="badge badge-success">risco baixo</span><span class="badge badge-success">resolve a dor</span><span class="badge badge-warning">só mesmo galpão</span></div>
+</div>
+
+<div class="hyp hyp-d">
+  <div class="hyp-head"><span class="hyp-letter" style="color:var(--muted)">D</span><span class="hyp-title">Não travar parcial — manter como está hoje</span></div>
+  <div class="hyp-body">Não fazer a feature. Pedido com falta espera virar compra cheia e separa de um lugar só. As 2 que você já tem <strong>não ficam protegidas</strong> — podem ser vendidas pra outro pedido (e aí você compra mais pra repor). É o que está em produção hoje. Zero risco técnico, mas <strong>não resolve a dor</strong>: peças paradas sem proteção e risco de comprar a mais.</div>
+  <div class="hyp-tags"><span class="badge badge-neutral">esforço zero</span><span class="badge badge-success">risco zero</span><span class="badge badge-danger">não resolve a dor</span></div>
+</div>
+
+<h3>Matriz de decisão</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Abordagem</th>
+      <th>Esforço</th>
+      <th>Risco de sumir estoque</th>
+      <th>Resolve a dor (travar parcial)?</th>
+      <th>Cobre galpões diferentes?</th>
+      <th>Passo físico extra?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>A</strong> — Reserva acompanha (vários lugares)</td>
+      <td><span class="badge badge-warning">Médio</span></td>
+      <td><span class="badge badge-warning">Médio</span> (mexe na reserva)</td>
+      <td>Sim</td>
+      <td>Sim</td>
+      <td>Não</td>
+    </tr>
+    <tr>
+      <td><strong>B</strong> — Junta na prateleira (guarda guiada)</td>
+      <td><span class="badge badge-success">Baixo</span></td>
+      <td><span class="badge badge-success">Baixo</span></td>
+      <td>Sim</td>
+      <td>Não</td>
+      <td>Sim (mover as 3)</td>
+    </tr>
+    <tr>
+      <td><strong>C</strong> — Roteia compra pro lugar reservado</td>
+      <td><span class="badge badge-warning">Médio</span></td>
+      <td><span class="badge badge-success">Baixo</span></td>
+      <td>Sim</td>
+      <td>Não</td>
+      <td>Não (automático)</td>
+    </tr>
+    <tr>
+      <td><strong>D</strong> — Não travar (hoje)</td>
+      <td><span class="badge badge-neutral">Zero</span></td>
+      <td><span class="badge badge-success">Zero</span></td>
+      <td>Não</td>
+      <td>—</td>
+      <td>Não</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-success">
+  <div class="callout-title">Leitura sugerida (não é decisão final — é sua)</div>
+  <strong>B ou C</strong> entregam o ganho da feature com risco baixo: ao guardar as peças compradas na MESMA prateleira das reservadas, a reserva e o estoque ficam no mesmo lugar e o descasamento que quebrou a feature simplesmente some. <strong>A</strong> ficou mais viável do que parecia — a separação de vários lugares já existe (via realocação), o trabalho é fazer a reserva acompanhar; vale a pena se peças travadas e compradas caírem em <strong>galpões diferentes</strong> com frequência. <strong>D</strong> é a base de comparação: o que acontece se não fizermos nada.
+</div>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Perguntas que mudam a decisão</div>
+  <strong>1) As peças reservadas e as compradas chegam sempre no mesmo galpão?</strong><br/>
+  Se <strong>sim</strong> → B ou C resolvem com risco baixíssimo. Se cair em galpões diferentes com frequência → precisa de A (ou transferência no meio do caminho).<br/><br/>
+  <strong>2) As compradas podem ser guardadas na mesma prateleira das reservadas?</strong> (a prateleira tem espaço / é prateleira de pegar pedido?)<br/>
+  Se <strong>sim, sempre</strong> → C (o sistema manda guardar lá automático) é o caminho mais limpo. Se nem sempre dá → B (operador decide) ou A.<br/><br/>
+  <strong>3) Quando a compra chega só pela metade, despachar parcial ou segurar até completar os 5?</strong><br/>
+  Decide o comportamento quando o fornecedor entrega 2 das 3 — manda o que tem agora, ou espera fechar o pedido inteiro.<br/><br/>
+  <strong>4) Com que frequência isso acontece de verdade?</strong><br/>
+  Se for raro, talvez D (não travar, do jeito de hoje) já seja suficiente e não valha o esforço. Se for o dia a dia, vale fazer B/C direito.
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

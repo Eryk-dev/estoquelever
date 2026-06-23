@@ -169,17 +169,31 @@ export async function POST(request: NextRequest) {
 
       // WMS cutover reverse: se saiu do conjunto forward com estoque_lancado=true,
       // estorna S, recria R. Idempotente — no-op se nada precisa reverter.
-      await reverterCutoverSeRetrocedeu(
+      // FAIL-LOUD: a função NÃO lança em falha da RPC — retorna motivo='rpc_error'.
+      // Se ignorássemos isso, o status já retrocedeu mas estoque_lancado ficaria
+      // true + S viva → re-pick geraria baixa DUPLA. Surfacing 500 + logError
+      // força retry (a operação é idempotente e converge).
+      const revResult = await reverterCutoverSeRetrocedeu(
         pedido_id,
         newStatusSeparacao,
         "desfazer_bip",
         session.id,
       ).catch((err) => {
-        logger.warn("separacao-desfazer-bip", "Falha ao reverter cutover", {
-          pedidoId: pedido_id,
-          err: err instanceof Error ? err.message : String(err),
-        });
+        return { reverted: false, motivo: "rpc_error" as const, err };
       });
+      if (revResult.motivo === "rpc_error") {
+        logger.logError({
+          error: "err" in revResult ? revResult.err : "wms_reverter_cutover_atomico falhou",
+          source: "separacao-desfazer-bip",
+          message: "Reversão de estoque falhou — estoque_lancado pode estar incoerente com status",
+          category: "business_logic",
+          metadata: { pedido_id, novoStatus: newStatusSeparacao },
+        });
+        return NextResponse.json(
+          { error: "reverter_estoque_falhou", pedido_id },
+          { status: 500 },
+        );
+      }
     }
 
     logger.info("separacao-desfazer-bip", "Bip desfeito", {

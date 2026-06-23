@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Trocar um produto em uma compra (antes de fazer a encomenda) — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Compras de fornecedor</p>
+<h1>Trocar um produto em uma compra (antes de fazer a encomenda)</h1><p class="lead">Quando você recebe um item de um pedido que não tem estoque, ou vem caro, ou descontinuou, o sistema deixa você substituir por um produto equivalente. A troca acontece antes de você clicar em &quot;mandar pra fornecedor&quot; — é só no papel, sem mexer no estoque.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">3</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">1</div><div class="l">decisões</div></div>
+
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Trocar um produto que estava errado — volta pra deixar separado (aguardando) novamente.</span></li><li><span class="dot">✓</span><span>Clicar duas vezes por acaso na mesma troca — o sistema não duplica.</span></li><li><span class="dot">✓</span><span>Depois que você troca, o produto desaparece da lista com nome errado e aparece com nome certo.</span></li><li><span class="dot">✓</span><span>Trocar pra um produto que tem estoque diferente — o sistema mostra o novo estoque da hora.</span></li></ul></div><h2>Problemas pra resolver · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P036</span>Trocar SKU após marcar comprado (já na compra)</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Item foi marcado como 'comprado' e já tem número de compra. Operador volta e tenta trocar o SKU por outro.</p><p class="ln"><b>Hoje:</b> O sistema não verifica se a compra já foi efetuada. Permite a troca mesmo assim. Resultado: o número da compra no fornecedor mostra um SKU, mas no seu pedido aparece outro diferente. Quando a mercadoria chega, o sistema procura pelo SKU novo, mas o comprovante da compra tem o SKU antigo. Fica um caos de documentação.</p><p class="ln why"><b>Por que importa:</b> Quando chega a mercadoria, precisa bater com o comprovante de compra. Se não bate, o recebimento quebra. Além disso, perdem o histórico de qual SKU foi de fato comprado.</p><div class="decision"><p class="q">Bloquear a mudança de SKU após a compra já estar marcada. A troca só deveria ser possível enquanto está em 'aguardando compra' ou 'cancelado'.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Impedir a troca automaticamente</b> — Operador tenta trocar, sistema mostra mensagem 'essa compra já foi marcada, não pode trocar mais'. Ele precisa cancelar a compra anterior e criar uma nova se realmente precisa mudar.</span></li><li class=""><span class="ck"></span><span><b>Avisar mas deixar trocar</b> — Sistema permite mas mostra aviso: 'cuidado, isso vai quebrar a compra aberta'. Operador assume o risco mas fica o problema.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer o sistema bloquear. Não custa nada — é só validar o status antes de deixar trocar. Evita horas de confusão no recebimento depois.</p></div><p class="refp">route.ts:186-199</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P156</span>Fornecedor muda de localidade e ninguém avisa</h3><div class="dchips"><span class="chip dec">média</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Você trocou um SKU de um fornecedor de Curitiba para outro fornecedor que fica em São Paulo. Os dados do galpão sugerido para a compra deveriam mudar, mas não avisa nada.</p><p class="ln"><b>Hoje:</b> O sistema muda o fornecedor nos dados internos em silêncio. A próxima vez que você abre, o item já aparece no card do novo fornecedor. Se havia uma compra aberta com o fornecedor antigo, ela fica órfã (sem itens). Você pode nem perceber que o galpão de destino mudou.</p><p class="ln why"><b>Por que importa:</b> Cada fornecedor fica em um galpão. Se você não percebe que a localidade mudou, pode mandar a nota para o galpão errado ou perder tempo procurando mercadoria que chegou em outro lugar.</p><div class="decision"><p class="q">Avisar quando o fornecedor mudar, principalmente se isso altera o galpão de destino. E validar se há compras abertas.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear a troca se há compra aberta para o fornecedor antigo</b> — Sistema recusa: 'tem compra aberta para Multiqualita, cancela ou deixa chegar antes de trocar de fornecedor'. Você é forçado a resolver a compra antiga primeiro.</span></li><li class=""><span class="ck"></span><span><b>Avisar mas deixar trocar, marcando compra antiga como descontinuada</b> — Permite a troca e avisa: 'compra anterior será descontinuada'. Compra antiga fica fechada sozinha. Você decide se acha tudo bem.</span></li></ul><p class="recnote"><b>Recomendo:</b> Avisar e bloquear se há compra aberta. Operador resolve a compra anterior (recebe ou cancela) e aí troca. Leva dois minutos mas evita nota fiscal chegando no lugar errado.</p></div><p class="refp">route.ts:situacao descrita</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P037</span>Mudança de SKU é registrada mas histórico falha e fica sem anotação</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Tarefas automáticas e fila do sistema</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador muda o SKU. O sistema atualiza o pedido, mas na hora de registrar no histórico acontece um erro (lentidão do banco, timeout). O pedido foi alterado mas o histórico fica vazio.</p><p class="ln"><b>Hoje:</b> O dado é mudado no banco. Depois o sistema tenta registrar a mudança no histórico — se isso falha, lança erro. O operador vê 'erro ao salvar'. Mas o dado já estava gravado antes do erro. Próxima vez que tenta, a lógica confunde porque o dado já mudou. Auditoria fica sem registro do que aconteceu e quem fez.</p><p class="ln why"><b>Por que importa:</b> Sem histórico, você não consegue rastrear quem mudou o quê e quando. Se depois aparece um problema (compra errada, mercadoria divergente), você fica sem prova de quando e como aconteceu. Cria risco de compra duplicada ou perdida.</p><div class="decision"><p class="q">Garantir que mudança e histórico são feitos juntos (transação): se histórico falha, desfaz a mudança. Ou ao menos deixa a mudança por último.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Fazer tudo em uma só transação (tudo ou nada)</b> — Se histórico falha, a mudança do SKU é desfeita. Operador vê erro e tenta novamente do zero. Garante que mudança sempre tem histórico. Um pouco mais lento mas seguro.</span></li><li class=""><span class="ck"></span><span><b>Deixar falha em background e deixar operador tentar novamente</b> — Aceita a mudança mesmo que histórico falhe. Em segundo plano, o sistema tenta registrar de novo. Mais rápido pro operador mas fica o risco de perder o registro.</span></li></ul><p class="recnote"><b>Recomendo:</b> Transação. Leva poucos milissegundos a mais mas garante que nunca fica incompleto. Auditoria fica íntegra — sempre sabe o que mudou.</p></div><p class="refp">route.ts:186-199 e 213</p></div><h2>Decisões pra você tomar · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D156</span>Quando dois operadores mudam o SKU do mesmo item ao mesmo tempo, quem vence?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Compras de fornecedor</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador 1 abre o pedido, vê SKU atual, digita SKU novo. Operador 2 abre o mesmo pedido (quase no mesmo tempo), vê SKU anterior dele, digita outro SKU diferente. Ambos clicam 'salvar' quase junto.</p><p class="ln"><b>Hoje o sistema:</b> Ambas as requisições chegam e são processadas na ordem que chegam. A última requisição vence (o SKU final é o que o segundo operador digitou). Operador 1 vê a resposta mostrando o SKU que ele pediu, mas quando refetch, vê que virou outro. Confusão total — ninguém sabe qual é o SKU de verdade.</p><p class="ln why"><b>Por que importa:</b> Dois cliques simultâneos deveriam avisar que 'outra pessoa mudou na mesma hora, vê o que ela fez antes de mudar de novo'. Sem isso, um operador fica achando que salvou errado, o outro fica confuso. A mudança que deveria ter sido feita é perdida.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Versão com número: cada mudança incrementa um número, sistema rejeita se versão antiga</b> — Operador 2 consegue salvar, Operador 1 recebe 'versão mudou, alguém trocou esse item'. Ele relê antes de tentar novamente. Ninguém perde.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (última mudança vence)</b> — Continua como hoje: última requisição que vence. Se acontecer com frequência, fica caótico mas 'funciona'.</span></li></ul><p class="recnote"><b>Recomendo:</b> Versão com número. Custa pouco, avisa o conflito no ato. Operador percebe e decide o que fazer em vez de descobrir depois que perdeu a mudança.</p></div><p class="refp">route.ts:situacao descrita</p></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

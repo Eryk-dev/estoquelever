@@ -1,10 +1,6 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao } from "@/lib/wms/ledger";
-import {
-  buscarReservaPendentePorProduto,
-  liberarReservaPicking,
-} from "@/lib/wms/reservas-picking";
+import { buscarReservaPendentePorProduto } from "@/lib/wms/reservas-picking";
 import {
   resolverProdutoWmsFlex,
   resolverLocalizacaoWms,
@@ -23,22 +19,24 @@ import {
  *    snapshot estale siso_pedido_item_estoques; agora a loc vem da reserva que
  *    `aprovar` criou na posição com saldo). Sem R, cai pra loc com maior saldo
  *    vivo → DEFAULT-PICKING.
- * 3. Se R existe: emite L (liberacao_reserva) + S pareados
- *    Se não: emite só S (com warn log — caminho legado/órfão)
+ * 3. Emite o par L (liberacao_reserva) + S (nf_venda) via a RPC ATÔMICA
+ *    `wms_pick_item_atomico` (mesma do marcar-item). Sem R → S-only (passa
+ *    p_reserva_id=null; loc da tripla resolvida).
  * 4. Registra ambos em siso_pedido_item_mov_links pra estorno simétrico
  *
  * Retorna { movSaidaId, movLiberacaoId } ou null se contexto incompleto
  * (sem empresa_origem ou sem galpão — ainda em modo legacy).
  *
- * ⚠ IDEMPOTÊNCIA: este helper NÃO é idempotente. Chamá-lo duas vezes pro mesmo
- * (pedido_item) emite dois pares L+S — dupla baixa no ledger. Responsabilidade
- * do caller checar `siso_pedido_itens.mov_saida_id` (ou `separacao_marcado` +
- * `quantidade_pega`) ANTES de invocar, e pular itens já picados.
+ * ✅ ATOMICIDADE + DOUBLE-TAP (fix BUG-06/07): o par L+S agora sai numa única
+ * RPC `wms_pick_item_atomico`. Com reserva, a RPC trava a R (FOR UPDATE) e
+ * rejeita 2ª chamada concorrente com 'reserva já liberada' (ERRCODE 22023) —
+ * fecha a corrida de double-tap do scanner e elimina a janela L-sem-S. O RPC
+ * também seta origem_id=pedido na S → o reverter-cutover acha a S pelo Caminho 1.
  *
- * ⚠ ATOMICIDADE: ao contrário do marcar-item (que usa wms_pick_item_atomico),
- * este helper ainda emite L e S em chamadas separadas (não-atômico). Aceitável
- * porque o caller (bipar-checklist) não é termômetro de gate e o guard de dupla
- * baixa via `mov_saida_id` cobre re-execução. TODO: migrar pro RPC atômico.
+ * ⚠ IDEMPOTÊNCIA (caminho SEM reserva): o ramo S-only (OC "bipa onde achou")
+ * NÃO passa idempotency_key, então double-tap simultâneo sem R ainda pode
+ * duplicar a S. O guard `mov_saida_id` no item cobre o RETRY sequencial, não a
+ * corrida. Caminho raro (item sem reserva viva).
  *
  * ⚠ NULL RETURN: 3 casos silenciosos: empresa_origem ausente, galpao_id ausente,
  * qty <= 0. Caller que precise distinguir deve validar `input` antes.
@@ -80,6 +78,15 @@ interface ReservaResolvida {
   localizacao_id: string;
 }
 
+/** Resultado bruto da RPC wms_pick_item_atomico. */
+interface PickAtomicoResult {
+  mov_l_id: string | null;
+  mov_s_id: string;
+  produto_id: string;
+  galpao_id: string;
+  localizacao_id: string;
+}
+
 export interface PickMovDeps {
   resolverProdutoWms: (empresaId: string, tinyId: string, sku?: string | null) => Promise<string>;
   resolverLocalizacaoWms: (galpaoId: string, codigo: string | null) => Promise<string>;
@@ -90,15 +97,23 @@ export interface PickMovDeps {
     produto_id: string;
     galpao_id: string;
   }) => Promise<ReservaResolvida | null>;
-  liberarReservaPicking: (args: {
-    reserva: { id: string; quantidade: number; localizacao_id: string; produto_id: string; galpao_id: string };
+  /**
+   * Emite o par L+S (ou S-only quando reserva_id=null) atomicamente via
+   * wms_pick_item_atomico. Lança em falha (ex.: 'reserva já liberada' no
+   * double-tap) — o caller trata como pick-falha.
+   */
+  pickItemAtomico: (args: {
+    reserva_id: string | null;
+    produto_id: string;
+    galpao_id: string;
+    localizacao_id: string;
     qty: number;
     pedido_id: string;
-    motivo: string;
+    empresa_vendedora_id: string;
     usuario_id: string;
     origem_detalhes: Record<string, unknown>;
-  }) => Promise<{ id: string }>;
-  inserirMov: typeof inserirMovimentacao;
+    motivo: string;
+  }) => Promise<PickAtomicoResult>;
   registrarLinks: (links: Array<{ pedido_item_id: number; realocacao_id: null; mov_id: string; qty: number; tipo_link: "saida" | "liberacao_reserva" }>) => Promise<boolean>;
 }
 
@@ -114,11 +129,22 @@ function defaultDeps(): PickMovDeps {
       if (!r) return null;
       return { id: r.id, quantidade: Number(r.quantidade), localizacao_id: r.localizacao_id };
     },
-    // O real liberarReservaPicking espera ReservaPendenteRow completa; passamos o
-    // row inteiro (com produto_id/galpao_id/localizacao_id) em runtime — funciona
-    // estruturalmente. A interface narrowed simplifica os testes.
-    liberarReservaPicking: liberarReservaPicking as unknown as PickMovDeps["liberarReservaPicking"],
-    inserirMov: inserirMovimentacao,
+    pickItemAtomico: async (a) => {
+      const { data, error } = await sb.rpc("wms_pick_item_atomico", {
+        p_reserva_id: a.reserva_id,
+        p_produto_id: a.produto_id,
+        p_galpao_id: a.galpao_id,
+        p_localizacao_id: a.localizacao_id,
+        p_qty: a.qty,
+        p_pedido_id: a.pedido_id,
+        p_empresa_vendedora_id: a.empresa_vendedora_id,
+        p_usuario_id: a.usuario_id,
+        p_origem_detalhes: a.origem_detalhes,
+        p_motivo: a.motivo,
+      });
+      if (error) throw new Error(error.message);
+      return data as PickAtomicoResult;
+    },
     registrarLinks: async (links) => {
       if (links.length === 0) return true;
       const { error } = await sb.from("siso_pedido_item_mov_links").insert(links);
@@ -157,49 +183,25 @@ export async function pickMovPicking(
   } else {
     const liveLocId = await deps.buscarLocComMaiorSaldoNoGalpao(input.galpao_id, produtoWmsId);
     locId = liveLocId ?? (await deps.resolverLocalizacaoWms(input.galpao_id, null));
+    logger.warn("pick-mov", "R não encontrada — S-only (sem L par)", {
+      pedido_id: input.pedido_id,
+      item_id: input.item_id,
+      tripla: { produto_id: produtoWmsId, galpao_id: input.galpao_id, localizacao_id: locId },
+    });
   }
 
-  const tripla = {
+  // Par L+S (ou S-only) atômico. Com reserva, a RPC trava a R e rejeita
+  // double-tap concorrente ('reserva já liberada') — lança, o caller trata
+  // como pick-falha e NÃO marca o item (sem dupla baixa).
+  const pick = await deps.pickItemAtomico({
+    reserva_id: reserva?.id ?? null,
     produto_id: produtoWmsId,
     galpao_id: input.galpao_id,
     localizacao_id: locId,
-  };
-
-  let movLiberacaoId: string | null = null;
-  if (reserva) {
-    const movL = await deps.liberarReservaPicking({
-      reserva: {
-        id: reserva.id,
-        quantidade: reserva.quantidade,
-        localizacao_id: locId,
-        produto_id: produtoWmsId,
-        galpao_id: input.galpao_id,
-      },
-      qty: input.qty,
-      pedido_id: input.pedido_id,
-      motivo: `Picking pedido #${input.pedido_numero} — libera reserva (${input.contexto ?? "pick"})`,
-      usuario_id: input.usuario_id,
-      origem_detalhes: {
-        pedido_numero: input.pedido_numero,
-        pedido_item_id: input.item_id,
-        sku: input.sku,
-        contexto: input.contexto ?? "pick",
-      },
-    });
-    movLiberacaoId = movL.id;
-  } else {
-    logger.warn("pick-mov", "R não encontrada — S sem L par", {
-      pedido_id: input.pedido_id,
-      item_id: input.item_id,
-      tripla,
-    });
-  }
-
-  const movS = await deps.inserirMov({
-    tripla,
-    tipo: "S",
     qty: input.qty,
-    origem_tipo: "nf_venda",
+    pedido_id: input.pedido_id,
+    empresa_vendedora_id: input.empresa_origem_id,
+    usuario_id: input.usuario_id,
     origem_detalhes: {
       pedido_id_tiny: input.pedido_id,
       pedido_numero: input.pedido_numero,
@@ -208,10 +210,15 @@ export async function pickMovPicking(
       contexto: input.contexto ?? "pick",
       reserva_origem: reserva?.id ?? null,
     },
-    empresa_vendedora_id: input.empresa_origem_id,
     motivo: `Picking pedido #${input.pedido_numero} — ${input.contexto ?? "pick"}`,
-    usuario_id: input.usuario_id,
   });
+
+  // A tripla autoritativa vem da RPC (com reserva, a loc é a da R).
+  const tripla = {
+    produto_id: pick.produto_id,
+    galpao_id: pick.galpao_id,
+    localizacao_id: pick.localizacao_id,
+  };
 
   const links: Array<{
     pedido_item_id: number;
@@ -220,11 +227,11 @@ export async function pickMovPicking(
     qty: number;
     tipo_link: "saida" | "liberacao_reserva";
   }> = [];
-  if (movLiberacaoId) {
+  if (pick.mov_l_id) {
     links.push({
       pedido_item_id: input.item_id,
       realocacao_id: null,
-      mov_id: movLiberacaoId,
+      mov_id: pick.mov_l_id,
       qty: input.qty,
       tipo_link: "liberacao_reserva",
     });
@@ -232,15 +239,15 @@ export async function pickMovPicking(
   links.push({
     pedido_item_id: input.item_id,
     realocacao_id: null,
-    mov_id: movS.id,
+    mov_id: pick.mov_s_id,
     qty: input.qty,
     tipo_link: "saida",
   });
   const linksOk = await deps.registrarLinks(links);
 
   return {
-    movSaidaId: movS.id,
-    movLiberacaoId,
+    movSaidaId: pick.mov_s_id,
+    movLiberacaoId: pick.mov_l_id,
     tripla,
     linksFailed: !linksOk,
   };

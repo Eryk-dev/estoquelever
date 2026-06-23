@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ajuste de estoque — protótipo</title>
+<style>
+  :root{
+    --bg:#eef1f6; --card:#fff; --ink:#1c2533; --mut:#8a93a3; --bd:#e6e9ef;
+    --faint:#f6f8fb; --primary:#2b3445; --danger:#d4452f; --ok:#1f9d6b;
+    --accent:#2563eb; --r:12px;
+    --shadow:0 18px 50px rgba(20,30,50,.22);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:Outfit,-apple-system,Segoe UI,Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:28px 16px 80px}
+  .wrap{max-width:680px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin:0 0 18px}
+  .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
+
+  /* switcher */
+  .seg{display:flex;background:var(--faint);border:1px solid var(--bd);
+    border-radius:10px;padding:4px;gap:4px;margin-bottom:8px}
+  .seg button{flex:1;border:0;background:transparent;padding:9px 10px;border-radius:7px;
+    font:inherit;font-size:13px;font-weight:600;color:var(--mut);cursor:pointer}
+  .seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .segline{color:var(--mut);font-size:12px;margin:0 2px 18px;text-align:center}
+
+  /* toggles panel */
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:22px}
+  .opt{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:11px 12px}
+  .opt h4{margin:0 0 8px;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .pills{display:flex;gap:5px;flex-wrap:wrap}
+  .pill{border:1px solid var(--bd);background:#fff;border-radius:999px;padding:5px 10px;
+    font-size:12px;cursor:pointer;color:var(--ink)}
+  .pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* modal */
+  .modal{background:var(--card);border-radius:var(--r);box-shadow:var(--shadow);
+    overflow:hidden;border:1px solid var(--bd)}
+  .mhead{padding:18px 20px 14px;border-bottom:1px solid var(--bd)}
+  .mhead .t{display:flex;justify-content:space-between;align-items:center}
+  .mhead h2{margin:0;font-size:17px}
+  .mhead .x{color:var(--mut);cursor:pointer;font-size:18px;line-height:1}
+  .mhead p{margin:4px 0 0;color:var(--mut);font-size:12.5px}
+  .mbody{padding:16px 20px}
+  .mfoot{padding:14px 20px;border-top:1px solid var(--bd);display:flex;justify-content:flex-end;gap:10px;background:var(--faint)}
+
+  .lbl{font-size:12px;font-weight:600;color:var(--ink);margin:0 0 6px;display:block}
+  .lbl .req{color:var(--danger)}
+  .lbl .hint{font-weight:400;color:var(--mut);float:right;font-size:11px}
+  .field{margin-bottom:14px}
+  .input,.select{width:100%;padding:10px 11px;border:1px solid var(--bd);border-radius:9px;
+    font:inherit;font-size:14px;background:#fff;color:var(--ink)}
+  .input:focus,.select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+
+  /* produto chip */
+  .prod{display:flex;align-items:center;gap:11px;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;background:var(--faint)}
+  .prod .img{width:38px;height:38px;border-radius:8px;background:#fff;border:1px solid var(--bd);
+    display:flex;align-items:center;justify-content:center;font-size:18px}
+  .prod .nm{font-weight:600;font-size:14px}
+  .prod .ds{color:var(--mut);font-size:12px}
+  .prod .tr{margin-left:auto;color:var(--accent);font-size:12.5px;font-weight:600;cursor:pointer}
+
+  /* totals strip */
+  .tot{display:flex;gap:18px;margin:14px 2px 6px;flex-wrap:wrap}
+  .tot .b{font-size:12px;color:var(--mut)}
+  .tot .b b{display:block;font-size:18px;color:var(--ink);font-weight:700}
+  .tot .b.res b{color:#b8862a}
+  .tot .b.disp b{color:var(--ok)}
+
+  /* loc rows (modelo A) */
+  .locs{border:1px solid var(--bd);border-radius:10px;overflow:hidden;margin-top:4px}
+  .locrow{display:flex;align-items:center;gap:10px;padding:11px 12px;border-bottom:1px solid var(--bd)}
+  .locrow:last-child{border-bottom:0}
+  .locrow .code{font-weight:600;font-size:13.5px}
+  .locrow .meta{color:var(--mut);font-size:11.5px}
+  .locrow .qtybox{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .qty{width:74px;padding:8px;text-align:center;border:1px solid var(--bd);border-radius:8px;
+    font:inherit;font-size:15px;font-weight:600}
+  .qty.changed{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .delta{font-size:12px;font-weight:700;min-width:54px;text-align:right}
+  .delta.up{color:var(--ok)} .delta.down{color:var(--danger)} .delta.zero{color:var(--mut)}
+  .stepper{display:flex;flex-direction:column;gap:2px}
+  .stepper button{width:22px;height:16px;border:1px solid var(--bd);background:#fff;border-radius:5px;
+    cursor:pointer;font-size:10px;line-height:1;color:var(--mut);padding:0}
+  .newloc{padding:10px 12px;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;background:var(--faint)}
+  .warn{color:var(--danger);font-size:11.5px;margin-top:6px}
+
+  /* segmented tipo (modelo B) */
+  .tipo{display:flex;background:var(--faint);border:1px solid var(--bd);border-radius:9px;padding:4px;gap:4px;margin-bottom:14px}
+  .tipo button{flex:1;border:0;background:transparent;padding:10px;border-radius:7px;font:inherit;
+    font-size:13px;font-weight:600;color:var(--mut);cursor:pointer}
+  .tipo button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  .tipo button.on.ent{color:var(--ok)} .tipo button.on.sai{color:var(--danger)} .tipo button.on.bal{color:var(--accent)}
+
+  .row2{display:grid;grid-template-columns:1fr 120px;gap:12px}
+  .deltaline{font-size:12.5px;color:var(--mut);margin:-6px 2px 14px}
+  .deltaline b.up{color:var(--ok)} .deltaline b.down{color:var(--danger)}
+
+  .btn{padding:10px 16px;border-radius:9px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;border:1px solid transparent}
+  .btn.ghost{background:#fff;border-color:var(--bd);color:var(--ink)}
+  .btn.primary{background:var(--primary);color:#fff}
+  .btn.danger{background:var(--danger);color:#fff}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .costlink{color:var(--accent);font-size:12.5px;font-weight:600;cursor:pointer;display:inline-block;margin-top:2px}
+  .auto{background:#eef6ff;border:1px solid #cfe2ff;border-radius:8px;padding:9px 11px;font-size:12px;color:#1b4b8a;margin-bottom:12px}
+  .hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Ajuste de estoque — protótipo</h1>
+  <p class="sub">Clica e brinca. Edita os números, troca tipo, liga/desliga as opções. Me diz o que curtiu.</p>
+
+  <div class="seg" id="modelSeg">
+    <button data-m="A" class="on">Modelo A — editar a realidade</button>
+    <button data-m="B">Modelo B — tipo + localização</button>
+  </div>
+  <p class="segline" id="modelDesc">Vê as locs ativas, muda o número, o sistema calcula +/− sozinho.</p>
+
+  <div class="opts">
+    <div class="opt">
+      <h4>Custo na entrada</h4>
+      <div class="pills" id="costPills">
+        <span class="pill on" data-c="recolhido">Opcional recolhido</span>
+        <span class="pill" data-c="sempre">Sempre visível</span>
+        <span class="pill" data-c="nunca">Nunca</span>
+      </div>
+    </div>
+    <div class="opt">
+      <h4>Atrito do motivo</h4>
+      <div class="pills" id="motivoPills">
+        <span class="pill on" data-mo="balanco1">Balanço 1-clique</span>
+        <span class="pill" data-mo="catonly">Categoria só</span>
+        <span class="pill" data-mo="hoje">Como hoje</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal">
+    <div class="mhead">
+      <div class="t"><h2>Ajuste de estoque</h2><span class="x">✕</span></div>
+      <p id="mSub">Edite a quantidade real de cada localização — sem NF.</p>
+    </div>
+    <div class="mbody" id="mbody"></div>
+    <div class="mfoot" id="mfoot"></div>
+  </div>
+</div>
+
+<script>
+// ---- estado / dados de exemplo (do print) ----
+const PROD = { sku:"190135-2", nome:"Centro Calota Honda Hrv/Crv/New Civic 69 Mm — PRATA", img:"🔩" };
+let LOCS = [
+  { id:"a1", code:"PICK-A1", tipo:"picking",   saldo:10, reserv:3 },
+  { id:"b2", code:"OVER-B2", tipo:"overstock",  saldo:5,  reserv:0 },
+];
+let model="A", cost="recolhido", motivo="balanco1";
+let costOpen=false;
+// modelo A: novo valor por loc
+let editA={}; LOCS.forEach(l=>editA[l.id]=l.saldo);
+// modelo B
+let tipoB="balanco", locB="a1", qtyB="";
+
+const $=s=>document.querySelector(s);
+function tot(){const s=LOCS.reduce((a,l)=>a+l.saldo,0),r=LOCS.reduce((a,l)=>a+l.reserv,0);return{s,r,d:s-r};}
+function totalStrip(){const t=tot();return `<div class="tot">
+  <div class="b"><b>${t.s}</b> saldo físico</div>
+  <div class="b res"><b>${t.r}</b> reservado</div>
+  <div class="b disp"><b>${t.d}</b> disponível</div></div>`;}
+function prodChip(){return `<div class="prod"><div class="img">${PROD.img}</div>
+  <div><div class="nm mono">${PROD.sku}</div><div class="ds">${PROD.nome}</div></div>
+  <div class="tr">Trocar</div></div>`;}
+function galpao(){return `<div class="field" style="margin-top:14px"><label class="lbl">Galpão</label>
+  <select class="select" style="max-width:200px"><option>CWB</option><option>SP</option></select></div>`;}
+
+// ---------- MODELO A ----------
+function renderA(){
+  let rows = LOCS.map(l=>{
+    const nv = editA[l.id]; const d = nv - l.saldo;
+    const dc = d>0?"up":d<0?"down":"zero"; const ds = d>0?`+${d}`:d<0?`${d}`:"—";
+    const furaReserva = nv < l.reserv;
+    return `<div class="locrow">
+      <div>
+        <div class="code mono">${l.code}</div>
+        <div class="meta">${l.tipo} · sistema: ${l.saldo}un${l.reserv?` · ${l.reserv} reserv.`:""}</div>
+        ${furaReserva?`<div class="warn">⚠ ${nv} &lt; ${l.reserv} reservados — não pode</div>`:""}
+      </div>
+      <div class="qtybox">
+        <div class="stepper">
+          <button onclick="bumpA('${l.id}',1)">▲</button>
+          <button onclick="bumpA('${l.id}',-1)">▼</button>
+        </div>
+        <input class="qty ${d!==0?'changed':''}" type="number" value="${nv}"
+          oninput="setA('${l.id}',this.value)">
+        <span class="delta ${dc}">${ds}</span>
+      </div>
+    </div>`;
+  }).join("");
+  const changed = LOCS.filter(l=>editA[l.id]!==l.saldo).length;
+  $("#mbody").innerHTML = prodChip()+totalStrip()+galpao()+
+    `<label class="lbl" style="margin-top:6px">Localizações ativas <span class="hint">edite p/ bater com a contagem real</span></label>
+     <div class="locs">${rows}<div class="newloc" onclick="addLoc()">＋ adicionar em nova localização</div></div>`
+    + motivoBlockA(changed);
+  $("#mfoot").innerHTML =
+    `<button class="btn ghost">Cancelar</button>
+     <button class="btn primary" ${changed?'':'disabled'}>Confirmar ${changed||0} ajuste${changed===1?'':'s'}</button>`;
+}
+function motivoBlockA(changed){
+  if(!changed) return "";
+  if(motivo==="balanco1") return `<div class="auto" style="margin-top:14px">
+    ✓ Balanço — categoria <b>Correção de inventário</b> e motivo <b>“Balanço 18/06/2026”</b> preenchidos automaticamente. Confirma direto.</div>`;
+  const motInput = motivo==="hoje"
+    ? `<div class="field"><label class="lbl">Motivo <span class="req">*</span><span class="hint">mín 3 chars</span></label><textarea class="input" rows="2" placeholder="Ex: recontagem da prateleira…"></textarea></div>`
+    : `<div class="field"><label class="lbl">Obs <span class="hint">opcional</span></label><input class="input" placeholder="opcional"></div>`;
+  return `<div style="margin-top:14px">
+    <div class="field"><label class="lbl">Categoria <span class="req">*</span></label>
+      <select class="select"><option>Correção de inventário</option><option>Avaria</option><option>Perda</option><option>Achado</option><option>Outro</option></select></div>
+    ${motInput}</div>`;
+}
+window.setA=(id,v)=>{editA[id]=v===""?0:Math.max(0,parseInt(v)||0);renderA();};
+window.bumpA=(id,n)=>{editA[id]=Math.max(0,(editA[id]||0)+n);renderA();};
+window.addLoc=()=>{const n=LOCS.length+1;const id="n"+n;
+  LOCS.push({id,code:"NOVA-"+n,tipo:"picking",saldo:0,reserv:0});editA[id]=0;renderA();};
+
+// ---------- MODELO B ----------
+function renderB(){
+  const loc=LOCS.find(l=>l.id===locB);
+  const q=qtyB===""?0:parseInt(qtyB)||0;
+  let novo,delta;
+  if(tipoB==="entrada"){novo=loc.saldo+q;delta=q;}
+  else if(tipoB==="saida"){novo=loc.saldo-q;delta=-q;}
+  else {novo=q;delta=q-loc.saldo;}
+  const dline = tipoB==="balanco"
+    ? `balanço: <b>${loc.saldo}</b> → <b class="${delta>=0?'up':'down'}">${novo}</b> &nbsp; Δ ${delta>=0?'+':''}${delta}`
+    : `${loc.saldo} ${tipoB==="entrada"?'+':'−'} ${q} = <b>${novo}</b>`;
+  const furaReserva = novo < loc.reserv;
+  const showCost = tipoB==="entrada" && cost!=="nunca";
+
+  $("#mbody").innerHTML = prodChip()+totalStrip()+galpao()+`
+    <div class="tipo">
+      <button class="${tipoB==='entrada'?'on ent':''}" onclick="setTipo('entrada')">Entrada (+)</button>
+      <button class="${tipoB==='saida'?'on sai':''}" onclick="setTipo('saida')">Saída (−)</button>
+      <button class="${tipoB==='balanco'?'on bal':''}" onclick="setTipo('balanco')">Balanço (=)</button>
+    </div>
+    <div class="row2">
+      <div class="field"><label class="lbl">Localização <span class="req">*</span></label>
+        <select class="select" onchange="setLocB(this.value)">
+          ${LOCS.map(l=>`<option value="${l.id}" ${l.id===locB?'selected':''}>${l.code} — ${l.saldo}un${l.reserv?` (${l.reserv} res)`:''}</option>`).join("")}
+        </select></div>
+      <div class="field"><label class="lbl">${tipoB==='balanco'?'Contado':'Quantidade'} <span class="req">*</span></label>
+        <input class="input" type="number" min="0" value="${qtyB}" placeholder="0" oninput="setQtyB(this.value)"></div>
+    </div>
+    <div class="deltaline">${q?dline:'<span style="color:#b3bac6">informe a quantidade</span>'}</div>
+    ${furaReserva&&q?`<div class="warn" style="margin:-8px 2px 12px">⚠ resultaria em ${novo} &lt; ${loc.reserv} reservados — bloqueado</div>`:""}
+    ${showCost?costBlock():""}
+    ${motivoBlockB()}`;
+
+  const ok = q>0 && delta!==0 && !furaReserva;
+  const danger = delta<0;
+  $("#mfoot").innerHTML =
+    `<button class="btn ghost">Cancelar</button>
+     <button class="btn ${danger?'danger':'primary'}" ${ok?'':'disabled'}>Confirmar ${tipoB==='balanco'?'balanço':tipoB}</button>`;
+}
+function costBlock(){
+  if(cost==="sempre") return `<div class="field"><label class="lbl">Custo unitário <span class="hint">alimenta custo médio</span></label><input class="input" placeholder="R$ 0,00"></div>`;
+  // recolhido
+  if(!costOpen) return `<div class="field" style="margin-top:-2px"><span class="costlink" onclick="openCost()">＋ informar custo unitário</span></div>`;
+  return `<div class="field"><label class="lbl">Custo unitário <span class="hint">alimenta custo médio</span></label><input class="input" autofocus placeholder="R$ 0,00"></div>`;
+}
+function motivoBlockB(){
+  if(motivo==="balanco1" && tipoB==="balanco") return `<div class="auto">
+    ✓ Categoria <b>Correção de inventário</b> + motivo <b>“Balanço 18/06/2026”</b> automáticos. Confirma direto.</div>`;
+  const motInput = motivo==="hoje"
+    ? `<div class="field"><label class="lbl">Motivo <span class="req">*</span><span class="hint">mín 3 chars</span></label><textarea class="input" rows="2" placeholder="Ex: avaria em manuseio…"></textarea></div>`
+    : `<div class="field"><label class="lbl">Obs <span class="hint">opcional</span></label><input class="input" placeholder="opcional"></div>`;
+  return `<div class="field"><label class="lbl">Categoria <span class="req">*</span></label>
+      <select class="select"><option>Selecione…</option><option>Avaria</option><option>Perda</option><option>Achado</option><option>Correção de inventário</option><option>Outro</option></select></div>${motInput}`;
+}
+window.setTipo=t=>{tipoB=t;costOpen=false;renderB();};
+window.setLocB=v=>{locB=v;renderB();};
+window.setQtyB=v=>{qtyB=v;renderB();};
+window.openCost=()=>{costOpen=true;renderB();};
+
+// ---------- chrome ----------
+function render(){
+  $("#mSub").textContent = model==="A"
+    ? "Edite a quantidade real de cada localização — sem NF."
+    : "Escolha o tipo, a localização e a quantidade — sem NF.";
+  model==="A"?renderA():renderB();
+}
+$("#modelSeg").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+  model=b.dataset.m;[...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));
+  $("#modelDesc").textContent = model==="A"
+    ? "Vê as locs ativas, muda o número, o sistema calcula +/− sozinho."
+    : "Toggle explícito Entrada/Saída/Balanço, depois 1 loc + quantidade.";
+  render();};
+$("#costPills").onclick=e=>{const p=e.target.closest(".pill");if(!p)return;
+  cost=p.dataset.c;costOpen=false;[...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===p));render();};
+$("#motivoPills").onclick=e=>{const p=e.target.closest(".pill");if(!p)return;
+  motivo=p.dataset.mo;[...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===p));render();};
+render();
+</script>
+</body>
+</html>

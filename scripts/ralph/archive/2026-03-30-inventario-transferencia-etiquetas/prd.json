@@ -1,0 +1,128 @@
+{
+  "project": "SISO - Pick OC: Separacao Direta de Pedidos Aguardando Compra",
+  "branchName": "ralph/pick-oc-separacao",
+  "description": "Adiciona botao 'Separar' na aba Aguardando OC da separacao. Operador faz pick fisico no checklist enquanto backend resolve burocracia (marca recebido, posta estoque, gera NF). Pedido cai em 'Separado' com tag PICK OC. PRD completo em tasks/prd-pick-oc-separacao.md",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "API: iniciar aceita aguardando_compra",
+      "description": "As a developer, I want to modify POST /api/separacao/iniciar to accept pedidos with status_separacao='aguardando_compra' so that operators can start separation directly from the OC tab.",
+      "acceptanceCriteria": [
+        "In src/app/api/separacao/iniciar/route.ts, add 'aguardando_compra' to the list of allowed starting statuses (alongside 'aguardando_separacao' and 'em_separacao')",
+        "Pedidos in 'aguardando_compra' transition to 'em_separacao' just like pedidos in 'aguardando_separacao'",
+        "Pedidos already in 'em_separacao' are still allowed (resume flow unchanged)",
+        "No other logic changes — same operador_id assignment, same consolidation RPC call",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Simple change: find the status validation check (likely an array or condition checking 'aguardando_separacao') and add 'aguardando_compra' to it. Also update the UPDATE query filter to include 'aguardando_compra' alongside 'aguardando_separacao' for the transition."
+    },
+    {
+      "id": "US-002",
+      "title": "API: checklist-items retorna compra_status",
+      "description": "As a developer, I want GET /api/separacao/checklist-items to include compra_status for each item so the checklist UI can show OC indicators.",
+      "acceptanceCriteria": [
+        "In src/app/api/separacao/checklist-items/route.ts, the select query on siso_pedido_itens already includes 'compra_status' — verify it is present",
+        "Add 'compra_status: item.compra_status ?? null' to the result mapping (around line 164, in the result.map)",
+        "Response shape for each item now includes compra_status: string | null",
+        "Existing fields unchanged",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "The select at line 41 already has compra_status in the column list. The only missing piece is adding it to the response mapping at ~line 152-171. Add it next to imagem_url."
+    },
+    {
+      "id": "US-003",
+      "title": "API: novo endpoint POST /api/separacao/concluir-oc",
+      "description": "As a developer, I want to create the concluir-oc endpoint that completes OC separation by auto-resolving the compras flow and transitioning directly to 'separado'.",
+      "acceptanceCriteria": [
+        "Create src/app/api/separacao/concluir-oc/route.ts with POST handler",
+        "Request body: { pedido_ids: string[], operador_id?: string }",
+        "Validate auth via getSessionUser()",
+        "For each pedido: fetch all items from siso_pedido_itens, check ALL have separacao_marcado=true. If not → add to pendentes[]",
+        "For fully-marked pedidos, update OC items (compra_status NOT IN ('recebido','cancelado',null)): SET compra_status='recebido', compra_quantidade_recebida=compra_quantidade_solicitada",
+        "Resolve decisao: fetch pedido.empresa_origem_id → get empresa.galpao_id. For OC items with ordem_compra_id: fetch siso_ordens_compra.galpao_id. If OC galpao == origin galpao → 'propria', else → 'transferencia'. If no OC linked, default to 'propria'",
+        "Set separacao_galpao_id: for 'propria' use origin galpao, for 'transferencia' use OC galpao. Resolve first active empresa in that galpao for execution",
+        "Update pedido: decisao_final, status='executando', status_separacao='separado', separacao_concluida_em=now(), separacao_galpao_id",
+        "Insert job in siso_fila_execucao: tipo='lancar_estoque', pedido_id, empresa_id (the separating empresa), decisao=decisao_final, tentativas=0, status='pendente'",
+        "Add tag 'pick oc' to separacao_tags (append, don't replace existing tags)",
+        "Fire-and-forget: import { preCriarAgrupamentosEmLote } from '@/lib/agrupamento-service' and call for separados[] IDs",
+        "Record history event via registrarEvento(pedidoId, 'separacao_oc_concluida', { operador, decisao })",
+        "Return { separados: string[], pendentes: string[] }",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Reference src/lib/compras-release.ts for decisao resolution logic (lines ~80-130). Reference src/app/api/separacao/concluir/route.ts for the concluir pattern (validation, response shape, fire-and-forget labels). Reference src/lib/historico-service.ts for registrarEvento. The execution worker (src/lib/execution-worker.ts) will pick up the job and handle Tiny API calls (marcadores, stock posting, NF) asynchronously."
+    },
+    {
+      "id": "US-004",
+      "title": "Frontend: botao Separar na aba Aguardando OC",
+      "description": "As a developer, I want to add a 'Separar' action button to the Aguardando OC tab so operators can start OC separation from the separation page.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/page.tsx, add an action button block for activeTab === 'aguardando_compra' (same pattern as the 'aguardando_separacao' block around line 1061)",
+        "Button text: 'Separar {N} pedido(s)' with Play icon, same styling as the existing Separar button",
+        "Shows count of selectedIds.size or pedidos.length if none selected",
+        "On click: calls handleSepararSelecionados but the redirect URL includes '&modo=pick-oc' query param",
+        "Include the MoveButton dropdown if isAdmin (same pattern as other tabs)",
+        "Disabled when actionLoading",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "The handleSepararSelecionados function already exists and calls POST /api/separacao/iniciar then redirects to /separacao/checklist?pedidos=ids. Modify the redirect in this function (or create a wrapper) to append '&modo=pick-oc' when activeTab === 'aguardando_compra'. Look at how the aguardando_separacao button block is structured around line 1061-1092 and replicate for aguardando_compra."
+    },
+    {
+      "id": "US-005",
+      "title": "Frontend: indicador OC no checklist",
+      "description": "As a developer, I want to show a visual OC status badge on items in the checklist when they have a compra_status, so operators know which items are OC vs stock.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/checklist/page.tsx, read compra_status from the checklist-items API response",
+        "Add compra_status to the ChecklistItem interface (string | null)",
+        "For consolidated products: derive compra_status from the first underlying item's compra_status (or null if mixed)",
+        "Render a small badge next to the SKU or description for OC items: 'OC' text with color by status — aguardando_compra: amber bg, comprado: blue bg, recebido: emerald bg",
+        "Items without compra_status (null) show no badge — normal stock items",
+        "Badge styling: rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "The checklist consolidates items by produto_id across multiple orders. Each ConsolidatedProduct has an 'items' array of ChecklistItem. Use the first item's compra_status for the badge. Colors: aguardando_compra → 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400', comprado → 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400', recebido → 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'."
+    },
+    {
+      "id": "US-006",
+      "title": "Frontend: checklist modo pick-oc usa concluir-oc",
+      "description": "As a developer, I want the checklist to detect pick-oc mode and call the concluir-oc endpoint instead of the normal concluir when completing separation.",
+      "acceptanceCriteria": [
+        "In src/app/separacao/checklist/page.tsx, read 'modo' from URL searchParams",
+        "Store isPickOC = modo === 'pick-oc' as a boolean",
+        "When isPickOC is true, the Concluir button calls POST /api/separacao/concluir-oc instead of POST /api/separacao/concluir",
+        "On success toast: 'Separacao OC concluida — N pedido(s) liberado(s)' instead of the normal message",
+        "On success redirect: back to /separacao?tab=separado (same as normal flow)",
+        "The normal concluir flow remains unchanged when isPickOC is false",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Look for the existing handleConcluir or similar function that calls /api/separacao/concluir. Add a conditional: if (isPickOC) use '/api/separacao/concluir-oc' else use '/api/separacao/concluir'. The request body shape is the same: { pedido_ids }. The response shape is the same: { separados, pendentes }."
+    },
+    {
+      "id": "US-007",
+      "title": "Docs: atualizar api-reference e architecture",
+      "description": "As a developer, I want to update documentation with the new concluir-oc endpoint and the pick OC flow.",
+      "acceptanceCriteria": [
+        "In docs/api-reference-complete.md: add full documentation for POST /api/separacao/concluir-oc (method, path, auth, request body, response body, business logic, side effects)",
+        "In docs/api-reference-complete.md: update POST /api/separacao/iniciar to mention it now accepts 'aguardando_compra' status",
+        "In docs/api-reference-complete.md: update GET /api/separacao/checklist-items to document the compra_status field in response",
+        "In docs/architecture-and-flows.md: add a 'Pick OC Flow' section describing the shortcut: aguardando_compra → em_separacao → separado (with tag 'pick oc'), noting backend auto-resolves compra items",
+        "In docs/fluxos-siso.md: add a Mermaid diagram for the Pick OC flow",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Follow the exact format of existing entries in each doc file. The concluir-oc endpoint is similar to concluir but with additional OC resolution logic."
+    }
+  ]
+}

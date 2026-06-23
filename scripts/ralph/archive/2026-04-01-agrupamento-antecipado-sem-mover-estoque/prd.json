@@ -1,0 +1,100 @@
+{
+  "project": "SISO - Embalagem Direta OC",
+  "branchName": "ralph/embalagem-direta-oc",
+  "description": "Adiciona modo de embalagem direta inline na aba Aguardando OC. Operador bipa produtos, sistema auto-resolve compra items, imprime etiqueta via PrintNode, e transiciona direto para embalado. Apenas pedidos engatilhados (NF emitida + agrupamento concluido) sao elegiveis. PRD completo em tasks/prd-embalagem-direta-oc.md",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "API endpoint POST /api/separacao/bipar-embalagem-oc",
+      "description": "As a developer, I want a new endpoint that processes barcode scans against aguardando_compra orders, incrementing item quantities and auto-resolving the full OC lifecycle when a pedido completes.",
+      "acceptanceCriteria": [
+        "Create route.ts at src/app/api/separacao/bipar-embalagem-oc/route.ts",
+        "POST accepts { sku: string, pedido_ids: string[], quantidade?: number }",
+        "Requires valid session (X-Session-Id header)",
+        "Finds the oldest pedido among pedido_ids where status_separacao = 'aguardando_compra' and the pedido has an item matching the scanned SKU (match by sku field on siso_pedido_itens, case-insensitive)",
+        "Increments the matched item's quantidade_bipada by quantidade (default 1), atomically via update",
+        "Sets bipado_completo = true when quantidade_bipada >= quantidade (the ordered qty from siso_pedido_itens)",
+        "To check pedido completion: counts items where bipado_completo = false, excluding items with compra_status IN ('indisponivel', 'cancelado'). Pedido is complete when count = 0",
+        "When pedido is NOT complete: returns { pedido_id, produto_id, quantidade_bipada, bipado_completo, pedido_completo: false }",
+        "When pedido IS complete, performs all of the following before returning:",
+        "  (a) Auto-resolve compra items: UPDATE siso_pedido_itens SET compra_status = 'recebido', compra_quantidade_recebida = compra_quantidade_solicitada WHERE pedido_id = X AND compra_status IS NOT NULL AND compra_status NOT IN ('recebido', 'cancelado')",
+        "  (b) Determine decisao_final: fetch pedido's empresa_origem_id and its galpao_id, fetch siso_ordens_compra for the pedido to find OC galpao. If OC galpao = empresa galpao then 'propria', else 'transferencia'. If no OC found, default 'propria'",
+        "  (c) Find separacao_galpao_id: if transferencia, find active empresa in OC galpao via siso_empresas + siso_grupo_empresas; if propria, use empresa_origem's galpao",
+        "  (d) Update siso_pedidos: status = 'executando', status_separacao = 'embalado', decisao_final = determined, separacao_galpao_id = determined, embalagem_concluida_em = now(), separacao_tags = array_append existing with 'embalagem direta'",
+        "  (e) Insert job in siso_fila_execucao: { pedido_id, empresa_id (empresa from separacao_galpao), tipo: 'lancar_estoque', status: 'pendente', tentativas: 0 }",
+        "  (f) Print label: use imprimirEtiquetaDireta() from etiqueta-service.ts if etiqueta_zpl/etiqueta_url + empresa_origem_id + galpao_id are available, else use buscarEImprimirEtiqueta() as fallback. Pass operador_id from session",
+        "  (g) Register history event via registrarEvento with evento = 'embalagem_direta_concluida'",
+        "  (h) Kick execution worker via fetch to /api/worker/processar (fire-and-forget, non-blocking)",
+        "Returns { pedido_id, produto_id, quantidade_bipada, bipado_completo: true, pedido_completo: true, etiqueta_status, etiqueta_erro } where etiqueta_status is 'impresso' or 'falhou'",
+        "If SKU not found in any of the provided pedido_ids: return 404 { error: 'sku_nao_encontrado' }",
+        "All errors logged via logger.logError with category 'business_logic' and source 'bipar-embalagem-oc'",
+        "Update docs/api-reference-complete.md with full endpoint documentation",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Model this endpoint after src/app/api/separacao/bipar-embalagem/route.ts for the scan logic and src/app/api/separacao/concluir-oc/route.ts for the completion logic (auto-resolve compra, decisao_final, enqueue, label). The key difference from bipar-embalagem is: (1) filters by aguardando_compra instead of separado, (2) filters by pedido_ids instead of all, (3) on completion runs the full OC resolution instead of just marking embalado. Use inline SQL instead of a new RPC — the atomicity of the increment is handled by the UPDATE with WHERE clause."
+    },
+    {
+      "id": "US-002",
+      "title": "Indicador engatilhado + botao Embalar na aba Aguardando OC",
+      "description": "As an operator, I want to see which orders are ready for direct packing (engatilhado) and have an 'Embalar' button to start the inline packing mode.",
+      "acceptanceCriteria": [
+        "In src/components/separacao/separacao-card.tsx: orders where nf_emitida && agrupamento_criado show a green-tinted left border or a small 'Pronto' badge near the status badge to indicate readiness",
+        "In src/app/separacao/page.tsx: a new 'Embalar' button appears next to the existing 'Separar' button in the aguardando_compra tab action bar (lines ~1062-1093)",
+        "Button uses Package icon from lucide-react (import { Package } from 'lucide-react')",
+        "Button label: 'Embalar N pedido(s)' where N = count of engatilhado orders among selected (or total engatilhados if none selected)",
+        "Engatilhado condition: pedido.nf_emitida && pedido.agrupamento_criado (both fields already exist in the SeparacaoPedido type from GET /api/separacao)",
+        "Button is disabled when N = 0 or when actionLoading is true",
+        "Button has distinct styling from Separar: use emerald/green color scheme (bg-emerald-600 hover:bg-emerald-500 text-white) to visually differentiate",
+        "Clicking the button sets a new state embalagemMode = true and stores the engatilhado pedido IDs in embalagemPedidoIds state (add these as new useState hooks in page.tsx)",
+        "The button handler filters selected IDs to only include engatilhado ones; if none selected, uses all engatilhados",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Look at the existing 'Separar' button pattern in lines 1080-1090 of separacao/page.tsx. The new button sits right next to it in the same flex container. The embalagemMode and embalagemPedidoIds states will be consumed by US-003 to render the inline scan UI. The SeparacaoPedido type already has nf_emitida and agrupamento_criado boolean fields from the GET /api/separacao response."
+    },
+    {
+      "id": "US-003",
+      "title": "Modo embalagem inline com scan input e progress cards",
+      "description": "As an operator, I want the tab to switch to an inline packing mode with a scan input and progress-aware cards when I click 'Embalar'.",
+      "acceptanceCriteria": [
+        "When embalagemMode is true, the tab content changes to show the inline embalagem UI instead of the normal card list",
+        "Top section shows: a scan input field (text input with autofocus, placeholder 'Bipar produto...'), a quantity input (number, default 1), and a 'Sair' button (X icon) to exit mode",
+        "Scan input auto-focuses on mount and after each successful scan (re-focus after processing)",
+        "Below the scan input: show only the pedidos from embalagemPedidoIds, each as a compact card showing: numero, cliente, total_itens, and a progress indicator (N/M bipados)",
+        "Add local state bipProgress: Record<string, { bipados: number, total: number }> initialized from each pedido's itens_bipados and total_itens",
+        "Each card shows a progress bar (bipados/total) using the same emerald color scheme",
+        "When a pedido reaches 100% bipados, its card visually transitions to a 'completed' state: muted background, checkmark icon, 'Embalado' label",
+        "The 'Sair' button sets embalagemMode = false and triggers a refetch of the pedidos list (invalidate the TanStack Query)",
+        "When all pedidos in embalagemPedidoIds are completed, auto-exit embalagemMode after a 1.5s delay",
+        "The scan form submits on Enter key (not on change), same as existing scan patterns in the codebase",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Look at src/app/separacao/embalagem/page.tsx for the existing scan UI pattern — it has a form with input + optional quantity. The inline version is simpler: just the input + cards with progress. The bipProgress state is updated optimistically after each API call in US-004. For auto-exit, use a useEffect that watches bipProgress and checks if all pedidos are complete."
+    },
+    {
+      "id": "US-004",
+      "title": "Integracao scan com API + feedback visual e sonoro + conclusao",
+      "description": "As an operator, I want each scan to call the API, update progress, play audio feedback, and show toasts — and when all orders are packed, see a summary and exit.",
+      "acceptanceCriteria": [
+        "On scan form submit: call POST /api/separacao/bipar-embalagem-oc with { sku: scanned value (uppercase trimmed), pedido_ids: embalagemPedidoIds, quantidade: qty from input }",
+        "Use sisoFetch from auth-context.tsx for the API call (auto-sends session header)",
+        "On success (pedido_completo = false): update bipProgress for the returned pedido_id, increment bipados count, play success beep via playBeep('success') from audio-feedback.ts, show toast.success with SKU + quantidade_bipada info",
+        "On success (pedido_completo = true): update bipProgress, play success beep, show toast.success 'Pedido NNNNN embalado' with etiqueta info. If etiqueta_status = 'falhou', show toast.warning instead mentioning etiqueta pendente",
+        "On 404 (sku_nao_encontrado): play error beep via playBeep('error'), show toast.warning 'SKU nao encontrado'",
+        "On other errors: play error beep, show toast.error with error message",
+        "Track embalagemCompletados (count of completed pedidos) in state — when it equals embalagemPedidoIds.length, show toast.success summary 'Embalagem concluida — N pedido(s)' and trigger auto-exit",
+        "On auto-exit or manual 'Sair': fire-and-forget kick to /api/worker/processar, then invalidate queries and reset embalagemMode",
+        "Clear the scan input field after each scan attempt (success or error)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Import playBeep from src/components/separacao/audio-feedback.ts. Import sisoFetch from src/lib/auth-context.tsx (or use the useAuth hook if available in the page). The worker kick pattern exists in concluir-oc and other routes — fetch('/api/worker/processar', { method: 'POST' }).catch(() => {}). For toast patterns, look at the existing embalagem page."
+    }
+  ]
+}

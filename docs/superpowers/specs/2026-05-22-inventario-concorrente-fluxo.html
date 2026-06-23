@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventário rodando junto com separação e recebimento — Fluxo</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+
+  .timeline { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 24px 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .timeline-row { display: grid; grid-template-columns: 80px 1fr; gap: 16px; padding: 6px 0; border-bottom: 1px dashed var(--zinc-100); }
+  .timeline-row:last-child { border-bottom: none; }
+  .timeline-row .time { color: var(--muted); font-weight: 600; }
+  .timeline-row .event { color: var(--text); }
+  .timeline-row .event em { font-style: normal; background: var(--amber-bg); padding: 1px 6px; border-radius: 4px; color: var(--zinc-800); }
+  .timeline-row .event b { background: var(--cyan-bg); padding: 1px 6px; border-radius: 4px; color: var(--zinc-800); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Inventário rodando junto com separação e recebimento</h1>
+  <p class="subtitle">Como o sistema permite que a contagem física aconteça sem parar o galpão — e usa o tempo como árbitro pra decidir se houve divergência real.</p>
+  <p class="meta">Validação de fluxo · 2026-05-22 · linguagem de negócio (sem detalhe técnico)</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#fluxo">Fluxo principal</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Na maioria dos sistemas de WMS, fazer inventário significa <strong>parar o galpão</strong>: ninguém separa, ninguém recebe, ninguém transfere até a contagem terminar. Aqui é o contrário — o inventário roda <strong>ao mesmo tempo</strong> que a operação. O segredo é o sistema guardar carimbo de hora em tudo: a hora exata em que o operador contou uma prateleira, e a hora exata de cada saída e entrada que aconteceu naquela mesma prateleira. Na hora de aprovar a contagem, o sistema reconstrói qual era o saldo <strong>no segundo em que o operador bipou</strong> e compara com o que ele contou. Se bater, não houve divergência — mesmo que o saldo de agora seja diferente, porque venda/recebimento aconteceu depois.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Pra que serve</div>
+  Evita que o galpão pare pra inventariar — operadores continuam separando pedidos, recebendo caminhões e transferindo mercadoria enquanto o pessoal da contagem trabalha em paralelo, sem gerar "falsas divergências" causadas pelo movimento normal do dia.
+</div>
+
+<h2 id="fluxo">2. Fluxo principal</h2>
+<p>O diagrama mostra o que acontece quando o supervisor abre um ciclo de contagem e a operação do galpão continua acontecendo. Duas pistas paralelas que só se encontram no momento da aprovação:</p>
+
+<div class="diagram">
+  <div class="diagram-title">Duas pistas paralelas · contagem física + operação normal</div>
+  <pre class="mermaid">
+flowchart TD
+  A[Supervisor abre ciclo<br/>às 14h00 · Galpão CWB<br/>120 prateleiras a contar] --> B[Operadores entram<br/>na contagem]
+  A --> C[Galpão continua<br/>operando normal]
+
+  B --> B1[João bipa loc A-03-02<br/>às 14h32 · conta 8 unidades<br/>do SKU EW123]
+  C --> C1[Maria separa pedido #12345<br/>às 14h45 · tira 2 unidades<br/>da mesma loc A-03-02]
+  C --> C2[Caminhão chega às 15h10<br/>recebe 5 unidades<br/>do SKU EW123 em A-03-02]
+
+  B1 --> D{Supervisor aprova<br/>ciclo às 17h00}
+  C1 --> D
+  C2 --> D
+
+  D --> E[Sistema reconstrói saldo<br/>no instante do bipe de cada loc]
+  E --> F{Conta bate com<br/>o saldo daquele momento?}
+  F -->|Sim, bate| G[Sem divergência<br/>ciclo aprovado limpo]
+  F -->|Não, sobra ou falta| H[Divergência real registrada<br/>vai pra revisão do supervisor]
+
+  style A fill:#dcfce7
+  style C fill:#cffafe
+  style G fill:#dcfce7
+  style H fill:#fee2e2
+  </pre>
+</div>
+
+<h2 id="exemplo">3. Exemplo passo-a-passo</h2>
+<p>Vamos seguir um dia inteiro pra ver o mecanismo funcionando. A prateleira <strong>A-03-02</strong> do Galpão CWB é a vedete dessa história — vários operadores mexem nela ao longo da tarde:</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Dia 22/05, Galpão CWB. Supervisor Pedro abriu um ciclo de contagem inteligente às 14h00 com 120 prateleiras. Na prateleira A-03-02 o saldo registrado no sistema é de <strong>10 unidades do SKU EW123</strong>. O operador João vai contar essa loc; Maria está separando pedidos da fila normal; e um caminhão tá programado pra chegar de tarde.
+</div>
+
+<div class="timeline">
+  <div class="timeline-row"><div class="time">14h00</div><div class="event">Pedro abre o ciclo. A-03-02 entra na fila de contagem. Saldo no sistema: <b>10 un</b>.</div></div>
+  <div class="timeline-row"><div class="time">14h32</div><div class="event">João bipa A-03-02 e conta <em>8 unidades</em>. Sistema carimba "contado às 14h32 · qty=8".</div></div>
+  <div class="timeline-row"><div class="time">14h45</div><div class="event">Maria separa Pedido #12345 → tira 2 un de A-03-02. Saldo cai pra <b>8 un</b>.</div></div>
+  <div class="timeline-row"><div class="time">15h10</div><div class="event">Caminhão chega, recebimento lança +5 un em A-03-02. Saldo sobe pra <b>13 un</b>.</div></div>
+  <div class="timeline-row"><div class="time">15h40</div><div class="event">Outro operador separa Pedido #12350 → tira 3 un. Saldo cai pra <b>10 un</b>.</div></div>
+  <div class="timeline-row"><div class="time">17h00</div><div class="event">Pedro aprova o ciclo. Sistema reconstrói o saldo que existia <em>às 14h32</em> e compara com a contagem do João.</div></div>
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>14h00 · Supervisor abre o ciclo</strong>
+    <p>Pedro abre o ciclo "Curva A de quinta-feira" com 120 prateleiras escolhidas pelo sistema. A prateleira A-03-02 entra na fila — todas as outras prateleiras do galpão continuam liberadas pra qualquer operação normal.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h32 · João conta a A-03-02</strong>
+    <p>João bipa o QR da prateleira, conta 8 unidades do SKU EW123 e bipa o produto 8 vezes. O sistema registra "João contou 8 un na A-03-02 às 14h32" e libera a prateleira pra próxima operação — não trava nada.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>14h45 · Maria separa um pedido na mesma prateleira</strong>
+    <p>Pedido #12345 chamou a Maria a pegar 2 un do SKU EW123 na A-03-02. Maria pega, bipa, e o saldo do sistema cai de 10 pra 8. <strong>Ninguém percebe que o João já contou aquela prateleira</strong> — Maria opera normalmente. O sistema só registra o horário da saída: "14h45, saiu 2 un".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h10 · Caminhão chega e recebe na mesma prateleira</strong>
+    <p>O recebimento do dia inclui +5 un do SKU EW123, que o operador da guarda destina pra A-03-02. Sistema registra "+5 un às 15h10". Saldo agora é 13 un. De novo: a prateleira "estar em contagem" não impediu nada.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h40 · Mais uma separação</strong>
+    <p>Outro pedido chama -3 un da A-03-02. Saldo cai pra 10 un. Sistema registra o horário.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h00 · Pedro fecha o ciclo e clica em "aprovar"</strong>
+    <p>Agora o sistema precisa decidir: o João contou 8, mas o saldo agora é 10. <strong>Houve divergência?</strong> Em vez de comparar com o saldo de agora, ele vai reconstruir o saldo do passado.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h00 · Sistema "rebobina" o histórico até 14h32</strong>
+    <p>Ele olha todas as movimentações da A-03-02 que aconteceram <strong>depois das 14h32</strong> (a hora do bipe do João): −2, +5, −3. Pega o saldo de agora (10) e desfaz cada uma: 10 + 3 − 5 + 2 = <strong>10 un às 14h32</strong>. Esse é o saldo que existia no instante exato da contagem.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h00 · Comparação final</strong>
+    <p>Saldo esperado às 14h32 = 10 un. Contagem do João = 8 un. <strong>Diferença = −2 un (faltam 2 unidades).</strong> Essa sim é uma divergência real — não foi causada por venda nem recebimento de tarde, é falta de mercadoria de verdade. Sistema cria a divergência e manda pro supervisor revisar.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>17h05 · Supervisor decide</strong>
+    <p>Pedro vê na tela: "A-03-02 · SKU EW123 · esperado 10, contado 8, falta 2". Ele aprova o ajuste: sistema gera uma saída de −2 un com motivo "inventário perda" e o saldo final fica em 8 un.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>Caso paralelo · prateleira que bateu certo</strong>
+    <p>Na A-04-01, João contou 15 un às 15h00. Maria tirou 4 un às 15h20. Saldo de agora = 11 un. Sistema rebobina: 11 + 4 = <strong>15 un às 15h00</strong>. Bate com a contagem. <strong>Sem divergência</strong>, mesmo o saldo de agora sendo diferente.</p>
+  </div>
+</div>
+
+<h2 id="estados">4. Estados e transições</h2>
+<p>O <strong>ciclo de inventário</strong> e as <strong>prateleiras dentro do ciclo</strong> passam por estados independentes. Importante: nenhum desses estados bloqueia separação, recebimento ou transferência — eles só servem pra organizar o trabalho do pessoal da contagem.</p>
+
+<h3>Estados do ciclo</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">planejada</span></td>
+      <td>Supervisor montou o ciclo mas ainda não liberou pra contar.</td>
+      <td>Supervisor cria o ciclo na tela de planejamento.</td>
+      <td>Supervisor clica em "iniciar" → vai pra "em andamento".</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">em andamento</span></td>
+      <td>Operadores podem entrar na contagem e puxar prateleiras.</td>
+      <td>Supervisor inicia. Galpão segue operando normal.</td>
+      <td>Última prateleira termina, ou supervisor encerra parcial.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">em revisão</span></td>
+      <td>Contagem terminou; supervisor está reconciliando divergências.</td>
+      <td>Última prateleira foi finalizada (ou encerramento parcial).</td>
+      <td>Supervisor aprova ou rejeita as divergências.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">aprovada</span></td>
+      <td>Supervisor bateu o martelo nas divergências; ajustes prontos pra aplicar.</td>
+      <td>Supervisor clica em "aprovar ciclo".</td>
+      <td>Sistema aplica os ajustes → vai pra "aplicada".</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">aplicada</span></td>
+      <td>Ajustes de saldo já entraram no estoque oficial.</td>
+      <td>Aplicação automática após aprovação.</td>
+      <td>Estado final.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-danger">cancelada</span></td>
+      <td>Ciclo descartado sem aplicar nada.</td>
+      <td>Supervisor cancela.</td>
+      <td>Estado final.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Estados da prateleira dentro do ciclo</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">pendente</span></td>
+      <td>Prateleira está na fila, ainda não tem ninguém contando.</td>
+      <td>Ciclo inicia; prateleira entra no pool.</td>
+      <td>Operador puxa pra contar.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">em contagem</span></td>
+      <td>Algum operador tá com ela no aplicativo, contando.</td>
+      <td>Operador clica "próxima loc" e o sistema entrega esta.</td>
+      <td>Operador finaliza a contagem.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">contada</span></td>
+      <td>Contagem registrada; sistema ainda não comparou com o esperado.</td>
+      <td>Operador termina de bipar os produtos.</td>
+      <td>Supervisor aprova o ciclo → sistema reconcilia.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">divergente</span></td>
+      <td>Reconciliação encontrou diferença real (contado ≠ esperado no momento do bipe).</td>
+      <td>Supervisor aprova; sistema rebobina o saldo e a conta não bate.</td>
+      <td>Supervisor revisa e decide.</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">aprovada</span></td>
+      <td>Contagem reconciliada — bate, ou supervisor aceitou o ajuste.</td>
+      <td>Resultado da aprovação.</td>
+      <td>Estado final.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="cenarios">5. Cenários alternativos</h2>
+<p>O dia-a-dia do galpão tem muito mais cenário do que "saldo bate". Aqui estão os principais "e se…?" que o sistema precisa resolver:</p>
+
+<div class="scenario">
+  <div class="scenario-title">E se a venda acontece DEPOIS da contagem?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João conta 10 un às 14h32. Maria separa 2 un às 14h45. Saldo de agora = 8 un.<br/><strong>O que o sistema faz:</strong> rebobina: 8 + 2 = 10 un às 14h32. Bate com a contagem.<br/><strong>O usuário vê:</strong> nenhuma divergência reportada. A diferença entre o saldo de agora e a contagem foi explicada pela venda.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se a venda acontece ANTES da contagem (na mesma prateleira)?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Saldo inicial 10 un. Maria separa 2 un às 14h15 (saldo cai pra 8). João conta a prateleira às 14h32 e bipa 8 unidades.<br/><strong>O que o sistema faz:</strong> rebobina até 14h32 — não há nenhuma mov entre 14h32 e agora, então saldo esperado = saldo atual = 8 un. Contagem do João = 8. Bate.<br/><strong>O usuário vê:</strong> nenhuma divergência. A venda de antes já estava embutida no saldo do momento da contagem.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se dois operadores tentam contar a MESMA prateleira ao mesmo tempo?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João e Carla clicam em "próxima loc" no mesmo segundo e o sistema entrega a A-03-02 pros dois.<br/><strong>O que o sistema faz:</strong> a "trava de contagem" é feita pelo primeiro a chegar — o outro recebe outra prateleira do pool automaticamente.<br/><strong>O usuário vê:</strong> João pega a A-03-02; Carla pega a A-03-03 sem sequer perceber a colisão.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se o operador da separação cai numa prateleira que está sendo contada?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> A-03-02 está marcada como "em contagem" e Maria precisa separar 2 un do SKU EW123.<br/><strong>O que o sistema faz:</strong> ao sugerir a localização pra Maria, ele evita prateleiras em contagem se houver alternativa. Se a A-03-02 é a única que tem o SKU, ele sugere assim mesmo — separar não é proibido, só desencorajado.<br/><strong>O usuário vê:</strong> Maria recebe a sugestão da prateleira A-04-01 (que também tem o SKU). Se não houvesse alternativa, ela receberia a A-03-02 normalmente.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se chega um recebimento bem na hora?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Caminhão chega às 15h10 trazendo +5 un. A prateleira de destino é a A-03-02, que já foi contada às 14h32.<br/><strong>O que o sistema faz:</strong> não impede o lançamento. Registra "+5 un às 15h10" no histórico. Na hora da aprovação, esses +5 entram no cálculo "saldo no instante do bipe = saldo atual − 5".<br/><strong>O usuário vê:</strong> recebimento flui normal; a contagem não precisa ser refeita.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se a contagem realmente está errada?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Saldo no sistema 10 un às 14h32. João conta e bipa 8 un. Nenhuma mov até a aprovação.<br/><strong>O que o sistema faz:</strong> rebobina (nada pra desfazer), saldo esperado = 10. Diferença = −2. Marca como divergência real e manda pro supervisor.<br/><strong>O usuário vê:</strong> supervisor recebe "A-03-02 · SKU EW123 · esperado 10, contado 8, falta 2" e decide se aprova o ajuste ou pede recontagem manual.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se sobra mercadoria além do esperado?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Saldo no sistema 10 un. João conta e bipa 12 un.<br/><strong>O que o sistema faz:</strong> reconcilia (saldo esperado 10), diferença = +2. Marca divergência "ganho de inventário".<br/><strong>O usuário vê:</strong> supervisor revisa. Se aprovar, sistema gera uma entrada de +2 un com motivo "inventário ganho" — sobra de produto é tratada como entrada na contabilidade do estoque.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se o operador esqueceu de contar uma prateleira?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> João pulou a A-03-05 (não puxou nem bipou nada).<br/><strong>O que o sistema faz:</strong> a prateleira fica como "pendente" no fim do ciclo. Quando o supervisor encerrar parcial, ele escolhe entre "subir parcial" (só conta as prateleiras visitadas) ou "cancelar tudo".<br/><strong>O usuário vê:</strong> tela de encerramento mostra "120 planejadas, 119 contadas, 1 pendente — encerrar parcial ou cancelar?".</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se a prateleira está vazia mas o sistema acha que tem saldo?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Sistema acha que A-07-02 tem 4 un do SKU LD888. João chega e a prateleira está vazia.<br/><strong>O que o sistema faz:</strong> João bate em "loc vazia?" no aplicativo; sistema registra contagem = 0 com timestamp.<br/><strong>O usuário vê:</strong> na aprovação, vira uma divergência de −4 un. Supervisor decide se foi furto, mov não registrado, ou erro.</div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">E se uma transferência entre galpões cruza no meio do ciclo?</div>
+  <div class="scenario-flow"><strong>Situação:</strong> Transferência saiu de A-03-02 (CWB) às 16h00, antes da aprovação. Saldo cai de 10 pra 7 un.<br/><strong>O que o sistema faz:</strong> trata igual qualquer outra saída. Rebobina: saldo de agora (7) + transferência (3) = 10 un às 14h32.<br/><strong>O usuário vê:</strong> a transferência não polui o resultado do inventário. Continua funcionando normal no Galpão SP do outro lado.</div>
+</div>
+
+<h2 id="resumo-final" style="border-top:1px solid var(--border); padding-top:32px;">Resposta direta à sua pergunta</h2>
+
+<div class="callout callout-success">
+  <div class="callout-title">Sim — a lógica de "rodar inventário junto com os outros módulos" continua escrita no código.</div>
+  Confirmei na implementação atual: contagem física, separação, recebimento, transferências e vendas <strong>rodam em paralelo</strong>. O sistema usa o carimbo de hora de cada bipe + o histórico imutável de movimentações pra reconstruir o saldo no instante exato da contagem. A "trava de prateleira em contagem" existe, mas serve só pra evitar que dois operadores contem a mesma prateleira ao mesmo tempo — ela <strong>não impede</strong> que separação ou recebimento mexam naquela prateleira durante o ciclo.
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Em termos de negócio</div>
+  Você pode abrir um inventário de 200 prateleiras às 14h, e os operadores de separação seguem tirando pedido normal, o pessoal da guarda continua recebendo caminhão, e ninguém precisa parar. No fim do ciclo o sistema "rebobina" o tempo e responde com precisão: "essa diferença é real (faltou mercadoria mesmo)" ou "essa diferença é só porque vendeu durante a contagem (não é problema)".
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

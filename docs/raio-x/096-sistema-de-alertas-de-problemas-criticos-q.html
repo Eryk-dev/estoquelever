@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Sistema de alertas de problemas críticos (que some de vista) — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Relatórios e indicadores</p>
+<h1>Sistema de alertas de problemas críticos (que some de vista)</h1><p class="lead">O sistema monitora automaticamente 24/7 problemas no galpão (queda de produtividade do operador, falta de estoque, demora na separação) e avisa você com alertas na tela. Você pode ocultar qualquer alerta clicando um botão.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Quando um alerta reaparece automaticamente se o problema continuar — sem você ter que reativar</span></li><li><span class="dot">✓</span><span>Alertas desaparecem sozinhos depois de 24h se não forem importantes mais</span></li><li><span class="dot">✓</span><span>Sistema detecta automático em tempo real: não é manual, você só recebe a informação</span></li><li><span class="dot">✓</span><span>Quando dois cliques acontecem ao mesmo tempo no botão de ocultar, o sistema não conta duas vezes — protegido</span></li></ul></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D216</span>Quando alguém fecha um alerta, o sistema continua avisando</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Relatórios e indicadores</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador fecha aviso de 'Tempo de separação fora do padrão: 3h40 vs histórico 2h20'. Sistema marca como fechado. Cinco minutos depois, motor automático roda análise novamente e alerta reaparece na tela.</p><p class="ln"><b>Hoje o sistema:</b> Alerta é marcado como dispensado_em=NOW, sai da tela. Ninguém sabe quem fechou ou por quê. Motor em 5 minutos roda fluxo novamente independente.</p><p class="ln why"><b>Por que importa:</b> Operador perde confiança (fechei, por que voltou?). Ninguém consegue rastrear quais avisos foram deliberadamente ignorados. Sistema parece descontrolado.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar reaparecer sempre que a análise automática rodar</b> — Ganha automatismo puro. Perde rastreamento e causa confusão no operador.</span></li><li class=""><span class="ck"></span><span><b>Quando alguém fecha, respeitar isso. Reabre só se a situação piorar muito (ex: tempo ir de 2h para 5h, não de 2h para 2h10)</b> — Operador confia que foi ouvido. Você consegue rastrear quem fechou e quando. Aviso reabre se virar crítico de novo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a segunda opção. Seu operador mereceria ser respeitado. Se ele fechou e julgou que não é problema, deixe ele em paz. Reabra só se piorar demais.</p></div><p class="refp">insights-strip.tsx:43-48; motor.ts:44-141</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D217</span>Seu supervisor aprova uma compra urgente, mas o aviso continua lá</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Relatórios e indicadores</span></div></div><p class="ln scn"><b>Imagina assim:</b> Sistema avisa 'Risco de falta — tempo de chegada saiu de 4 dias para 7 dias' (P90 fora do padrão: 1.8x do histórico). Supervisor clica, vê que é crítico, aprova compra de reposição em outro fornecedor (sai hoje, chega em 3 dias). Compra é aprovada no sistema. Mas o aviso continua piscando no dashboard.</p><p class="ln"><b>Hoje o sistema:</b> Supervisor aprova a OC no WMS. Ação fica registrada lá (rota aprovar OC). Mas o aviso em alertas não sabe que foi tomada uma ação — continua exibindo até ser manualmente fechado ou expirar. Motor roda em 5 minutos; só deixa de recriar o aviso se o tempo de chegada realmente melhorar nas últimas 24h (porque começou embalar mais rápido).</p><p class="ln why"><b>Por que importa:</b> Supervisor pensa: 'Resolvi aqui, por que continua aparecendo?'. Perde incentivo. Você perde a trilha: qual aviso levou a qual ação tomada? Qual supervisor foi rápido pra resolver?</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está: avisos e ações em silos separados</b> — Automatismo funciona isolado. Mas você não vê a conexão entre problema e solução.</span></li><li class=""><span class="ck"></span><span><b>Quando uma ação real é tomada (OC aprovada, etc), marcar automaticamente o aviso associado como resolvido e tirar da tela</b> — Supervisor vê que resolveu. Você tem a trilha inteira (aviso → ação → resolvido). Confiança sobe.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a segunda opção. Seu supervisor merecia feedback visual que resolveu. E você merecia saber a trilha: quem viu o aviso, o que fez, quando resolveu.</p></div><p class="refp">motor.ts:44-141</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Aviso pode apontar para um operador que foi deletado do sistema, causando erro 404 quando clica</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Link do aviso pode estar malformado e quebrar a página de detalhe</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

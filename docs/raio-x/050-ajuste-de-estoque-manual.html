@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Ajuste de estoque manual — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Ajuste manual de estoque</p>
+<h1>Ajuste de estoque manual</h1><p class="lead">Quando você precisa corrigir o estoque na mão (falta, sobra, avaria, achado), o sistema registra isso manualmente e atualiza a quantidade na prateleira no mesmo instante.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">1</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Quantidade zero é bloqueada — só aceita ajuste que muda algo</span></li><li><span class="dot">✓</span><span>Você escolhe o motivo (avaria, perda, achado, devolução, correção de contagem, outro) e descreve</span></li><li><span class="dot">✓</span><span>Ajuste para fora (saída) é rejeitado se não há estoque suficiente na prateleira</span></li><li><span class="dot">✓</span><span>Quando entra estoque novo via ajuste, o sistema busca automaticamente os pedidos em espera naquele produto+galpão e marca pra separação</span></li></ul></div><h2>Problemas pra resolver · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P069</span>Pessoa consegue forçar ajuste de estoque sem estar autorizada</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador sem permissão para ajustar estoque</p><p class="ln"><b>Hoje:</b> A tela mostra o botão de 'Registrar ajuste' desativado, dizendo 'sem permissão'. Mas alguém que conhece tecnologia pode burlar isso pelo navegador ou linha de comando e consegue fazer o ajuste mesmo assim, porque o sistema por trás (onde os dados realmente mudam) não verifica a permissão.</p><p class="ln why"><b>Por que importa:</b> Qualquer pessoa que queira burlar o sistema consegue fazer ajustes que não deveria fazer — pode inflar estoque, falsificar entradas, sem deixar rastro de que pessoa não autorizada fez. Vulnerabilidade de segurança.</p><div class="decision"><p class="q">Implementar validação de permissão no sistema por trás, não só na tela</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Manter como está</b> — Continua vulnerável. Qualquer operador consegue forçar ajuste mesmo sem permissão.</span></li><li class=""><span class="ck"></span><span><b>Adicionar validação no sistema por trás</b> — Sistema por trás recusa ajuste se operador não tem permissão 'operacoes.ajuste_manual'. Burla fica impossível.</span></li></ul><p class="recnote"><b>Recomendo:</b> Implementar a validação no sistema por trás imediatamente. É uma falha de segurança real.</p></div><p class="refp">src/app/wms/ajuste/page.tsx:18; src/app/api/wms/ajuste/route.ts:2-3</p></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D231</span>Quando o operador clica duas vezes no botão 'Registrar ajuste' muito rápido (ou por acidente), deve registrar uma ou duas operações?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Tarefas automáticas e fila do sistema</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador clica 'Registrar +100 kg' duas vezes rapidinho, porque a rede estava lenta ou por acidente do mouse</p><p class="ln"><b>Hoje o sistema:</b> O botão fica desativado enquanto o sistema está processando, então em teoria a segunda tentativa não deveria chegar. Mas se a rede for muito lenta ou houver sincronismo errado, o sistema por trás recebe os dois comandos quase simultaneamente. O sistema não tem jeito de reconhecer 'ah, esses dois são o mesmo clique acidental' — então provavelmente registra duas operações de +100 kg cada uma, totalizando +200 kg indevidamente.</p><p class="ln why"><b>Por que importa:</b> Duplo clique acidental vira duplo ajuste. O inventário fica errado e ninguém sabe que aconteceu. No final do dia o estoque não bate.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está</b> — Duplo clique registra duas operações. Operador depois tem que manualmente localizar e desfazer uma delas.</span></li><li class=""><span class="ck"></span><span><b>Adicionar proteção: cada ajuste ganha um ID único baseado em quem fez, quando (até 1 segundo) e o que foi ajustado</b> — Se dois cliques chegam juntos, o sistema reconhece 'é o mesmo clique duplicado' e só executa uma vez. Ou retorna o ID da operação anterior.</span></li><li class=""><span class="ck"></span><span><b>Impedir cliques duplicados apenas no lado da tela</b> — Deixa o mesmo risco — alguém que conhece pode mandar dois comandos via ferramenta externa e consegue duplicar.</span></li></ul><p class="recnote"><b>Recomendo:</b> Usar a proteção 'ID único do ajuste' no sistema por trás, não só na tela. Assim fica robusto contra acidentes e tentativas de burla.</p></div><p class="refp">src/app/wms/ajuste/page.tsx:54-78; src/lib/wms/movimentacoes.ts:431-453</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D232</span>Se a internet cair ou o banco de dados falhar enquanto está registrando um ajuste de estoque, como o sistema deve se comportar?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Tarefas automáticas e fila do sistema</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador clica 'Registrar ajuste +50 peças' e a conexão com o banco de dados cai no meio do processo</p><p class="ln"><b>Hoje o sistema:</b> O banco de dados desfaz automaticamente tudo (nenhuma peça é adicionada, nenhum registro fica sujo). O operador recebe uma mensagem de erro na tela. A tela mantém os dados que ele preencheu, então ele pode tentar novamente.</p><p class="ln why"><b>Por que importa:</b> Se a falha deixasse o banco em estado errado (ajuste parcial), o estoque ficaria inconsistente. Hoje está correto — falha = nada muda. Mas é importante confirmar que o operador consegue refazer sem risco de duplicação.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está</b> — Falha de rede = nada muda no banco. Operador refaz manualmente. Risco: se não houver proteção contra duplo clique, operador ao refazer pode duplicar sem saber.</span></li><li class=""><span class="ck"></span><span><b>Implementar proteção contra duplicação (ID único) junto com retry automático</b> — Operador refaz, sistema reconhece 'é retry do mesmo ajuste' e operação é executada exatamente uma vez.</span></li></ul><p class="recnote"><b>Recomendo:</b> Está funcionando bem na falha em si. Mas combine com a proteção contra duplo clique (decisão anterior) para deixar robusto também no retry.</p></div><p class="refp">src/lib/wms/ledger.ts:203-205; src/app/api/wms/ajuste/route.ts:105-112</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D017</span>Se o operador registra um ajuste errado hoje e descobre uma semana depois, ele consegue desfazer? E qual é o impacto?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cancelar e desfazer</span></div></div><p class="ln scn"><b>Imagina assim:</b> Dia 20 de maio: operador faz ajuste entrada +100 kg de Nylon. Dia 27 de maio: descobre que foi erro e quer desfazer esse ajuste.</p><p class="ln"><b>Hoje o sistema:</b> O sistema permite 'estornar' a operação antiga. Ela cria um novo registro de saída (-100 kg) vinculado ao ajuste original, ambos aparecem no histórico. O saldo final fica certo. MAS: se naqueles 7 dias alguns pedidos consumiram parte ou toda aquela entrada (usaram os 100 kg para separar mercadoria), o sistema não automaticamente 'desfaz' os pedidos — só o estoque volta ao jeito de antes. Os pedidos ficam com estoque 'perdido' no histórico.</p><p class="ln why"><b>Por que importa:</b> Estorno de ajuste antigo pode deixar pedidos em estado inconsistente. Por exemplo: pedido de 50 kg foi separado usando aqueles 100 kg que agora estão sendo desfeitos. Ninguém notifica esse pedido de 'olha, seu estoque desapareceu'.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir estorno a qualquer hora, deixar pedidos como estão (hoje)</b> — Ajuste fica consistente. Pedidos que usaram aquele estoque ficam com inconsistência de negócio — pode estar errado mas o sistema não detecta.</span></li><li class=""><span class="ck"></span><span><b>Bloquear estorno se há pedidos que consumiram esse estoque</b> — Força o operador a resolver pedidos antes de desfazer ajuste. Mais seguro, mas operacional mais complexo.</span></li><li class=""><span class="ck"></span><span><b>Permitir estorno e disparar alerta/revisão de pedidos afetados</b> — Estorno acontece, mas sistema marca 'revisar esses pedidos' e alguém precisa conferir manualmente.</span></li></ul><p class="recnote"><b>Recomendo:</b> Por enquanto, deixar como está (permitir qualquer hora). MAS: adicionar alerta visual no estorno mostrando 'esses X pedidos usaram esse estoque — revisar depois'. Isso avisa o operador sem bloquear operação.</p></div><p class="refp">src/lib/wms/ledger.ts:363-417</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Quando entra estoque novo, sistema avisa os pedidos travados esperando por esse produto? (ou tem risco de esquecer?)</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Ajuste de estoque funciona igual tanto para empresa A quanto para empresa B se compartilham o mesmo galpão? (ou estoque fica misturado?)</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

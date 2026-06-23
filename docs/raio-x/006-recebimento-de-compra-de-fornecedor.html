@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Recebimento de Compra de Fornecedor — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Recebimento de mercadoria</p>
+<h1>Recebimento de Compra de Fornecedor</h1><p class="lead">Quando chega um caminhão de compra do fornecedor, você confere quantidade real vs. sistema, registra diferenças, e marca o que vai ser guardado nas prateleiras — o sistema então te ajuda a organizar tudo pra separar depois nos pedidos dos clientes.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">4</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">2</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Você pode receber uma compra em etapas (50 itens hoje, 50 semana que vem) sem problema</span></li><li><span class="dot">✓</span><span>Se chegar estoque que estava faltando, pedidos que estavam parados são liberados automaticamente pra separação</span></li><li><span class="dot">✓</span><span>Quantidade vazia é ignorada com segurança (não cria confusão)</span></li><li><span class="dot">✓</span><span>Quando dois operadores tentam fazer a mesma ação ao mesmo tempo, sistema detecta e só deixa um</span></li><li><span class="dot">✓</span><span>Se a compra inteira é entregue corretamente, sistema fecha sozinho</span></li></ul></div><h2>Decisões pra você tomar · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D263</span>Se a rede cai no meio do recebimento de uma compra, o que acontece?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Recebimento e guarda de mercadoria</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador confirma os 10 itens de uma compra, mas a internet cai quando está gravando o 4º item. Já gravou 3 itens com sucesso.</p><p class="ln"><b>Hoje o sistema:</b> O sistema grava o que consegue (os 3 que entraram) e mostra um aviso de sucesso. A compra fica marcada como recebida em parte, e o operador pode chamar receber de novo para os outros 7 itens.</p><p class="ln why"><b>Por que importa:</b> Se a rede cai, você precisa saber se pode tentar de novo sem duplicar o estoque, ou se o sistema vai travar esperando pelas transações completas.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (sucesso parcial): o operador pode sempre chamar receber de novo</b> — Mais rápido, operador não espera, compra fica marcada parcial até completar</span></li><li class=""><span class="ck"></span><span><b>Travar a compra inteira: se um item falhar, desfaz todos e nenhum item entra</b> — Mais seguro, mas operador perde tempo esperando a rede voltar pra tentar de novo</span></li></ul><p class="recnote"><b>Recomendo:</b> Fique com sucesso parcial (deixar como está). Melhor experiência: se a rede cai, não perde o que entrou. Mas coloque um botão grande 'Receber os 7 itens restantes' pra facilitar a vida do operador.</p></div><p class="refp">receber-oc.ts:82-304</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D176</span>O que fazer quando um produto não está configurado no mapeamento?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cadastros (produtos, prateleiras, fornecedores)</span></div></div><p class="ln scn"><b>Imagina assim:</b> A compra vem do fornecedor X com um SKU que nunca foi recebido nessa empresa. O produto existe no cadastro, mas a empresa Y não está ligada a esse produto.</p><p class="ln"><b>Hoje o sistema:</b> O sistema pula o item silenciosamente, apenas registra um aviso interno. O operador vê 'recebimento bem-sucedido' mesmo que alguns itens foram ignorados.</p><p class="ln why"><b>Por que importa:</b> O operador não sabe qual item foi pulado e pode deixar mercadoria na doca pendurada, ou você descobre só depois quando faz contagem.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Bloquear antes de começar: verificar todos os produtos antes de chamar receber</b> — Operador vê erro na tela, antes de tentar, e chama o suporte pra configurar o produto</span></li><li class=""><span class="ck"></span><span><b>Contar e exibir: gravar quais itens falharam e mostrar na tela 'itens 3, 5 e 7 foram ignorados'</b> — Operador vê na hora que faltam 3 itens e pode chamar suporte ou ajustar</span></li></ul><p class="recnote"><b>Recomendo:</b> Bloquear antes de começar. Mostrar uma lista de quais produtos não estão configurados e deixar o operador chamar você pra resolver antes de continuar.</p></div><p class="refp">receber-oc.ts:118-130</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D306</span>O que fazer com o custo da mercadoria quando ele está em branco ou é zero?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Custo e preço das peças</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador recebe 100 unidades de um produto, mas esquece de preencher o custo unitário (ou coloca zero). Precisa desse custo pra saber quanto o estoque vale.</p><p class="ln"><b>Hoje o sistema:</b> O sistema aceita e deixa em branco. O custo médio do estoque não é calculado. Fica um 'buraco' nos dados de valor do inventário.</p><p class="ln why"><b>Por que importa:</b> Sem custo, você não sabe quanto custa o estoque no seu livro contábil. Relatório de valor do estoque fica errado e auditoria não bate.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Exigir obrigatoriamente: bloqueio se não preencher o custo</b> — Operador não consegue receber sem custo. Mais seguro, mas pode travar se não souber o valor.</span></li><li class=""><span class="ck"></span><span><b>Carregar do pedido de compra automaticamente: se a compra tem preço, usar esse</b> — Operador não precisa digitar, menos erro, mais rápido</span></li><li class=""><span class="ck"></span><span><b>Permitir editar depois na guarda: recebe agora, completa o custo na pendência</b> — Não bloqueia a entrada, mas adiciona uma etapa de conferência manual</span></li></ul><p class="recnote"><b>Recomendo:</b> Carregar do pedido de compra automaticamente. Se não tiver custo lá também, então exigir preenchimento manual no recebimento. Menos digitação, menos erro.</p></div><p class="refp">receber-oc.ts:152 e ledger.ts:107-122</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D177</span>Como fazer quando a prateleira de embalagem não existe?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Cadastros (produtos, prateleiras, fornecedores)</span></div></div><p class="ln scn"><b>Imagina assim:</b> O galpão está configurado, mas alguém deletou a prateleira tipo 'embalagem' por acidente. Llega uma compra que normalmente mandaria alguns itens pro cross-dock (embalagem).</p><p class="ln"><b>Hoje o sistema:</b> O sistema detecta que não tem prateleira de embalagem e manda tudo pro armazenamento normal, sem alertar ninguém.</p><p class="ln why"><b>Por que importa:</b> Você continua recebendo, mas o galpão está quebrado e ninguém sabe. Nos próximos dias, vira caos porque o fluxo de embalagem é diferente do armazenamento normal.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (fallback para armazenamento): tudo vai pra guardar normal</b> — Continua funcionando, mas o galpão está mal configurado e ninguém sabe</span></li><li class=""><span class="ck"></span><span><b>Alertar no dashboard: colocar um aviso 'galpão faltam prateleiras críticas'</b> — Você vê que há um problema e pode recadastrar a prateleira antes de virar caos</span></li></ul><p class="recnote"><b>Recomendo:</b> Alertar no dashboard do operador que a prateleira está faltando. Deixar receber mesmo assim (não bloqueia), mas chamar atenção pra o problema.</p></div><p class="refp">crossdock-detector.ts:58-76</p></div><h2>Ainda a conferir · 2</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Dois operadores recebem a mesma compra ao mesmo tempo: o primeiro consegue registrar 3 itens, o segundo tenta registrar os mesmos e o sistema pula silenciosamente. O estoque entra (criou pendência), mas a compra não marca como recebida, causando desincronização.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Depois que recebe uma compra e a mercadoria entra, não há jeito rápido de desfazer se descobrir que chegou com defeito ou era quantidade errada. Precisa fazer ajuste manual.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

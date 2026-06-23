@@ -1,0 +1,20 @@
+# Ralph Progress Log
+Started: Mon Mar 31 14:30:00 -03 2026
+---
+
+## Codebase Patterns
+- Use `createServiceClient()` from `src/lib/supabase-server.ts` for all server-side DB access
+- Use `getValidTokenByEmpresa(empresaId)` for Tiny API tokens — auto-refreshes
+- Use `runWithEmpresa(empresaId, fn)` for rate-limited Tiny API calls
+- Fire-and-forget pattern: `someAsyncFn().catch(err => logger.error(...))` — used in concluir endpoints
+- `sleep(500)` between Tiny API calls to respect rate limits
+- `estoque_lancado` boolean on siso_pedidos is the idempotency guard for stock posting
+- NF is "persisted" when BOTH `nota_fiscal_id` AND `chave_acesso_nf` are non-null
+- `enriquecerDadosNf` fetches NF details from Tiny and saves `chave_acesso_nf` — must run after NF generation
+- Agrupamento `pending` state is used by the atomic claim RPC — inline creation should NOT use it
+- All errors logged via `logger.logError()` with category, pedidoId, empresaId
+- After concluir/separado, always fire-and-forget: `preCriarAgrupamentosEmLote()` and `registrarEvento()`
+- In execution-worker.ts, the 3 decisao handlers are: executarSaidaPropria, executarSaidaTransferencia, executarMarcadoresOnly
+- The transferencia stock flow: lancarEstoqueNota on origin (clear reservation) → movimentarEstoque(E) per item on origin (compensate saldo) → movimentarEstoque(S) per item on support empresa (physical exit)
+- PRD reference: tasks/prd-pipeline-antecipado-nf-agrupamento.md
+---

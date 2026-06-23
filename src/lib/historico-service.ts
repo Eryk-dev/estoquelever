@@ -111,7 +111,8 @@ export type EventoPedido =
   | "troca_aprovada"
   | "troca_rejeitada"
   | "troca_cancelada"
-  | "troca_substituto_alterado";
+  | "troca_substituto_alterado"
+  | "troca_desfeita";
 
 /**
  * Record a single event in the order history.

@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Quem faz o quê no sistema (e quando perde acesso) — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Configurações e cadastros</p>
+<h1>Quem faz o quê no sistema (e quando perde acesso)</h1><p class="lead">O sistema que decide qual operador pode fazer qual ação no WMS: um pode aprovar pedidos, outro pode guardar estoque, outro pode ver relatório. Se você tira a permissão, o operador fica bloqueado na hora (ou não fica, depende).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">2</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">6</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Quando você tira um operador do acesso, ninguém consegue se travar fazendo coisas só por ser admin — sistema evita você desligar a si mesmo por acidente e ficar preso.</span></li><li><span class="dot">✓</span><span>Se um operador tenta fazer algo que não tem permissão (ex: aprovar pedido sem ter 'pedidos.aprovar'), o sistema bloqueia com erro 403 — pura defesa de segurança.</span></li><li><span class="dot">✓</span><span>Quando um operador sai da empresa, você consegue remover todas as permissões dele de uma vez (tira a role inteira que você criou pra ele).</span></li><li><span class="dot">✓</span><span>Cada permissão tem um nome claro (pedidos.aprovar, compras.executar) — você consegue entender no painel exatamente o que cada checkbox libera.</span></li></ul></div><h2>Problemas pra resolver · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P138</span>Ao mudar as permissões de um cargo, as permissões somem e depois voltam (operação quebrada)</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um admin tira todas as permissões de um cargo e adiciona novas, tudo de uma vez</p><p class="ln"><b>Hoje:</b> O sistema tira as permissões antigas e tenta adicionar as novas. Se algo der errado na metade (falta de espaço em disco, por exemplo), o sistema devolve erro — o cargo fica sem NENHUMA permissão até o admin tentar de novo.</p><p class="ln why"><b>Por que importa:</b> Se o cargo fica sem permissões, os operadores que usam esse cargo não conseguem fazer nada até o admin refazer tudo. Isso é caótico em produção.</p><div class="decision"><p class="q">Garantir que a troca de permissões é tudo-ou-nada — ou as novas permissões entram TODAS, ou fica exatamente como era antes.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Usar o banco de dados pra 'reservar' as novas permissões antes de tirar as antigas — se tudo der certo, confirma; se não, desfaz tudo</b> — Seguro, mas um pouco mais lento (frações de segundo)</span></li><li class=""><span class="ck"></span><span><b>Guardar as novas permissões num local temporário, depois trocar de uma vez — se falhar, volta pra antes</b> — Mais rápido, mas mais complexo pra entender o código depois</span></li></ul><p class="recnote"><b>Recomendo:</b> Use o banco de dados. É o jeito mais simples e confiável. Se algo falha na metade, o sistema volta como se nada tivesse acontecido.</p></div><p class="refp">route.ts:66-75</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P139</span>Dois admins mudando o mesmo cargo ao mesmo tempo — o segundo sobrescreve o primeiro</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Admin de Curitiba e admin de São Paulo tentam adicionar permissões diferentes pro cargo 'Separador' no mesmo segundo</p><p class="ln"><b>Hoje:</b> Admin A tira as permissões antigas, Admin B faz a mesma coisa quase junto. Ambos tentam adicionar sua lista de permissões. A lista do Admin B 'vence' — a lista do Admin A desaparece.</p><p class="ln why"><b>Por que importa:</b> O admin não vê que suas mudanças foram perdidas. Dias depois, alguém reclama que o Separador não consegue fazer algo que deveria. É impossível entender o que aconteceu.</p><div class="decision"><p class="q">Travar o cargo enquanto um admin está editando — o outro admin não consegue entrar até o primeiro terminar.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Colocar um 'cadeado' no banco de dados enquanto um admin edita. Segundo admin espera o primeiro terminar.</b> — Seguro e claro. Segundo admin vê uma mensagem 'este cargo está sendo editado por fulano'.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (aceitar que o último a salvar vence)</b> — Rápido, mas perigoso e confuso.</span></li></ul><p class="recnote"><b>Recomendo:</b> Coloque o cadeado. É uma proteção básica que evita horas de investigação depois.</p></div><p class="refp">route.ts:66-75</p></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D285</span>Quando um admin tira as permissões de um operador (enquanto ele está logado e trabalhando), o operador fica vendo as informações de antes ou é bloqueado?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um operador está usando o sistema, separando pedidos. Nesse exato momento, um admin remove o cargo desse operador.</p><p class="ln"><b>Hoje o sistema:</b> O operador continua vendo tudo que via antes (na tela dele) até ele fazer login de novo ou clicar em 'atualizar dados'. Se ele tenta fazer algo que precisa de permissão, o sistema por trás bloqueia e mostra erro.</p><p class="ln why"><b>Por que importa:</b> Pode parecer que o sistema permite (o operador vê as informações), mas depois bloqueia (quando tenta agir). Fica confuso pra o operador. E tem um risco de segurança se o operador vê coisas que não deveria.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está. O operador vê as informações até fazer login de novo — é lag de ~1 sessão, aceitável.</b> — Simples. Mas operador fica confuso quando clica em um botão e é bloqueado.</span></li><li class=""><span class="ck"></span><span><b>Avisar o operador em tempo real (quando admin remove o cargo, a tela dele atualiza automaticamente as permissões)</b> — Perfeito pra segurança. Mas exige código novo, um pouco mais complexo.</span></li><li class=""><span class="ck"></span><span><b>Atualizar as permissões do operador automaticamente a cada 5 minutos</b> — Simples de codar, mas pode demorar até 5 minutos pra bloquear alguém que deveria ser bloqueado.</span></li><li class=""><span class="ck"></span><span><b>Aceitar que é lag temporário (operador vê coisa antiga até próximo login — é seguro no sistema por trás, não é bug)</b> — Mais rápido, menos código. Operador entende que precisa fazer login de novo em caso de mudança urgente.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção A (deixar como está) é aceitável se o cenário raramente acontece. Se precisa de segurança imediata, vá pra Opção B (atualizar em tempo real). Opção C é um meio termo bom.</p></div><p class="refp">auth-context.tsx:294-307</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D286</span>Pode um operador ficar SEM nenhum cargo? (deixando ele 'órfão')</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Permissões e quem pode fazer o que</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um admin abre a tela de editar operador e remove todos os cargos (deixa a lista vazia) — salva.</p><p class="ln"><b>Hoje o sistema:</b> O sistema deixa fazer isso. O operador fica registrado no sistema mas sem acesso a nada. A tela mostra um aviso vermelho 'sem nenhum cargo'.</p><p class="ln why"><b>Por que importa:</b> É risco de confusão. Depois não fica claro: foi deliberado (operador suspenso temporariamente)? Ou foi um clique acidental do admin?</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir, e entender como 'suspender o operador temporariamente' (sim, pode ficar sem cargo)</b> — Flexível. Mas exige que admin DOCUMENTE por quê (campo 'motivo da suspensão').</span></li><li class=""><span class="ck"></span><span><b>Bloquear no sistema. Exigir que operador tenha SEMPRE pelo menos 1 cargo.</b> — Evita acidentes. Mas se precisa suspender, tem que deletar o usuário (mais drástico).</span></li><li class=""><span class="ck"></span><span><b>Permitir, mas marcar o usuário como 'inativo' automaticamente quando fica sem cargo</b> — Mais explícito. Fica claro que o operador está desativado.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção A (permitir, mas documentar). Senão vá pra Opção C (marcar como inativo).</p></div><p class="refp">route.ts:36-38</p></div><h2>Ainda a conferir · 6</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Tem uma permissão no código chamada 'liberar estoque' — mas não aparece na tela pra admin marcar. Precisa verificar se foi esquecida na lista oficial.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Um admin clica 4 vezes em meia segundo pra ativar/desativar um cargo — o sistema bota 4 pedidos em fila. Precisa conferir se há proteção contra múltiplos cliques.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>A tela mostra o cargo 'admin' com um ícone de cadeado (sistema), como se fosse bloqueado — precisa conferir se é realmente bloqueado ou é só visual.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Tem operadores antigos no banco que têm campo de 'cargo' zerado. Precisa saber se todos foram migrados corretamente pro novo sistema de cargos.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Precisa checar qual cargo específico tem a permissão 'estornar estoque' — não estava claro nos dados.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Tem cargos com nomes tipo 'operador_cwb' (Curitiba) — precisa conferir se esses cargos filtram dados só do galpão deles, ou se conseguem ver estoque de outro galpão.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

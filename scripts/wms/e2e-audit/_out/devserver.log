@@ -1,0 +1,21 @@
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /Users/eryk/package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * /Users/eryk/Documents/ESTOQUE/package-lock.json
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3001
+- Network:       http://192.168.15.8:3001
+- Environments: .env
+
+✓ Starting...
+✓ Ready in 1312ms
+ GET /api/auth/me 401 in 154ms (compile: 145ms, render: 10ms)
+[?25h
+npm notice
+npm notice New major version of npm available! 10.9.7 -> 11.17.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.17.0
+npm notice To update run: npm install -g npm@11.17.0
+npm notice

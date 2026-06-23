@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Aba Reposição (Radar do Comprador)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-300: #d4d4d8;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --accent: #0891b2;
+    --accent-bg: #ecfeff;
+    --turquoise: #14b8a6;
+    --turquoise-bg: #ccfbf1;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --orange: #ea580c;
+    --orange-bg: #ffedd5;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+  .mono { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+
+  /* page header (annotation explaining this is a mockup) */
+  .annotation { background: #18181b; color: #fafafa; padding: 16px 24px; text-align: center; font-size: 13px; }
+  .annotation strong { color: #14b8a6; }
+
+  /* viewport */
+  .viewport { display: flex; min-height: 100vh; }
+
+  /* sidebar (just visual stub of WMS shell) */
+  .sidebar { width: 220px; background: var(--zinc-900); color: #fafafa; padding: 20px 16px; flex-shrink: 0; }
+  .logo { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; margin-bottom: 32px; color: #fafafa; }
+  .nav-group { margin-bottom: 20px; }
+  .nav-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #71717a; margin-bottom: 8px; padding: 0 8px; }
+  .nav-item { padding: 8px 12px; border-radius: 6px; color: #d4d4d8; font-size: 13.5px; margin-bottom: 2px; cursor: default; display: flex; align-items: center; gap: 10px; }
+  .nav-item.active { background: #27272a; color: #fafafa; }
+  .nav-item .dot { width: 6px; height: 6px; background: #14b8a6; border-radius: 50%; }
+
+  /* main */
+  main { flex: 1; padding: 32px 40px; max-width: 1400px; }
+  .page-title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .page-subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+
+  /* tabs */
+  .tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 24px; gap: 0; }
+  .tab { padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--muted); cursor: default; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--text); border-bottom-color: var(--zinc-900); font-weight: 600; }
+  .tab .count { display: inline-block; background: var(--zinc-100); color: var(--zinc-700); font-size: 11px; padding: 1px 8px; border-radius: 12px; margin-left: 6px; }
+  .tab.active .count { background: var(--accent-bg); color: var(--accent); }
+
+  /* banner */
+  .banner { background: var(--amber-bg); border: 1px solid #fcd34d; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 12px; align-items: flex-start; font-size: 13.5px; }
+  .banner-icon { color: var(--amber); flex-shrink: 0; margin-top: 2px; }
+  .banner-text { color: #78350f; line-height: 1.45; }
+  .banner-text strong { color: #92400e; font-weight: 600; }
+
+  /* filters */
+  .filters { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .search { flex: 1; min-width: 240px; display: flex; align-items: center; gap: 8px; background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+  .search input { flex: 1; border: none; outline: none; background: transparent; font-family: inherit; font-size: 14px; }
+  .filter-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; font-size: 13px; color: var(--zinc-700); }
+  .filter-chip strong { color: var(--text); font-weight: 600; }
+  .filter-chip svg { color: var(--muted); }
+  .filter-chip.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+
+  /* summary bar */
+  .summary { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 0 4px; font-size: 13px; color: var(--muted); }
+  .summary strong { color: var(--text); font-weight: 600; }
+
+  /* table */
+  .table-wrapper { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { background: var(--zinc-50); text-align: left; padding: 11px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  thead th.num { text-align: right; }
+  tbody td { padding: 14px; border-bottom: 1px solid var(--zinc-100); font-size: 13.5px; vertical-align: middle; }
+  tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:hover { background: var(--zinc-50); cursor: default; }
+  tbody tr.selected { background: var(--accent-bg); }
+  tbody tr.selected:hover { background: #cffafe; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  .checkbox { width: 16px; height: 16px; border: 1.5px solid var(--zinc-300); border-radius: 4px; display: inline-block; vertical-align: middle; background: white; position: relative; }
+  .checkbox.checked { background: var(--zinc-900); border-color: var(--zinc-900); }
+  .checkbox.checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+  .sku { font-family: 'JetBrains Mono', monospace; font-weight: 500; font-size: 13px; color: var(--zinc-800); }
+  .desc { color: var(--text); }
+  .desc small { color: var(--muted); font-size: 12px; }
+  .galpao { font-weight: 600; font-size: 12px; color: var(--zinc-700); background: var(--zinc-100); padding: 2px 8px; border-radius: 12px; }
+
+  /* badges */
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .badge-curve-a { background: var(--turquoise-bg); color: #0f766e; }
+  .badge-curve-b { background: var(--amber-bg); color: #92400e; }
+  .badge-curve-c { background: var(--zinc-100); color: var(--zinc-700); }
+  .badge-urgency-critico { background: var(--red-bg); color: #991b1b; }
+  .badge-urgency-critico .dot { background: var(--red); }
+  .badge-urgency-alto { background: var(--orange-bg); color: #9a3412; }
+  .badge-urgency-alto .dot { background: var(--orange); }
+  .badge-urgency-medio { background: var(--amber-bg); color: #92400e; }
+  .badge-urgency-medio .dot { background: var(--amber); }
+  .badge-urgency-baixo { background: var(--zinc-100); color: var(--zinc-700); }
+  .badge-urgency-baixo .dot { background: var(--zinc-300); }
+  .badge-conf-alta { background: var(--green-bg); color: #166534; }
+  .badge-conf-media { background: var(--amber-bg); color: #92400e; }
+  .badge-conf-baixa { background: var(--red-bg); color: #991b1b; }
+
+  /* action column */
+  .action { display: flex; flex-direction: column; gap: 2px; }
+  .action-primary { font-weight: 600; font-size: 13.5px; }
+  .action-primary.comprar { color: var(--zinc-800); }
+  .action-primary.emprestimo { color: var(--accent); }
+  .action-secondary { font-size: 11.5px; color: var(--muted); }
+
+  .qty-input { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--zinc-50); width: 64px; }
+  .qty-input input { width: 100%; border: none; background: transparent; outline: none; font-family: 'JetBrains Mono', monospace; font-weight: 500; font-size: 13px; padding: 6px 8px; text-align: right; }
+
+  /* row actions */
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .btn { background: white; border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; font-size: 12.5px; font-weight: 500; color: var(--zinc-700); cursor: default; font-family: inherit; display: inline-flex; align-items: center; gap: 4px; }
+  .btn:hover { background: var(--zinc-50); border-color: var(--zinc-300); }
+  .btn-icon { padding: 5px 7px; }
+  .btn-primary { background: var(--zinc-900); border-color: var(--zinc-900); color: white; font-weight: 600; }
+  .btn-primary:hover { background: var(--zinc-800); }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn-ghost:hover { background: var(--zinc-100); color: var(--text); }
+
+  /* footer action bar */
+  .footer-actions { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .footer-summary { font-size: 13.5px; }
+  .footer-summary strong { font-weight: 600; }
+  .footer-summary span.cost { font-family: 'JetBrains Mono', monospace; color: var(--zinc-900); font-weight: 600; }
+  .footer-buttons { display: flex; gap: 8px; }
+  .btn-lg { padding: 9px 16px; font-size: 14px; }
+
+  /* DRAWER */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(24, 24, 27, 0.4); z-index: 100; }
+  .drawer { position: fixed; right: 0; top: 0; bottom: 0; width: 460px; background: var(--surface); box-shadow: -8px 0 32px rgba(0,0,0,0.12); z-index: 101; overflow-y: auto; }
+  .drawer-header { padding: 24px 28px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+  .drawer-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .drawer-sku { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+  .drawer-close { position: absolute; top: 20px; right: 20px; width: 28px; height: 28px; border-radius: 6px; background: var(--zinc-100); border: none; cursor: default; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .drawer-meta { display: flex; gap: 8px; margin-top: 12px; }
+
+  .drawer-section { padding: 22px 28px; border-bottom: 1px solid var(--zinc-100); }
+  .drawer-section:last-child { border-bottom: none; }
+  .drawer-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 10px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .drawer-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; font-size: 13.5px; }
+  .drawer-row.subtle { color: var(--muted); font-size: 12.5px; }
+  .drawer-row strong { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--zinc-900); }
+  .drawer-row .label { color: var(--zinc-700); }
+  .drawer-row .label small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; margin-top: 1px; }
+
+  /* sparkline */
+  .sparkline { background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-top: 10px; }
+  .sparkline-label { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+  .sparkline-bars { display: flex; align-items: flex-end; gap: 2px; height: 50px; }
+  .sparkline-bars .bar { flex: 1; background: var(--turquoise); border-radius: 1px 1px 0 0; min-height: 2px; opacity: 0.85; }
+  .sparkline-bars .bar.zero { background: var(--zinc-200); min-height: 2px; height: 2px !important; }
+  .sparkline-stats { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--zinc-200); }
+  .sparkline-stats span strong { font-family: 'JetBrains Mono', monospace; color: var(--zinc-800); font-weight: 600; }
+
+  /* alternatives */
+  .alt-item { padding: 10px 12px; background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; }
+  .alt-item.rejected { opacity: 0.55; }
+  .alt-icon { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; }
+  .alt-icon.fail { background: var(--red-bg); color: #991b1b; }
+  .alt-icon.ok { background: var(--green-bg); color: #166534; }
+  .alt-content { flex: 1; }
+  .alt-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .alt-detail { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+  /* recommendation block */
+  .recommendation { background: linear-gradient(180deg, #fefce8 0%, #fef3c7 100%); border: 1px solid #fcd34d; border-radius: 10px; padding: 16px; }
+  .recommendation-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #92400e; font-weight: 700; margin-bottom: 6px; }
+  .recommendation-action { font-size: 16px; font-weight: 600; color: #78350f; margin-bottom: 4px; }
+  .recommendation-cost { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: #92400e; font-size: 13px; }
+  .recommendation-cta { display: flex; gap: 8px; margin-top: 14px; }
+  .btn-approve { background: var(--zinc-900); color: white; border: none; padding: 9px 14px; border-radius: 7px; font-weight: 600; font-size: 13.5px; cursor: default; font-family: inherit; flex: 1; }
+  .btn-edit, .btn-reject { background: white; border: 1px solid var(--zinc-300); padding: 9px 12px; border-radius: 7px; font-weight: 500; font-size: 13px; cursor: default; font-family: inherit; color: var(--zinc-700); }
+
+  /* legend */
+  .legend { margin-top: 32px; padding: 16px 20px; background: var(--surface); border: 1px dashed var(--zinc-300); border-radius: 10px; font-size: 12px; color: var(--muted); }
+  .legend strong { color: var(--text); font-weight: 600; }
+
+  /* second drawer (modal) — shown below as separate section for documentation */
+  .modal-doc-section { margin-top: 80px; padding-top: 40px; border-top: 2px dashed var(--zinc-300); }
+  .modal-doc-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 16px; font-weight: 700; text-align: center; }
+  .modal-doc-frame { max-width: 560px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 16px 48px rgba(0,0,0,0.08); padding: 28px; }
+  .modal-doc-frame h3 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .modal-doc-frame p.sub { font-size: 13px; color: var(--muted); margin-bottom: 20px; }
+  .modal-group { padding: 14px 16px; background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+  .modal-group-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .modal-group-title { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+  .modal-group-icon { font-size: 16px; }
+  .modal-group-cost { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 13px; }
+  .modal-group-line { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--zinc-700); padding: 3px 0; }
+  .modal-group-line strong { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+  .modal-total { display: flex; justify-content: space-between; padding: 16px 4px 0; margin-top: 8px; border-top: 1px solid var(--border); font-weight: 700; }
+  .modal-total .value { font-family: 'JetBrains Mono', monospace; font-size: 16px; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+</style>
+</head>
+<body>
+
+<div class="annotation">
+  Mockup visual da aba <strong>Reposição</strong> em /wms/compras · dados realistas (NetAir/NetParts, Galpão CWB/SP, fornecedores Tiger/LDRU/GAUSS/MRMK) · drawer "Por quê?" aberto no SKU 19FILTRO123
+</div>
+
+<div class="viewport">
+
+  <!-- sidebar stub -->
+  <aside class="sidebar">
+    <div class="logo">SISO</div>
+    <div class="nav-group">
+      <div class="nav-group-title">Vendas</div>
+      <div class="nav-item">Pedidos</div>
+      <div class="nav-item">Separação</div>
+      <div class="nav-item active"><span class="dot"></span>Compras</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Visibilidade</div>
+      <div class="nav-item">Cross</div>
+      <div class="nav-item">Estoque</div>
+      <div class="nav-item">Ledger</div>
+      <div class="nav-item">Cobertura</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Operações</div>
+      <div class="nav-item">Receber</div>
+      <div class="nav-item">Guarda</div>
+      <div class="nav-item">Transferir</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">Insights</div>
+      <div class="nav-item">Hub</div>
+      <div class="nav-item">Devoluções</div>
+    </div>
+  </aside>
+
+  <!-- main content -->
+  <main>
+    <h1 class="page-title">Compras</h1>
+    <p class="page-subtitle">Suprimento reativo (OC pendente) + reposição programada (preditivo)</p>
+
+    <!-- tabs -->
+    <div class="tabs">
+      <div class="tab">Comprar <span class="count">42</span></div>
+      <div class="tab">Receber <span class="count">7</span></div>
+      <div class="tab active">Reposição <span class="count">23</span></div>
+    </div>
+
+    <!-- cold start banner -->
+    <div class="banner">
+      <svg class="banner-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="banner-text">
+        <strong>Modo aprendizagem ativo até 17/06.</strong> Sistema está aprendendo o padrão de vendas — sugestões pra SKUs com menos de 14 dias de dados aparecem com confiança <strong>Baixa</strong>. 142 SKUs ainda sem dados não aparecem na lista (vão aparecer conforme vendas acontecerem).
+      </div>
+    </div>
+
+    <!-- filters -->
+    <div class="filters">
+      <div class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--muted)"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" placeholder="Buscar SKU, descrição ou OEM…" value="" />
+      </div>
+      <div class="filter-chip active">
+        Urgência <strong>≥ Médio</strong>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="filter-chip">
+        Curva <strong>Todas</strong>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="filter-chip">
+        Galpão <strong>CWB</strong>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="filter-chip">
+        Fornecedor <strong>Todos</strong>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="filter-chip">
+        Ação <strong>Comprar + Empréstimo</strong>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+    </div>
+
+    <!-- summary -->
+    <div class="summary">
+      <div>Mostrando <strong>23 de 487</strong> SKUs ativos · Capital sugerido em compras: <strong class="mono">R$ 8.420,00</strong></div>
+      <div>Atualizado às <strong>00:33</strong> · próxima recalibração <strong>amanhã 00:30</strong></div>
+    </div>
+
+    <!-- table -->
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 36px;"><span class="checkbox"></span></th>
+            <th>SKU / Descrição</th>
+            <th>Galpão</th>
+            <th>Curva</th>
+            <th>Urgência</th>
+            <th class="num">Saldo<br/>efetivo</th>
+            <th class="num">Cob.<br/>(dias)</th>
+            <th>Ação primária</th>
+            <th class="num">Qty</th>
+            <th class="num">Custo</th>
+            <th style="width: 140px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- row 1: critical, comprar -->
+          <tr class="selected">
+            <td><span class="checkbox checked"></span></td>
+            <td>
+              <div class="desc"><strong>19FILTRO123</strong></div>
+              <div><small>Filtro de ar Toyota Corolla 2018+</small></div>
+            </td>
+            <td><span class="galpao">CWB</span></td>
+            <td><span class="badge badge-curve-a">A</span></td>
+            <td><span class="badge badge-urgency-critico"><span class="dot"></span>Crítico · 80</span></td>
+            <td class="num mono"><strong>6</strong></td>
+            <td class="num mono" style="color: var(--red); font-weight: 600;">2d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary comprar">Comprar da Tiger</div>
+                <div class="action-secondary">7d lead time · MOQ 10</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="50" /></span></td>
+            <td class="num mono">R$ 1.250</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon" title="Por quê?">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 2: critical, EMPRESTIMO -->
+          <tr class="selected">
+            <td><span class="checkbox checked"></span></td>
+            <td>
+              <div class="desc"><strong>EW123</strong></div>
+              <div><small>Tergaz pastilha de freio dianteira</small></div>
+            </td>
+            <td><span class="galpao">CWB</span></td>
+            <td><span class="badge badge-curve-a">A</span></td>
+            <td><span class="badge badge-urgency-critico"><span class="dot"></span>Crítico · 72</span></td>
+            <td class="num mono"><strong>3</strong></td>
+            <td class="num mono" style="color: var(--red); font-weight: 600;">1d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary emprestimo">Pegar emprestado de NetParts (SP)</div>
+                <div class="action-secondary">Compra fica como fallback</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="25" /></span></td>
+            <td class="num mono" style="color: var(--accent); font-weight: 600;">R$ 0</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 3: alto, comprar -->
+          <tr class="selected">
+            <td><span class="checkbox checked"></span></td>
+            <td>
+              <div class="desc"><strong>LD-X450</strong></div>
+              <div><small>LDRU rolamento de roda traseira</small></div>
+            </td>
+            <td><span class="galpao">SP</span></td>
+            <td><span class="badge badge-curve-b">B</span></td>
+            <td><span class="badge badge-urgency-alto"><span class="dot"></span>Alto · 55</span></td>
+            <td class="num mono"><strong>42</strong></td>
+            <td class="num mono" style="color: var(--orange); font-weight: 600;">11d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary comprar">Comprar da LDRU</div>
+                <div class="action-secondary">14d lead time · MOQ 20</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="60" /></span></td>
+            <td class="num mono">R$ 2.400</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 4: alto, equivalente disponível -->
+          <tr>
+            <td><span class="checkbox"></span></td>
+            <td>
+              <div class="desc"><strong>GB-002</strong> <span style="font-size: 11px; background: var(--blue-bg); color: var(--blue); padding: 1px 6px; border-radius: 8px; font-weight: 600; margin-left: 4px;">2 equivalentes</span></div>
+              <div><small>GAUSS junta de cabeçote</small></div>
+            </td>
+            <td><span class="galpao">CWB</span></td>
+            <td><span class="badge badge-curve-b">B</span></td>
+            <td><span class="badge badge-urgency-medio"><span class="dot"></span>Médio · 35</span></td>
+            <td class="num mono"><strong>28</strong></td>
+            <td class="num mono">18d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary comprar">Comprar da GAUSS</div>
+                <div class="action-secondary">21d lead time · ou usar EQ-77</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="30" /></span></td>
+            <td class="num mono">R$ 1.890</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 5: medio, baixa confiança (cold start) -->
+          <tr>
+            <td><span class="checkbox"></span></td>
+            <td>
+              <div class="desc"><strong>MK4321</strong> <span class="badge badge-conf-baixa" style="margin-left: 4px; font-size: 10px;">Conf. Baixa</span></div>
+              <div><small>MRMK vela de ignição iridium</small></div>
+            </td>
+            <td><span class="galpao">CWB</span></td>
+            <td><span class="badge badge-curve-c">C</span></td>
+            <td><span class="badge badge-urgency-medio"><span class="dot"></span>Médio · 33</span></td>
+            <td class="num mono"><strong>8</strong></td>
+            <td class="num mono">9d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary comprar">Comprar da MRMK</div>
+                <div class="action-secondary">10 dias de dados · qty conservadora</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="12" /></span></td>
+            <td class="num mono">R$ 360</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 6: medio, intermitente -->
+          <tr>
+            <td><span class="checkbox"></span></td>
+            <td>
+              <div class="desc"><strong>CAK-99</strong> <span style="font-size: 10px; color: var(--muted); margin-left: 4px;">intermitente</span></div>
+              <div><small>Delphi bobina de ignição</small></div>
+            </td>
+            <td><span class="galpao">SP</span></td>
+            <td><span class="badge badge-curve-b">B</span></td>
+            <td><span class="badge badge-urgency-medio"><span class="dot"></span>Médio · 28</span></td>
+            <td class="num mono"><strong>14</strong></td>
+            <td class="num mono">22d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary comprar">Comprar da Delphi</div>
+                <div class="action-secondary">14d lead time · gap típico 4d</div>
+              </div>
+            </td>
+            <td class="num"><span class="qty-input"><input value="20" /></span></td>
+            <td class="num mono">R$ 1.520</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn">Aprovar</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- row 7: em transito -->
+          <tr>
+            <td><span class="checkbox"></span></td>
+            <td>
+              <div class="desc"><strong>KT-558</strong> <span style="font-size: 10px; background: var(--blue-bg); color: var(--blue); padding: 1px 6px; border-radius: 8px; font-weight: 600; margin-left: 4px;">40 em trânsito</span></div>
+              <div><small>Kintop terminal de direção</small></div>
+            </td>
+            <td><span class="galpao">SP</span></td>
+            <td><span class="badge badge-curve-b">B</span></td>
+            <td><span class="badge badge-urgency-baixo"><span class="dot"></span>Baixo · 12</span></td>
+            <td class="num mono"><strong>9</strong> <span style="color: var(--blue); font-size: 11px;">(+40)</span></td>
+            <td class="num mono">3d → 28d</td>
+            <td>
+              <div class="action">
+                <div class="action-primary" style="color: var(--muted);">Aguardar entrega</div>
+                <div class="action-secondary">OC #2421 chega em 4 dias</div>
+              </div>
+            </td>
+            <td class="num mono" style="color: var(--muted);">—</td>
+            <td class="num mono" style="color: var(--muted);">—</td>
+            <td>
+              <div class="row-actions">
+                <button class="btn btn-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <button class="btn btn-ghost">Adiar 7d</button>
+              </div>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <!-- footer actions -->
+    <div class="footer-actions">
+      <div class="footer-summary">
+        <strong>3 selecionados</strong> · 2 compras + 1 empréstimo · Total a desembolsar: <span class="cost">R$ 3.650,00</span>
+      </div>
+      <div class="footer-buttons">
+        <button class="btn btn-lg btn-ghost">Exportar CSV</button>
+        <button class="btn btn-lg btn-primary">Aprovar selecionados →</button>
+      </div>
+    </div>
+
+    <!-- legend -->
+    <div class="legend">
+      <strong>Legenda:</strong>
+      <span class="badge badge-urgency-critico"><span class="dot"></span>Crítico</span> vai zerar antes da entrega chegar ·
+      <span class="badge badge-urgency-alto"><span class="dot"></span>Alto</span> precisa comprar essa semana ·
+      <span class="badge badge-urgency-medio"><span class="dot"></span>Médio</span> planejar ·
+      <span class="badge badge-curve-a">A</span> top 20% giro ·
+      <span class="badge badge-curve-b">B</span> · <span class="badge badge-curve-c">C</span>
+    </div>
+
+    <!-- modal documentation -->
+    <div class="modal-doc-section">
+      <div class="modal-doc-title">Modal de aprovação em lote (abre ao clicar "Aprovar selecionados")</div>
+      <div class="modal-doc-frame">
+        <h3>Confirmar 3 aprovações</h3>
+        <p class="sub">Sistema vai consolidar compras por fornecedor automaticamente e disparar reservas pra empréstimos.</p>
+
+        <div class="modal-group">
+          <div class="modal-group-header">
+            <div class="modal-group-title">
+              <span class="modal-group-icon">🔄</span>
+              <span>1 empréstimo</span>
+            </div>
+            <div class="modal-group-cost" style="color: var(--accent);">R$ 0</div>
+          </div>
+          <div class="modal-group-line">
+            <span><strong>EW123</strong> · Tergaz pastilha · NetParts (SP) → NetAir (CWB)</span>
+            <strong>25 un</strong>
+          </div>
+          <div class="modal-group-line" style="font-size: 11.5px; color: var(--muted); margin-top: 4px;">
+            Cria reserva imediata, transferência contábil ao confirmar
+          </div>
+        </div>
+
+        <div class="modal-group">
+          <div class="modal-group-header">
+            <div class="modal-group-title">
+              <span class="modal-group-icon">📦</span>
+              <span>Tiger · 1 item</span>
+            </div>
+            <div class="modal-group-cost">R$ 1.250,00</div>
+          </div>
+          <div class="modal-group-line">
+            <span><strong>19FILTRO123</strong> · Filtro ar Corolla</span>
+            <strong>50 un × R$ 25</strong>
+          </div>
+        </div>
+
+        <div class="modal-group">
+          <div class="modal-group-header">
+            <div class="modal-group-title">
+              <span class="modal-group-icon">📦</span>
+              <span>LDRU · 1 item</span>
+            </div>
+            <div class="modal-group-cost">R$ 2.400,00</div>
+          </div>
+          <div class="modal-group-line">
+            <span><strong>LD-X450</strong> · Rolamento traseiro</span>
+            <strong>60 un × R$ 40</strong>
+          </div>
+        </div>
+
+        <div class="modal-total">
+          <span>Total a desembolsar</span>
+          <span class="value">R$ 3.650,00</span>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-edit">Cancelar</button>
+          <button class="btn-approve" style="flex: 0 0 auto; padding: 9px 20px;">Confirmar tudo</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- DRAWER (Por quê?) — fixed right side -->
+<div class="drawer">
+  <div class="drawer-header">
+    <button class="drawer-close" aria-label="Fechar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="drawer-title">Filtro de ar Toyota Corolla 2018+</div>
+    <div class="drawer-sku">SKU 19FILTRO123 · NetAir · CWB</div>
+    <div class="drawer-meta">
+      <span class="badge badge-curve-a">Curva A</span>
+      <span class="badge badge-urgency-critico"><span class="dot"></span>Crítico · 80</span>
+      <span class="badge badge-conf-alta">Confiança Alta</span>
+    </div>
+  </div>
+
+  <!-- DEMANDA -->
+  <div class="drawer-section">
+    <div class="drawer-section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Demanda
+    </div>
+    <div class="drawer-row">
+      <span class="label">Perfil <small>como esse SKU se comporta</small></span>
+      <strong>Regular</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Média diária <small>últimos 30 dias</small></span>
+      <strong>3,2 ± 1,1</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Tendência <small>vs 30 dias anteriores</small></span>
+      <strong style="color: var(--green);">+12%</strong>
+    </div>
+    <div class="drawer-row subtle">
+      <span class="label">Histórico disponível</span>
+      <span>42 dias</span>
+    </div>
+
+    <div class="sparkline">
+      <div class="sparkline-label">Vendas diárias — últimos 30 dias</div>
+      <div class="sparkline-bars">
+        <div class="bar" style="height: 35%;"></div>
+        <div class="bar" style="height: 60%;"></div>
+        <div class="bar" style="height: 45%;"></div>
+        <div class="bar" style="height: 80%;"></div>
+        <div class="bar zero"></div>
+        <div class="bar" style="height: 55%;"></div>
+        <div class="bar" style="height: 70%;"></div>
+        <div class="bar" style="height: 85%;"></div>
+        <div class="bar" style="height: 50%;"></div>
+        <div class="bar" style="height: 65%;"></div>
+        <div class="bar" style="height: 75%;"></div>
+        <div class="bar" style="height: 40%;"></div>
+        <div class="bar" style="height: 90%;"></div>
+        <div class="bar" style="height: 55%;"></div>
+        <div class="bar" style="height: 70%;"></div>
+        <div class="bar" style="height: 60%;"></div>
+        <div class="bar zero"></div>
+        <div class="bar" style="height: 85%;"></div>
+        <div class="bar" style="height: 95%;"></div>
+        <div class="bar" style="height: 70%;"></div>
+        <div class="bar" style="height: 80%;"></div>
+        <div class="bar" style="height: 75%;"></div>
+        <div class="bar" style="height: 90%;"></div>
+        <div class="bar" style="height: 65%;"></div>
+        <div class="bar" style="height: 100%;"></div>
+        <div class="bar" style="height: 85%;"></div>
+        <div class="bar" style="height: 75%;"></div>
+        <div class="bar" style="height: 95%;"></div>
+        <div class="bar" style="height: 80%;"></div>
+        <div class="bar" style="height: 70%;"></div>
+      </div>
+      <div class="sparkline-stats">
+        <span>Min: <strong>0</strong></span>
+        <span>Méd: <strong>3,2</strong></span>
+        <span>Máx: <strong>6</strong></span>
+        <span>Total 30d: <strong>96</strong></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ESTOQUE -->
+  <div class="drawer-section">
+    <div class="drawer-section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      Estoque atual
+    </div>
+    <div class="drawer-row">
+      <span class="label">Saldo físico</span>
+      <strong>12</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Reservado <small>3 pedidos pendentes</small></span>
+      <strong style="color: var(--orange);">−6</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Em trânsito <small>OCs emitidas</small></span>
+      <strong>+0</strong>
+    </div>
+    <div class="drawer-row" style="border-top: 1px solid var(--zinc-200); padding-top: 10px; margin-top: 6px;">
+      <span class="label" style="font-weight: 600;">Saldo efetivo</span>
+      <strong style="color: var(--red); font-size: 16px;">6</strong>
+    </div>
+  </div>
+
+  <!-- CALCULO -->
+  <div class="drawer-section">
+    <div class="drawer-section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Cálculo
+    </div>
+    <div class="drawer-row">
+      <span class="label">Lead time Tiger</span>
+      <strong>7 dias</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Demanda × lead time <small>3,2 × 7</small></span>
+      <strong>22,4</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Folga de segurança <small>Z=2,05 × σ × √LT (curva A, 98%)</small></span>
+      <strong>+7</strong>
+    </div>
+    <div class="drawer-row" style="border-top: 1px solid var(--zinc-200); padding-top: 10px; margin-top: 6px;">
+      <span class="label" style="font-weight: 600;">Ponto de pedido</span>
+      <strong style="color: var(--zinc-900); font-size: 16px;">29</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Cobertura alvo <small>2× ponto de pedido</small></span>
+      <strong>58</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Déficit <small>alvo − saldo efetivo</small></span>
+      <strong>52</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">MOQ Tiger / múltiplo</span>
+      <strong>10 / 5</strong>
+    </div>
+    <div class="drawer-row" style="border-top: 1px solid var(--zinc-200); padding-top: 10px; margin-top: 6px;">
+      <span class="label" style="font-weight: 600;">Qty sugerida <small>arredondado p/ múltiplo de 5</small></span>
+      <strong style="color: var(--zinc-900); font-size: 18px;">50</strong>
+    </div>
+  </div>
+
+  <!-- URGENCIA -->
+  <div class="drawer-section">
+    <div class="drawer-section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Urgência
+    </div>
+    <div class="drawer-row">
+      <span class="label">Vai zerar em</span>
+      <strong style="color: var(--red);">2 dias</strong>
+    </div>
+    <div class="drawer-row">
+      <span class="label">Lead time Tiger</span>
+      <strong>7 dias</strong>
+    </div>
+    <div class="drawer-row" style="border-top: 1px solid var(--zinc-200); padding-top: 10px; margin-top: 6px;">
+      <span class="label" style="font-weight: 600;">Folga vs lead time</span>
+      <strong style="color: var(--red); font-size: 16px;">−5 dias</strong>
+    </div>
+    <div class="drawer-row subtle">
+      <span class="label">⚠ Vai zerar 5 dias antes da próxima entrega chegar</span>
+    </div>
+  </div>
+
+  <!-- ALTERNATIVAS -->
+  <div class="drawer-section">
+    <div class="drawer-section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      Alternativas consideradas
+    </div>
+    <div class="alt-item rejected">
+      <div class="alt-icon fail">×</div>
+      <div class="alt-content">
+        <div class="alt-title">Empréstimo de empresa irmã</div>
+        <div class="alt-detail">NetParts CWB tem <strong>4 unidades</strong> disponíveis · déficit é 52 · insuficiente pra cobrir</div>
+      </div>
+    </div>
+    <div class="alt-item rejected">
+      <div class="alt-icon fail">×</div>
+      <div class="alt-content">
+        <div class="alt-title">SKU equivalente via OEM</div>
+        <div class="alt-detail">2 SKUs com OEM compartilhado encontrados (<span class="mono">EQ-77</span>, <span class="mono">FT-202</span>) · ambos em ruptura também</div>
+      </div>
+    </div>
+    <div class="alt-item">
+      <div class="alt-icon ok">✓</div>
+      <div class="alt-content">
+        <div class="alt-title">Comprar do fornecedor preferencial</div>
+        <div class="alt-detail">Tiger · 7d lead time · R$ 25/un · MOQ 10 · múltiplo 5</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RECOMENDACAO -->
+  <div class="drawer-section">
+    <div class="recommendation">
+      <div class="recommendation-label">Ação recomendada</div>
+      <div class="recommendation-action">Comprar 50 da Tiger</div>
+      <div class="recommendation-cost">R$ 1.250,00 · entrega prevista 25/05</div>
+      <div class="recommendation-cta">
+        <button class="btn-approve">Aprovar e gerar pedido</button>
+        <button class="btn-edit">Editar qty</button>
+        <button class="btn-reject">Rejeitar</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

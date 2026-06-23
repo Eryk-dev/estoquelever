@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { logger } from "@/lib/logger";
-import { inserirMovimentacao, estornarMovimentacao } from "@/lib/wms/ledger";
+import { estornarMovimentacao } from "@/lib/wms/ledger";
 import {
   buscarReservaPendente,
   buscarReservaPendentePorProduto,
@@ -21,6 +21,11 @@ import { resolverRealocacao } from "@/lib/separacao/realocacao-resolver";
 import { distribuirQtyPega } from "@/lib/separacao/distribuir-qty-pega";
 import { mandarItensParaValidacaoOC } from "@/lib/wms/mandar-compras";
 import { galpoesComSaldo } from "@/lib/wms/galpoes-com-saldo";
+
+// uuid v1-v5 (case-insensitive) — valida a idempotency_key antes de mandar pra
+// coluna uuid do ledger (BUG-09).
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * POST /api/separacao/parcial
@@ -86,13 +91,31 @@ export async function POST(request: NextRequest) {
     loc_zerou: boolean;
   };
 
+  // BUG-09: idempotency_key client-gerada (uuid v4) por clique de confirmação.
+  // Protege o ramo residual (loc_zerou=false, item fica aberto) que passava o
+  // guard de re-entrada num reenvio do MESMO request → 2ª S + quantidade_pega
+  // inflada. Aceita ausente (compat) mas rejeita malformada pra surfaçar bug
+  // de cliente (a key vai pra coluna uuid do ledger).
+  const idempotencyKey =
+    body.idempotency_key === undefined || body.idempotency_key === null
+      ? null
+      : typeof body.idempotency_key === "string" && UUID_REGEX.test(body.idempotency_key)
+        ? body.idempotency_key
+        : undefined;
+  if (idempotencyKey === undefined) {
+    return NextResponse.json(
+      { error: "idempotency_key inválida (esperado uuid)" },
+      { status: 400 },
+    );
+  }
+
   const supabase = createServiceClient();
 
   if (isItemMode) {
     const ids: (number | string)[] = Array.isArray(body.pedido_item_ids)
       ? body.pedido_item_ids
       : [body.pedido_item_id];
-    return processarParcialItem(supabase, session, ids, quantidade_pega, loc_zerou);
+    return processarParcialItem(supabase, session, ids, quantidade_pega, loc_zerou, idempotencyKey);
   }
   const realocIds: string[] = Array.isArray(body.realocacao_ids)
     ? body.realocacao_ids
@@ -103,6 +126,7 @@ export async function POST(request: NextRequest) {
     realocIds,
     quantidade_pega,
     loc_zerou,
+    idempotencyKey,
   );
 }
 
@@ -112,8 +136,25 @@ async function processarParcialItem(
   pedido_item_ids: (number | string)[],
   quantidade_pega: number,
   loc_zerou: boolean,
+  idempotency_key: string | null,
 ): Promise<NextResponse> {
   try {
+    // BUG-09: guard de idempotência no topo — se a key já produziu uma mov
+    // (S ou ajuste deste request), o reenvio é no-op. Retorna ANTES de liberar
+    // reservas / emitir S / acumular quantidade_pega. Cobre o retry sequencial
+    // (vetor documentado); a janela de concorrência é fechada pelo ja_aplicado
+    // da RPC abaixo.
+    if (idempotency_key) {
+      const { data: jaMov } = await supabase
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("idempotency_key", idempotency_key)
+        .maybeSingle();
+      if (jaMov) {
+        return NextResponse.json({ status: "ja_processado", idempotente: true });
+      }
+    }
+
     // 1. Carrega TODOS os items na ordem de id (FCFS pra distribuição)
     const { data: itemsRaw, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
@@ -413,6 +454,7 @@ async function processarParcialItem(
           itemsRaw.length > 1
             ? `Picking parcial wave — ${itemsRaw.length} items (pedido #${primeiroPedido.numero}…)`
             : `Picking parcial pedido #${primeiroPedido.numero}`,
+        p_idempotency_key: idempotency_key,
       });
       if (pkErr) {
         // Compensação: o passo 7a já liberou as R dos pedidos do wave (commits
@@ -469,8 +511,36 @@ async function processarParcialItem(
           { status: 409 },
         );
       }
-      movSaidaId = (pk as { mov_s_id: string | null }).mov_s_id;
-      movAjusteId = (pk as { mov_ajuste_id: string | null }).mov_ajuste_id;
+      const pkObj = pk as {
+        mov_s_id: string | null;
+        mov_ajuste_id: string | null;
+        ja_aplicado?: boolean;
+      };
+      // BUG-09 (backstop de concorrência): a key já existia — outro request
+      // idêntico venceu a corrida e gravou a S. Não reaplica S nem acúmulo.
+      // O passo 7a deste request normalmente não liberou nada (o vencedor já
+      // tinha liberado a R → buscarReservaPendente não acha R viva); se por
+      // acaso liberou, recria pra não perder a reserva (espelha a compensação).
+      if (pkObj.ja_aplicado) {
+        for (const [pid, info] of liberacoesPorPedido) {
+          try {
+            await estornarLiberacaoReserva({
+              liberacao_mov_id: info.movL_id,
+              pedido_id: String(pid),
+              usuario_id: session.id,
+              motivo: "Idempotência — request duplicado, recria reserva",
+            });
+          } catch (e) {
+            logger.warn("separacao-parcial", "idempotência: falha recriando R (segue)", {
+              pedido_id: pid,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+        return NextResponse.json({ status: "ja_processado", idempotente: true });
+      }
+      movSaidaId = pkObj.mov_s_id;
+      movAjusteId = pkObj.mov_ajuste_id;
     }
 
     // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
@@ -939,6 +1009,7 @@ async function processarParcialItem(
       // própria prateleira pra (a) a linha "PEGAR" continuar protegida (ninguém
       // rouba o saldo) e (b) o próximo parcial/marcar-item achar a R viva.
       // Pedido com picked=0 manteve a R original intacta (Edição B) → nada a fazer.
+      let reservasResiduaisFalhadas = 0;
       for (const u of itemUpdates) {
         if (u.qty_residual <= 0 || u.qty_para_este <= 0) continue;
         const pedidoDoItem = pedidoById.get(u.pedido_id);
@@ -952,10 +1023,21 @@ async function processarParcialItem(
             origem_detalhes: { contexto: "residual_mesma_loc", sku: u.item.sku, loc_id: locOriginalId },
           });
         } catch (e) {
-          logger.warn("separacao-parcial", "Falhou re-reservar residual mesma loc (continua)", {
-            pedido_id: u.pedido_id,
-            qty_residual: u.qty_residual,
-            error: e instanceof Error ? e.message : String(e),
+          // LOUD: a R original foi 100% liberada no passo 7a; sem a re-reserva o
+          // item fica aberto SEM R viva e o próximo pick cai no fallback S-only
+          // (valida saldo → 409 se a prateleira foi roubada). Não é overselling,
+          // mas é degradação que precisa de visibilidade — logError + contagem na
+          // resposta (espelha desfazer-parcial/reset-state 3b).
+          reservasResiduaisFalhadas++;
+          logger.logError({
+            error: e,
+            source: "separacao-parcial",
+            message: "Falhou re-reservar residual mesma loc — item aberto sem R viva",
+            category: "business_logic",
+            metadata: {
+              pedido_id: u.pedido_id,
+              qty_residual: u.qty_residual,
+            },
           });
         }
       }
@@ -965,6 +1047,7 @@ async function processarParcialItem(
         status: "parcial_em_progresso",
         items_parciais: beneficiariosResiduais.length,
         items_residuais_a_fazer: itemsResiduais.length,
+        reservas_residuais_falhadas: reservasResiduaisFalhadas,
       });
     }
 
@@ -1285,8 +1368,25 @@ async function processarParcialRealocacao(
   realocacao_ids: string[],
   quantidade_pega: number,
   loc_zerou: boolean,
+  idempotency_key: string | null,
 ): Promise<NextResponse> {
   try {
+    // BUG-09: guard de idempotência no topo — reenvio do MESMO request é no-op
+    // (a S/ajuste carrega a key). Cobre o retry sequencial. A concorrência
+    // verdadeira no caminho realocação já é barrada pelo claim atômico do Pass A
+    // (status aguardando_picking→picado_parcial, race-filtered): o request
+    // perdedor cai em racePerdida e estorna a PRÓPRIA S (fresca, key distinta).
+    if (idempotency_key) {
+      const { data: jaMov } = await supabase
+        .from("siso_movimentacoes")
+        .select("id")
+        .eq("idempotency_key", idempotency_key)
+        .maybeSingle();
+      if (jaMov) {
+        return NextResponse.json({ status: "ja_processado", idempotente: true });
+      }
+    }
+
     // 1. Carrega TODAS as realocações (ordem por criado_em pra distribuição determinística)
     const { data: realocs, error: realocErr } = await supabase
       .from("siso_pedido_item_realocacoes")
@@ -1606,48 +1706,13 @@ async function processarParcialRealocacao(
       );
     }
 
-    let movSaidaId: string | null = null;
-    if (quantidade_pega > 0) {
-      try {
-        const mov = await inserirMovimentacao({
-          tripla: {
-            produto_id: produtoWmsId,
-            galpao_id: galpaoId,
-            localizacao_id: localizacaoId,
-          },
-          tipo: "S",
-          qty: quantidade_pega,
-          origem_tipo: "nf_venda",
-          origem_detalhes: {
-            pedido_id_tiny: primeiroPedido.id,
-            pedido_numero: primeiroPedido.numero,
-            pedido_item_ids: itemIds,
-            realocacao_ids: realocIdsList,
-            sku: primeiroItem.sku,
-            contexto:
-              realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
-          },
-          empresa_vendedora_id: empresaOrigemPrimeiroPedido,
-          motivo:
-            realocs.length > 1
-              ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
-              : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
-          usuario_id: session.id,
-        });
-        movSaidaId = mov.id;
-      } catch (sErr) {
-        return compensar7aERetornar409(
-          sErr instanceof Error ? sErr.message : String(sErr),
-          null,
-        );
-      }
-    }
-
-    let movAjusteId: string | null = null;
-    // loc_zerou: idem modo-item — o ajuste não pode derrubar o saldo abaixo do
-    // reservado que SOBRA na loc (reservas de OUTROS pedidos não liberadas aqui),
-    // senão viola o CHECK reservado<=saldo e estoura 500. liberadoNaLoc = R cascade
-    // DESTE batch já liberadas no passo 7a.
+    // 7b. S(qty_pega) + ajuste(loc_zerou) atômicos via RPC wms_pick_parcial_atomico
+    // — MESMA primitiva idempotente do caminho item (BUG-09). Antes usava dois
+    // inserirMovimentacao diretos; consolidar na RPC dá a chave de idempotência
+    // (ja_aplicado) que fecha o reenvio sem cross-contaminação no racePerdida.
+    // deltaAjuste é computado ANTES da RPC (precisa de liberadoNaLoc do 7a): o
+    // ajuste não pode derrubar o saldo abaixo do reservado que SOBRA na loc
+    // (R de outros pedidos não liberadas), senão viola CHECK reservado<=saldo.
     const liberadoNaLoc = Array.from(liberacoesRealocPorPedido.values()).reduce(
       (s, info) => s + Number(info.reserva.quantidade),
       0,
@@ -1656,43 +1721,70 @@ async function processarParcialRealocacao(
     const deltaAjuste = loc_zerou
       ? Math.max(0, saldoWms - quantidade_pega - reservadoRestanteLoc)
       : 0;
-    if (loc_zerou) {
-      const delta = deltaAjuste;
-      if (delta > 0) {
-        try {
-          const movAj = await inserirMovimentacao({
-            tripla: {
-              produto_id: produtoWmsId,
-              galpao_id: galpaoId,
-              localizacao_id: localizacaoId,
-            },
-            tipo: "S",
-            qty: delta,
-            origem_tipo: "ajuste_pick_zerou",
-            origem_detalhes: {
-              pedido_id_tiny: primeiroPedido.id,
-              pedido_numero: primeiroPedido.numero,
-              pedido_item_ids: itemIds,
-              realocacao_ids: realocIdsList,
-              saldo_anterior: saldoWms,
-              qty_pega: quantidade_pega,
-            },
-            motivo: "loc zerou no bipe",
-            usuario_id: session.id,
-          });
-          movAjusteId = movAj.id;
-        } catch (ajErr) {
-          // P2-SEP-08: falha no ajuste pós-S — estorna a S já criada e compensa
-          // as liberações do 7a antes de 409 (senão a S fica órfã + R perdidas).
-          return compensar7aERetornar409(
-            ajErr instanceof Error ? ajErr.message : String(ajErr),
-            movSaidaId,
-          );
-        }
-      }
 
-      // (Fase 1.4 — 2026-05-28) REMOVIDO: sync do snapshot
-      // siso_pedido_item_estoques pós-loc_zerou (cascade path). Tabela dropada.
+    let movSaidaId: string | null = null;
+    let movAjusteId: string | null = null;
+    if (quantidade_pega > 0 || deltaAjuste > 0) {
+      const { data: pk, error: pkErr } = await supabase.rpc("wms_pick_parcial_atomico", {
+        p_produto_id: produtoWmsId,
+        p_galpao_id: galpaoId,
+        p_localizacao_id: localizacaoId,
+        p_qty_pega: quantidade_pega,
+        p_delta_ajuste: deltaAjuste,
+        p_pedido_id: String(primeiroPedido.id),
+        p_empresa_vendedora_id: empresaOrigemPrimeiroPedido,
+        p_usuario_id: session.id,
+        p_origem_detalhes: {
+          pedido_id_tiny: primeiroPedido.id,
+          pedido_numero: primeiroPedido.numero,
+          pedido_item_ids: itemIds,
+          realocacao_ids: realocIdsList,
+          sku: primeiroItem.sku,
+          saldo_anterior: saldoWms,
+          qty_pega: quantidade_pega,
+          contexto:
+            realocs.length > 1 ? "realocacao_parcial_consolidado" : "realocacao_parcial",
+        },
+        p_motivo:
+          realocs.length > 1
+            ? `Picking parcial wave realocada — ${realocs.length} realocações (pedido #${primeiroPedido.numero}…)`
+            : `Picking parcial pedido #${primeiroPedido.numero} — realocação`,
+        p_idempotency_key: idempotency_key,
+      });
+      if (pkErr) {
+        // RPC atômica: falha não commitou S nem ajuste (movSaidaJaCriada=null).
+        // Recria as R do 7a (senão overselling) e retorna 409.
+        return compensar7aERetornar409(pkErr.message, null);
+      }
+      const pkObj = pk as {
+        mov_s_id: string | null;
+        mov_ajuste_id: string | null;
+        ja_aplicado?: boolean;
+      };
+      // BUG-09 (backstop de concorrência): a key já existia — request duplicado.
+      // Curto-circuita ANTES do Pass A, então o racePerdida nunca estorna uma S
+      // compartilhada. Recria as R que ESTE request por acaso liberou no 7a
+      // (normalmente nenhuma — o vencedor já liberou).
+      if (pkObj.ja_aplicado) {
+        for (const [pid, info] of liberacoesRealocPorPedido) {
+          try {
+            await estornarLiberacaoReserva({
+              liberacao_mov_id: info.movL_id,
+              pedido_id: String(pid),
+              usuario_id: session.id,
+              motivo: "Idempotência — request duplicado, recria R cascade",
+            });
+          } catch (e) {
+            logger.warn("separacao-parcial-realoc", "idempotência: falha recriando R (segue)", {
+              pedido_id: pid,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
+        return NextResponse.json({ status: "ja_processado", idempotente: true });
+      }
+      movSaidaId = pkObj.mov_s_id;
+      movAjusteId = pkObj.mov_ajuste_id;
     }
 
     // 8. (updates já computado antes da liberação 7a — distribuição FCFS.)

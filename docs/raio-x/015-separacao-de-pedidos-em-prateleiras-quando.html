@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Separação de pedidos em prateleiras (quando não tem quantidade completa) — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Separação de pedidos</p>
+<h1>Separação de pedidos em prateleiras (quando não tem quantidade completa)</h1><p class="lead">Quando o operador pega uma quantidade parcial de uma peça de uma prateleira, o sistema libera aquela quantidade do monte, gera o registro de saída no o registro das movimentacoes de estoque, e automaticamente procura outra prateleira no galpão pra guardar o que sobrou do pedido.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">3</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">2</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">3</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>O sistema rejeita se você tentar pegar quantidade negativa (erro imediato).</span></li><li><span class="dot">✓</span><span>Quando a prateleira esvazia completamente, o sistema registra a perda de estoque de forma rastreável.</span></li><li><span class="dot">✓</span><span>Se não achar cobertura pra o restante, avisa o time de compras ou expedição pra tomar ação.</span></li><li><span class="dot">✓</span><span>O sistema permite que o operador volte depois pra pegar em outra prateleira o que sobrou (realocação).</span></li></ul></div><h2>Problemas pra resolver · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P017</span>Operador digita zero na quantidade e o sistema passa</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 1</p><p class="ln"><b>Hoje:</b> Quando o operador marca uma quantidade de 0 itens pegados de uma prateleira, o sistema aceita sem reclamar. Se a prateleira já estava vazia, ele cria um ajuste de estoque desaparecido, mesmo sem nada ter saído.</p><p class="ln why"><b>Por que importa:</b> Um operador clicando no botão errado ou começando a digitar sem querer acaba registrando saída de estoque que nunca aconteceu. Produto some da contagem.</p><div class="decision"><p class="q">Bloquear entrada de zero itens no campo de quantidade</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Permitir zero somente quando o operador marca que a prateleira está vazia (checagem especial)</b> — Fica mais seguro porque zero só passa com confirmação extra. Mas fica com um clique a mais.</span></li><li class=""><span class="ck"></span><span><b>Nunca permitir zero. Operador que achou prateleira vazia marca 'zerada' no mesmo clique</b> — Mais rápido, zero ambiguidade. Operador não digita número, marca situação direto.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 2. Simples: operador clica no botão, vê que a prateleira está vazia, marca 'zerada' ali mesmo. Sem campo de quantidade no meio do caminho.</p></div></div><div class="dcard"><div class="dhead"><h3><span class="idb">P018</span>Operador clica duas vezes no mesmo botão por acaso</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 2</p><p class="ln"><b>Hoje:</b> Quando o operador clica duas vezes muito rápido no botão 'Parcial' (por acaso ou porque o celular travou um segundo), às vezes o sistema já detém a primeira clicada e devolve erro 409. MAS se a segunda clicada chegar um pouco depois, o sistema não vê que já processou, e a quantidade que o operador digitou acaba sendo contada duas vezes no mesmo item. O estoque sai duas vezes.</p><p class="ln why"><b>Por que importa:</b> Se um operador pega 3 unidades mas clica duas vezes, pode sair 6 da contagem. Você vende para dois clientes da mesma coisa que não existe.</p><div class="decision"><p class="q">Garantir que segundo clique não duplica a contagem</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Criar um ID único para cada clique (token) e rejeitar qualquer segundo clique com o mesmo token</b> — À prova de clique duplo. Operador clica 10 vezes, sistema só conta uma. Mais seguro.</span></li><li class=""><span class="ck"></span><span><b>Desabilitar o botão por 2 segundos depois do primeiro clique</b> — Simples de entender. Operador vê o botão cinzento. Mas não funciona se o celular travou e a resposta demorou.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 1. Botão com token. Operador nunca mais vê duplicação por clique acidental.</p></div></div><div class="dcard"><div class="dhead"><h3><span class="idb">P019</span>Operador marca item, internet cai no meio, estoque some mas item não marcado</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 3</p><p class="ln"><b>Hoje:</b> Quando o operador marca um item separado (clica Parcial), o sistema cria o registro de saída de estoque. MAS se a internet cai no meio do processo (antes de devolver o apartado do pedido pro estoque), o estoque sai, mas o sistema não consegue avisar que aquele apartado foi liberado. Fica órfão. O item nunca fica marcado como separado, mas o estoque já saiu.</p><p class="ln why"><b>Por que importa:</b> O pedido fica pendurado (aparenta incompleto) porque o sistema acha que ainda precisa de itens. Mas o estoque sumiu da contagem. Seu inventário fica desconectado da separação.</p><div class="decision"><p class="q">Garantir que saída de estoque e marca do item vão juntas ou voltam juntas</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Usar transação (tudo-ou-nada): se internet cair, o estoque volta automaticamente</b> — Fica perfeito. Falha? Recomeça do zero, sem órfãos. Leva um pouco mais de tempo por causa da segurança.</span></li><li class=""><span class="ck"></span><span><b>Criar um 'desfazer automático' de fundo: sistema varre órfãos a cada 5min e devolve o estoque</b> — Estoque é recuperado, mas pode levar até 5 minutos. Nesse meio tempo está errado.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 1. Transação. O tempo extra é invisível e vale a pena por ser à prova de falhas.</p></div></div><h2>Decisões pra você tomar · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D117</span>Quando operador marca 'prateleira vazia' mas não pegou nada (digita 0), o sistema registra que sumiu estoque inteiro. Isso está certo ou erra?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Inventário e acertos de saldo</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 4</p><p class="ln"><b>Hoje o sistema:</b> Sistema cria um ajuste que marca aquele lote inteiro como desaparecido (perda inexplicada). Se o operador volta depois e acha as coisas lá mesmo, ele pega = contagem fica o dobro do que deveria.</p><p class="ln why"><b>Por que importa:</b> Se você tem 50 peças, operador marca 'zerada' sem pegar nada, sistema acha que desapareceram 50. Depois que descobre que estão lá, ele pega 50 mesmo (acha que é falta). Viram 100 na sua contagem.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está: 'zerada' registra desaparecimento; depois o operador ajusta manualmente</b> — Seu time de inventário é quem arruma. Leva tempo, mas deixa claro o que era erro de digitação vs. perda real.</span></li><li class=""><span class="ck"></span><span><b>Mudar: 'zerada' só marca a prateleira como vazia, não cria desaparecimento. Depois, de fundo, o sistema confere</b> — Desaparecimento só é registrado se ninguém tiver achado nos próximos 2-3 dias. Mais seguro.</span></li><li class=""><span class="ck"></span><span><b>Exigir foto ou assinatura do supervisor quando marca zerada</b> — Operador tem que confirmar com chefe. Evita cliques errados. Leva mais 30 segundos por prateleira.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 2. Sistema seguro de fundo. Desaparecimento só é real se persistir. Operador que marcou errado não afeta seu inventário.</p></div></div><div class="dcard"><div class="dhead"><h3><span class="idb">D090</span>Quando dois operadores pegam itens do mesmo lugar ao mesmo tempo para pedidos diferentes, qual deles consegue fazer?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Cenário 5</p><p class="ln"><b>Hoje o sistema:</b> O primeiro operador consegue. O segundo recebe um aviso de 'lugar ocupado' e tem que esperar ou ir pra outro lugar. MAS se o segundo chegou DEPOIS do primeiro terminar (mas antes do sistema avisar), os dois podem pegar quantidade no mesmo lugar, dobrando a saída.</p><p class="ln why"><b>Por que importa:</b> Se duas pessoas pegam do mesmo pote ao mesmo tempo, a contagem fica errada porque o sistema conta de forma separada.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Travar o lugar enquanto a primeira pessoa está pegando (ninguém mais consegue tocar)</b> — Seguro 100%. Segundo operador espera ou vai embora. Pode ficar lento se muitos pedidos vêm do mesmo lugar.</span></li><li class=""><span class="ck"></span><span><b>Deixar dois pegarem em paralelo mas avisar que é duvidoso (marcar item como 'risco de erro')</b> — Mais rápido, mas seu time de qualidade tem que verificar depois. Mais trabalho de conferência.</span></li><li class=""><span class="ck"></span><span><b>Só permitir se forem para a mesma onda (grupo de pedidos que sai junto)</b> — Seguro para produtos que vão juntos. Mas complica se separação é por pedido individual.</span></li></ul><p class="recnote"><b>Recomendo:</b> Escolha a opção 1. Travar o lugar. Mesmo que fique um pouco mais lento, você não perde a contagem correta.</p></div></div><h2>Ainda a conferir · 3</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Quando o sistema cria uma realocação (muda item de prateleira), ele não deixa claro qual realocação é 'mãe' e qual é 'filha'. Precisa confirmar se isso causa problema real.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Há um recurso para desfazer uma separação parcial (se operador pegou algo errado), mas não confirmamos se foi implementado de verdade no sistema.</span></li><li><span class="dot" style="color:#3a5bb3">?</span><span>Se um item é deletado do cadastro enquanto operador está separando, o sistema avisa do erro mas deixa o estoque órfão (saiu, mas não marcou). Sem desfazer automático.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

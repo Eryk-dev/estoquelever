@@ -912,9 +912,13 @@ export default function WmsChecklistPage() {
     submittingActionRef.current = true;
     setParcialModal((prev) => (prev ? { ...prev, loading: true } : null));
     try {
+      // BUG-09: idempotency_key por clique de confirmação. submittingActionRef
+      // já barra re-entrada na UI; a key protege contra entrega dupla do MESMO
+      // request no nível de rede (timeout/duplicação) — o backend faz no-op.
+      const idempotencyKey = crypto.randomUUID();
       const body = parcialModal.isRealocacao
-        ? { realocacao_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou }
-        : { pedido_item_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou };
+        ? { realocacao_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou, idempotency_key: idempotencyKey }
+        : { pedido_item_ids: parcialModal.itemIds, quantidade_pega: qtyPega, loc_zerou: locZerou, idempotency_key: idempotencyKey };
 
       const res = await sisoFetch("/api/wms/separacao/parcial", {
         method: "POST",

@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>SISO / WMS — Mapa Completo de Fluxos</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --border: #232830;
+    --text: #e6e9ef;
+    --muted: #8a93a3;
+    --accent: #23d8d3;
+    --accent-2: #7c9eff;
+    --warn: #f7b955;
+    --bad: #ff6f6f;
+    --good: #6ad48f;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; line-height: 1.55; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 40px 24px 120px; }
+  h1 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.5px; }
+  h2 { font-size: 24px; margin: 56px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); color: var(--accent); }
+  h3 { font-size: 18px; margin: 32px 0 10px; color: var(--accent-2); }
+  h4 { font-size: 15px; margin: 20px 0 8px; color: var(--text); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  p { color: var(--text); }
+  code { background: var(--panel); padding: 2px 6px; border-radius: 4px; font-size: 13px; color: var(--accent); border: 1px solid var(--border); font-family: "JetBrains Mono", "Menlo", monospace; }
+  pre { background: var(--panel); border: 1px solid var(--border); padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+  pre code { background: transparent; border: none; padding: 0; color: var(--text); }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); color: var(--accent-2); font-weight: 600; }
+  tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0 48px; columns: 2; column-gap: 32px; }
+  .toc h3 { margin-top: 0; color: var(--accent); }
+  .toc ul { margin: 0; padding-left: 18px; }
+  .toc li { margin: 4px 0; break-inside: avoid; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+  .mermaid { background: #fff; padding: 16px; border-radius: 8px; margin: 20px 0; overflow-x: auto; text-align: center; }
+  .meta { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0 24px; color: var(--muted); font-size: 13px; }
+  .meta span { display: inline-flex; align-items: center; gap: 6px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.3px; text-transform: uppercase; }
+  .b-get { background: rgba(106,212,143,.15); color: var(--good); border: 1px solid rgba(106,212,143,.3); }
+  .b-post { background: rgba(124,158,255,.15); color: var(--accent-2); border: 1px solid rgba(124,158,255,.3); }
+  .b-patch { background: rgba(247,185,85,.15); color: var(--warn); border: 1px solid rgba(247,185,85,.3); }
+  .b-delete { background: rgba(255,111,111,.15); color: var(--bad); border: 1px solid rgba(255,111,111,.3); }
+  .b-page { background: rgba(35,216,211,.15); color: var(--accent); border: 1px solid rgba(35,216,211,.3); }
+  .callout { border-left: 4px solid var(--accent); background: var(--panel); padding: 12px 16px; margin: 16px 0; border-radius: 0 8px 8px 0; }
+  .callout.warn { border-color: var(--warn); }
+  .callout.bad { border-color: var(--bad); }
+  .callout.good { border-color: var(--good); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 800px) { .toc { columns: 1; } .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend span::before { content: "■"; margin-right: 4px; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+  details summary { cursor: pointer; font-weight: 600; color: var(--accent-2); }
+  details[open] summary { margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>SISO / WMS — Mapa Completo de Fluxos</h1>
+<div class="meta">
+  <span>📅 Atualizado: 2026-05-18</span>
+  <span>📦 Stack: Next.js 16 · React 19 · Supabase · TypeScript</span>
+  <span>🌳 Branch: <code>develop</code></span>
+  <span>🔀 Pós cutover de superfície (<code>f8b7dbb</code>)</span>
+</div>
+
+<div class="callout">
+  <strong>Direção estratégica firmada em 2026-05-18:</strong> tudo foi unificado sob <code>/wms</code>.
+  Frontend só vive em <code>/wms/*</code>, backend só em <code>/api/{auth,wms}/*</code>.
+  WMS é <em>source of truth</em> absoluta de estoque. Tiny ERP virou camada fiscal apenas.
+  Todo saldo passa pelo ledger imutável <code>siso_movimentacoes</code> via RPC <code>wms_inserir_movimentacao</code>.
+</div>
+
+<div class="toc">
+  <h3>Sumário</h3>
+  <ul>
+    <li><a href="#macro">1. Mapa Macro</a></li>
+    <li><a href="#hierarquia">2. Hierarquia &amp; Autenticação</a></li>
+    <li><a href="#pedidos">3. Pedidos: Webhook → Aprovação → Worker</a></li>
+    <li><a href="#nf">4. Webhook de NF</a></li>
+    <li><a href="#separacao">5. Separação (Wave Picking)</a></li>
+    <li><a href="#embalagem">6. Embalagem &amp; Expedição</a></li>
+    <li><a href="#compras">7. Compras v2 (OC)</a></li>
+    <li><a href="#wms-estoque">8. WMS — Estoque (Ledger 4D)</a></li>
+    <li><a href="#wms-receber">9. WMS — Receber + Guarda (2 etapas)</a></li>
+    <li><a href="#wms-movs">10. WMS — Movimentações Operacionais</a></li>
+    <li><a href="#wms-inventario">11. WMS — Inventário (Claim Hierárquico)</a></li>
+    <li><a href="#wms-devolucoes">12. WMS — Devoluções A/B/C/D</a></li>
+    <li><a href="#wms-mini-swap">13. WMS — Mini-Swap Intra-Galpão</a></li>
+    <li><a href="#wms-roteamento">14. WMS — Roteamento + Empréstimos</a></li>
+    <li><a href="#cross">15. Módulo Cross (Catálogo / OEM)</a></li>
+    <li><a href="#insights">16. Insights &amp; Dashboards</a></li>
+    <li><a href="#estados">17. Máquinas de Estado</a></li>
+    <li><a href="#tabelas">18. Tabelas do Banco (Resumo)</a></li>
+    <li><a href="#rotas">19. Catálogo de Rotas API</a></li>
+    <li><a href="#paginas">20. Catálogo de Páginas</a></li>
+  </ul>
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="macro">1. Mapa Macro do Sistema</h2>
+<p>Visão de 30 mil pés. Cada caixa é um módulo; cada seta é uma transição de domínio.</p>
+
+<div class="mermaid">
+flowchart LR
+  TINY[Tiny ERP<br/>Webhook] -->|pedido| WH[POST /api/wms/webhook/tiny]
+  TINY -->|nota_fiscal| WH
+  TINY -->|cancelado| WH
+  WH --> WP[webhook-processor]
+  WH --> NFH[nf-webhook-handler]
+
+  WP --> P[(siso_pedidos)]
+  NFH --> P
+
+  P -->|propria 100%| AUTO[Auto-aprovado]
+  P -->|outros| PAINEL[/wms/pedidos<br/>Operador aprova]
+  AUTO --> FILA[(siso_fila_execucao)]
+  PAINEL --> FILA
+
+  FILA --> WORKER[execution-worker]
+  WORKER -->|propria/transf| TINY2[Gera NF Tiny]
+  WORKER -->|oc| COMPRAS[/wms/compras]
+  TINY2 --> NF[aguardando_nf]
+  NF -->|webhook NF| SEP[/wms/separacao]
+  COMPRAS -->|tudo recebido| RELEASE[compras-release] --> SEP
+
+  SEP --> EMB[/wms/separacao/embalagem]
+  EMB --> EXP[expedido]
+  EXP --> PRINT[PrintNode<br/>etiqueta ZPL]
+
+  subgraph WMS [WMS — Estoque Físico]
+    RCB[/wms/receber/] --> GUARDA[/wms/guarda/]
+    GUARDA --> EST[(siso_estoque)]
+    EST --> LEDGER[(siso_movimentacoes)]
+    INV[/wms/inventario] --> EST
+    TRANSF[/wms/transferir] --> EST
+    REPL[/wms/replenishment] --> EST
+    AJU[/wms/ajuste] --> EST
+    DEV[/wms/devolucoes] --> EST
+  end
+
+  SEP -.lê.-> EST
+  WORKER -.escreve mov.-> LEDGER
+
+  style WH fill:#7c9eff,color:#fff
+  style WORKER fill:#23d8d3,color:#000
+  style LEDGER fill:#f7b955,color:#000
+  style EST fill:#6ad48f,color:#000
+</div>
+
+<h3>Hierarquia conceitual</h3>
+<table>
+  <tr><th>Nível</th><th>O que é</th><th>Exemplo</th></tr>
+  <tr><td><code>Galpão</code></td><td>Local físico</td><td>CWB, SP</td></tr>
+  <tr><td><code>Empresa</code></td><td>Conta Tiny com CNPJ próprio</td><td>NetAir (CNPJ 34857388000163), NetParts (CNPJ 34857388000244)</td></tr>
+  <tr><td><code>Grupo</code></td><td>Afinidade de negócio — empresas do mesmo grupo compartilham estoque</td><td>Autopeças</td></tr>
+  <tr><td><code>Tier</code></td><td>Prioridade de dedução dentro do grupo</td><td>Empresa origem sempre tier 1</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="hierarquia">2. Hierarquia &amp; Autenticação</h2>
+
+<h3>Login por PIN (sem Supabase Auth)</h3>
+<div class="mermaid">
+sequenceDiagram
+  autonumber
+  actor User as Operador
+  participant UI as /login
+  participant API as POST /api/auth/login
+  participant DB as Supabase (siso_usuarios + siso_sessoes)
+  participant Shell as AppShell
+
+  User->>UI: digita nome + PIN 4 dígitos
+  UI->>API: { nome, pin }
+  API->>DB: SELECT id, pin, cargo, cargos, ativo
+  alt usuário ñ existe
+    API-->>UI: 401
+  else !ativo
+    API-->>UI: 403
+  else PIN ok
+    API->>DB: INSERT siso_sessoes (token, expira_em = now()+14d)
+    API-->>UI: 200 { user, sessionId }
+    UI->>UI: localStorage["siso_user"]
+    UI->>Shell: redirect /wms
+    Shell->>API: GET /api/auth/me (X-Session-Id)
+    API-->>Shell: { user com cargos[] e galpões[] }
+  end
+</div>
+
+<h3>Cargos e escopo</h3>
+<table>
+  <tr><th>Cargo</th><th>Vê pedidos</th><th>Tab Auto</th><th>Acessa Compras</th><th>Acessa Admin</th></tr>
+  <tr><td><code>admin</code></td><td>todos</td><td>✓</td><td>✓</td><td>✓</td></tr>
+  <tr><td><code>operador_cwb</code></td><td>filialOrigem=CWB</td><td>✓</td><td>✗</td><td>✗</td></tr>
+  <tr><td><code>operador_sp</code></td><td>filialOrigem=SP</td><td>✓</td><td>✗</td><td>✗</td></tr>
+  <tr><td><code>comprador</code></td><td>só decisão=oc</td><td>✗</td><td>✓</td><td>✗</td></tr>
+</table>
+
+<h3>OAuth2 Tiny por empresa</h3>
+<div class="mermaid">
+sequenceDiagram
+  participant Admin
+  participant CFG as /wms/configuracoes/conexoes
+  participant API as /api/wms/tiny/oauth
+  participant TK as Keycloak Tiny
+  participant DB as siso_tiny_connections
+
+  Admin->>CFG: cadastra client_id + secret
+  CFG->>API: GET /authorize?empresa=X
+  API-->>Admin: redirect Keycloak
+  Admin->>TK: autoriza
+  TK-->>API: /callback?code=Y
+  API->>TK: POST /token (code, secret)
+  TK-->>API: { access, refresh, expira_em }
+  API->>DB: UPDATE empresa_id=X
+  Note over API,DB: getValidTokenByEmpresa() faz refresh com buffer de 60s
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="pedidos">3. Pedidos: Webhook → Aprovação → Worker</h2>
+
+<h3>3.1 Webhook do Tiny (entrada do sistema)</h3>
+<p>Único endpoint: <code>POST /api/wms/webhook/tiny</code>. Discrimina por <code>tipo</code>: pedido, nota_fiscal, ou cancelamento.</p>
+
+<div class="mermaid">
+flowchart TD
+  W([Tiny webhook]) --> A[parse JSON]
+  A --> B{tipo}
+  B -->|inclusao_pedido<br/>atualizacao_pedido| C[Resolve empresa por CNPJ]
+  B -->|nota_fiscal| NF[handleNfWebhook<br/>⚡ async]
+  B -->|cancelamento| CAN[Cancela pedido + jobs]
+  C -->|CNPJ unknown| Z[400]
+  C -->|ok| D[INSERT siso_webhook_logs<br/>dedup_key=pedido_id]
+  D -->|23505 conflict| OK[200 idempotente]
+  D -->|inserido| E[webhook-processor.processWebhook ⚡]
+  E --> R[200 queued imediato]
+
+  subgraph proc [webhook-processor async]
+    E --> F[GET pedido completo no Tiny]
+    F --> G[Resolve grupo + tier order]
+    G --> H[Enriquece estoque<br/>todas empresas do grupo]
+    H --> I[Calcula sugestao<br/>propria/transferencia/oc]
+    I --> J{propria 100% e<br/>não-parcial?}
+    J -->|sim| K[status=executando<br/>tipo_resolucao=auto<br/>INSERT fila<br/>kickWorker]
+    J -->|não| L[status=pendente<br/>aguarda operador]
+    K --> M[(siso_pedidos)]
+    L --> M
+    H --> N[(siso_pedido_itens<br/>+ siso_pedido_item_estoques)]
+  end
+
+  E --> RECON[Reconcilia NFs órfãs<br/>em aguardando_pedido]
+</div>
+
+<h3>3.2 Painel <code>/wms/pedidos</code> — aprovação manual</h3>
+
+<div class="mermaid">
+flowchart LR
+  P[Painel /wms/pedidos] --> Q[useQuery refetch 30s]
+  Q --> API[GET /api/wms/pedidos]
+  API --> DB[(siso_pedidos<br/>+ joins estoques + galpões)]
+
+  P --> TABS{tabs}
+  TABS --> T1[Pendente<br/>status=pendente]
+  TABS --> T2[Concluídos<br/>tipo_resolucao=manual]
+  TABS --> T3[Auto<br/>tipo_resolucao=auto]
+  TABS --> T4[Todos<br/>união dedup]
+
+  T1 --> CARD[PedidoCard interativo]
+  CARD --> APR[Aprovar com decisão]
+  APR --> APRAPI[POST /api/wms/pedidos/aprovar]
+  APRAPI --> UPD[UPDATE siso_pedidos<br/>status=executando<br/>decisao_final<br/>marcadores<br/>status_separacao]
+  APRAPI --> FILA[INSERT siso_fila_execucao<br/>tipo=lancar_estoque]
+  APRAPI --> AFT[after kickWorker ⚡]
+</div>
+
+<h3>3.3 Lógica de decisão</h3>
+<table>
+  <tr><th>Caso</th><th>Decisão</th><th>Resultado</th></tr>
+  <tr><td>Galpão origem tem 100% dos itens</td><td><code>propria</code></td><td><strong>Auto-aprova</strong></td></tr>
+  <tr><td>Outro galpão tem 100% dos itens</td><td><code>transferencia</code></td><td>Painel humano</td></tr>
+  <tr><td>Nenhum tem tudo, há cobertura parcial</td><td><code>propria</code> ou <code>transferencia</code> (a que cobrir mais)</td><td>Painel humano</td></tr>
+  <tr><td>Ninguém tem estoque</td><td><code>oc</code></td><td>Painel humano + módulo compras</td></tr>
+</table>
+
+<h3>3.4 Execution Worker</h3>
+
+<div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Cron as Cron / kickWorker
+  participant W as POST /api/wms/worker/processar
+  participant Q as siso_fila_execucao
+  participant T as Tiny API
+  participant P as siso_pedidos
+  participant L as Ledger WMS
+
+  Cron->>W: chama a cada 10s ou após aprovação
+  W->>Q: SELECT pendente ORDER BY prioridade, proximo_retry_em LIMIT 5
+  Q-->>W: job
+  W->>Q: UPDATE status=executando (atomic claim)
+  W->>P: SELECT status atual
+
+  alt pedido foi cancelado
+    W->>Q: status=cancelado
+  else status ok
+    W->>T: inserirMarcadoresTiny (LVR + galpão + OC se aplicável)
+    alt decisao = propria
+      W->>T: gerarNotaFiscalPedido
+      T-->>W: { nota_fiscal_id, numero, serie }
+      W->>P: status_separacao=aguardando_nf, nota_fiscal_id
+      Note over W: NF webhook (doc 4) transiciona para aguardando_separacao
+    else decisao = transferencia
+      W->>W: getOrdemDeducao percorre tier
+      W->>T: movimentarEstoque saída na empresa suporte
+      W->>T: gerarNotaFiscalPedido na empresa origem
+      W->>L: insere mov (estorno + saída)
+    else decisao = oc
+      W->>P: status_separacao=aguardando_compra
+      W->>P: itens com compra_status=aguardando_compra
+    end
+    W->>Q: status=concluido
+  end
+
+  alt erro
+    W->>Q: tentativas++, proximo_retry_em=exponencial
+    W->>Q: se max → status=erro
+  end
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="nf">4. Webhook de Nota Fiscal</h2>
+<p>Gatilho que libera pedido para separação. SEFAZ autoriza → Tiny envia webhook → pedido sai de <code>aguardando_nf</code>.</p>
+
+<div class="mermaid">
+flowchart TD
+  A([NF webhook]) --> B{empresa por CNPJ?}
+  B -->|não| Z1[400]
+  B -->|sim| C[INSERT webhook_logs dedup_key=nf_X]
+  C -->|conflict 23505| Z2[return idempotente]
+  C -->|ok| D[Fast-path:<br/>SELECT pedido WHERE nota_fiscal_id=X]
+  D -->|hit| M[pedidoId resolvido]
+  D -->|miss| E[GET /notas/X no Tiny]
+  E --> F{origem.tipo=venda?}
+  F -->|não| Z3[status=ignorado]
+  F -->|sim| G[SELECT pedido WHERE id=origem.id]
+  G -->|hit| M
+  G -->|miss| Z4[status=aguardando_pedido<br/>NF chegou antes do pedido]
+  M --> H[UPDATE pedidos<br/>nota_fiscal_id, chave_acesso_nf, url_danfe]
+  H --> I[registrarEvento nf_autorizada ⚡]
+  H --> J[criarAgrupamentoFase1 ⚡<br/>pré-cria expedição no Tiny]
+  H --> K{status atual = aguardando_nf?}
+  K -->|sim| L[UPDATE status_separacao=aguardando_separacao]
+  K -->|não| Y[skip transition, log info]
+  L --> N{decisao = propria ou transferencia?}
+  N -->|sim| O[INSERT fila tipo=lancar_estoque_pos_nf]
+  N -->|não| Y
+  O --> KW[kickWorker ⚡]
+</div>
+
+<div class="callout warn">
+<strong>Race condition tratada:</strong> se a NF chega antes do pedido, marca <code>status='aguardando_pedido'</code>. Quando o webhook do pedido eventualmente chega, o <code>webhook-processor</code> faz reconciliação reversa varrendo logs órfãos.
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="separacao">5. Separação (Wave Picking)</h2>
+<p>Operador seleciona múltiplos pedidos, sistema consolida por SKU/localização, operador "varre" galpão bipando. 29 rotas API.</p>
+
+<h3>5.1 Estados de separação</h3>
+
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> aguardando_compra: oc
+  [*] --> aguardando_nf: propria/transferencia
+  aguardando_compra --> aguardando_nf: compras-release sem NF
+  aguardando_compra --> aguardando_separacao: compras-release com NF
+  aguardando_nf --> aguardando_separacao: NF webhook
+  aguardando_separacao --> em_separacao: POST /iniciar
+  validacao_oc --> em_separacao: POST /iniciar (sem oc_pendente)
+  em_separacao --> separado: POST /concluir
+  em_separacao --> aguardando_compra: POST /concluir (parcial OC)
+  em_separacao --> pendente_realocacao: POST /parcial (short pick sem cobertura)
+  pendente_realocacao --> em_separacao: POST /desfazer-parcial
+  em_separacao --> aguardando_separacao: POST /cancelar
+  em_separacao --> aguardando_compra: POST /produto-esgotado (acao=oc)
+  separado --> embalado: POST /bipar-embalagem (completo)
+  embalado --> expedido: POST /expedir
+</div>
+
+<h3>5.2 Fluxo de bipagem</h3>
+
+<div class="mermaid">
+sequenceDiagram
+  actor Op as Operador
+  participant Dash as /wms/separacao
+  participant CL as /wms/separacao/checklist
+  participant API as /api/wms/separacao
+  participant DB
+  participant RT as Realtime
+
+  Op->>Dash: seleciona pedidos
+  Op->>API: POST /iniciar
+  API->>DB: UPDATE status_separacao=em_separacao
+  API->>DB: RPC siso_consolidar_produtos_separacao
+  API-->>Op: redirect /checklist?pedidos=A,B,C
+
+  loop bipagem
+    Op->>CL: bipa código de barras
+    CL->>API: POST /bipar-checklist
+    API->>DB: UPDATE quantidade_bipada++
+    API->>DB: marca SKU em todos pedidos da wave
+    API->>RT: broadcast (canal separacao:waveId)
+    RT-->>CL: update outros operadores
+  end
+
+  alt SKU esgotado
+    Op->>API: POST /produto-esgotado
+    API->>API: realocacao-resolver cascade
+    alt cobertura disponível
+      API->>DB: INSERT siso_pedido_item_realocacoes
+    else sem cobertura
+      API->>DB: status=pendente_realocacao
+    end
+  end
+
+  alt short pick em loc que zerou
+    Op->>API: POST /parcial { qty, loc_zerou=true }
+    API->>DB: 2 movs (saída + ajuste loc zerou)
+    API->>DB: cascade realocacao
+  end
+
+  Op->>API: POST /concluir
+  API->>DB: status_separacao=separado
+  API-->>Op: redirect /embalagem
+</div>
+
+<h3>5.3 Rotas de separação (29)</h3>
+<table>
+<tr><th>Método</th><th>Rota</th><th>Função</th></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/separacao</td><td>Lista pedidos para separação</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/iniciar</td><td>Inicia wave (consolida produtos)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/bipar</td><td>Bipe direto (fluxo simples)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/bipar-checklist</td><td>Bipe wave picking (auto-marca em todos)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/marcar-item</td><td>Toggle manual + gera mov ledger</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/desfazer-bip</td><td>Reverte bipagem</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/concluir</td><td>Fecha separação → separado</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/concluir-oc</td><td>Fecha pick-oc</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/bipar-embalagem</td><td>Bipe durante embalagem</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/bipar-embalagem-oc</td><td>Bipe embalagem OC</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/confirmar-item-embalagem</td><td>Confirma item embalado</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/expedir</td><td>Expedição final</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/retry-etiqueta</td><td>Retry impressão</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/checklist-items</td><td>Itens da wave consolidados</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/encaminhar</td><td>Encaminha pra outro galpão</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/cancelar</td><td>Cancela com estorno ledger</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/reiniciar</td><td>Reset progresso</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/voltar-etapa</td><td>Admin: volta status</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/tags</td><td>Tags livres (pick oc, urgente)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/produto-esgotado</td><td>SKU sem estoque → OC ou realocação</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/validar-oc-item</td><td>OC encontrei/esgotado</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/reimprimir</td><td>Reimprime etiqueta</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/forcar-pendente</td><td>Admin: força transição NF (batch)</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span></td><td>/[id]/forcar-pendente</td><td>Single force</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/localizacao</td><td>Atualiza loc do produto Tiny+DB</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/parcial</td><td>Short pick + cascade realocação</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/marcar-realocacao</td><td>Confirma pick da realocação</td></tr>
+<tr><td><span class="badge b-delete">DELETE</span></td><td>/realocacao/[id]</td><td>Cancela realocação pendente</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/desfazer-parcial</td><td>Estorno parcial</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="embalagem">6. Embalagem &amp; Expedição</h2>
+
+<h3>6.1 Fluxo pós-separação</h3>
+
+<div class="mermaid">
+flowchart TD
+  S[separado] --> E[/wms/separacao/embalagem]
+  E --> BIP[bipar-embalagem]
+  BIP --> RPC[RPC siso_processar_bip_embalagem]
+  RPC --> CONF[confirmar-item-embalagem]
+  CONF --> CHK{todos bipado_completo?}
+  CHK -->|não| BIP
+  CHK -->|sim| ETIQ[Imprime etiqueta]
+  ETIQ --> FAST{ZPL cacheado?}
+  FAST -->|sim fast-path| PN[PrintNode raw_base64]
+  FAST -->|não slow-path| BUSCAR[buscarEImprimirEtiqueta<br/>cria agrupamento Tiny<br/>baixa ZIP, extrai ZPL]
+  BUSCAR --> PN
+  PN --> EMB[status=embalado]
+  EMB --> EXP[POST /expedir]
+  EXP --> FINAL[status=expedido]
+</div>
+
+<h3>6.2 Pré-cache de agrupamento</h3>
+<p>Antes do operador bipar, sistema já cria o agrupamento no Tiny e baixa o ZPL — etiqueta sai em &lt; 200ms.</p>
+
+<div class="mermaid">
+sequenceDiagram
+  participant NF as NF webhook
+  participant AG as criarAgrupamentoFase1
+  participant TINY
+  participant DB
+
+  NF->>AG: dispara após salvar chave_acesso
+  AG->>DB: RPC siso_claim_pedidos_para_agrupamento<br/>(atomic claim, sentinela='pending')
+  AG->>TINY: POST /agrupamentos { nf_ids: [...] }
+  TINY-->>AG: { id, expedicao_id }
+  AG->>DB: UPDATE agrupamento_expedicao_id, expedicao_id
+  AG->>TINY: GET /expedicao/{id}/etiquetas (ZIP)
+  AG->>AG: extrai ZPL do ZIP
+  AG->>DB: UPDATE etiqueta_zpl, etiqueta_url, status=impresso
+  Note over AG,DB: na hora de bipar último item,<br/>ZPL já está no banco
+</div>
+
+<h3>6.3 Etiquetas de endereço (utilitário)</h3>
+<p>Rota <code>/wms/etiquetas</code> (legada SISO, mas viva): gera ZPL para faixas de localizações (corredor × horizontal × vertical) em 2 layouts (pequena 2-por-folha e grande rotacionada).</p>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="compras">7. Compras v2 (Ordens de Compra)</h2>
+<p>Módulo <code>/wms/compras</code> com 3 abas: <strong>Comprar</strong>, <strong>Aguardando recebimento</strong>, <strong>Recebidos</strong>. Consolida SKUs por fornecedor. FIFO por aging.</p>
+
+<h3>7.1 Estado de item de compra</h3>
+
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> aguardando_compra: webhook detecta oc
+  aguardando_compra --> comprado: POST /comprar (multi-select)
+  comprado --> recebido: POST /receber (distribui por FIFO)
+  comprado --> indisponivel: POST /itens/[id]/indisponivel
+  indisponivel --> equivalente_proposto: POST /equivalente
+  equivalente_proposto --> recebido: /equivalente/confirmar
+  indisponivel --> cancelamento_proposto: POST /cancelamento
+  cancelamento_proposto --> cancelado: /cancelamento/confirmar
+  recebido --> [*]
+  cancelado --> [*]
+</div>
+
+<h3>7.2 Mapeamento SKU → Fornecedor</h3>
+<p>Determinístico por prefixo (longest-prefix match, case-insensitive). Default: <code>Diversos / CWB</code>.</p>
+
+<details>
+<summary>Tabela completa de prefixos</summary>
+<table>
+<tr><th>Prefixo</th><th>Fornecedor</th><th>Galpão padrão</th></tr>
+<tr><td><code>19</code></td><td>Diversos</td><td>CWB</td></tr>
+<tr><td><code>EW</code>, <code>TG</code></td><td>Tiger</td><td>SP</td></tr>
+<tr><td><code>LD</code></td><td>LDRU</td><td>SP</td></tr>
+<tr><td><code>L0</code></td><td>LEFS</td><td>SP</td></tr>
+<tr><td>6 dígitos numéricos</td><td>ACA</td><td>CWB</td></tr>
+<tr><td><code>GB</code>, <code>GE</code>, <code>GS</code>, <code>GI</code></td><td>GAUSS</td><td>CWB</td></tr>
+<tr><td><code>MK</code>, <code>M0</code>, <code>B0</code></td><td>MRMK</td><td>SP</td></tr>
+<tr><td><code>CAK</code>, <code>CS</code></td><td>Delphi</td><td>SP</td></tr>
+<tr><td><code>KT</code></td><td>Kintop</td><td>SP</td></tr>
+<tr><td><code>MQ</code>, <code>APX</code>, <code>WDC</code>, <code>AT</code>, <code>FD</code>, <code>FI</code>, <code>GM</code>, <code>HO</code>, <code>HY</code>, <code>KI</code>, <code>MAN</code>, <code>MB</code>, <code>NI</code>, <code>PG</code>, <code>RN</code>, <code>SC</code>, <code>TO</code>, <code>UN</code>, <code>VO</code>, <code>VW</code>, <code>AG</code>, <code>BI</code>, <code>BA</code></td><td>Multiqualita</td><td>CWB</td></tr>
+</table>
+</details>
+
+<h3>7.3 Compras-release: liberação pós-recebimento</h3>
+
+<div class="mermaid">
+flowchart TD
+  R[Operador clica Receber] --> API[POST /api/wms/compras/receber]
+  API --> DIST[Distribui qty por FIFO<br/>pedido mais antigo primeiro]
+  DIST --> UPD[UPDATE compra_status=recebido]
+  UPD --> CHK{todos itens OC<br/>do pedido recebidos?}
+  CHK -->|sim| REL[compras-release]
+  CHK -->|não| WAIT[mantém aguardando_compra]
+
+  REL --> ST{já tem NF?}
+  ST -->|sim| AS[status_separacao=aguardando_separacao]
+  ST -->|não| AN[status_separacao=aguardando_nf]
+  AS --> FILA1[INSERT fila lancar_estoque_pos_nf]
+  AN --> FILA2[Worker gera NF → aguarda webhook NF]
+</div>
+
+<h3>7.4 Exceções</h3>
+<table>
+<tr><th>Exceção</th><th>Quando</th><th>Resultado</th></tr>
+<tr><td><strong>Indisponível</strong></td><td>Fornecedor não tem o SKU</td><td>Item entra em banner de exceções</td></tr>
+<tr><td><strong>Equivalente</strong></td><td>Operador propõe SKU alternativo</td><td>2 passos: propor + confirmar; atualiza Tiny via <code>compras-equivalencia</code></td></tr>
+<tr><td><strong>Cancelamento</strong></td><td>Item não vai ser comprado</td><td>2 passos: propor + confirmar; gera crédito; verifica se cancela OC inteira</td></tr>
+<tr><td><strong>Devolver à fila</strong></td><td>Operador desfaz "comprado"</td><td>Volta para aguardando_compra</td></tr>
+<tr><td><strong>Trocar SKU</strong></td><td>SKU do marketplace está errado</td><td><code>POST /api/wms/compras/trocar-sku</code> reescreve + reconsulta produto Tiny</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-estoque">8. WMS — Estoque (Schema 4D + Ledger)</h2>
+
+<div class="callout good">
+<strong>Schema 4D:</strong> cada posição de estoque é única por <strong>(produto, dona, galpão, localização)</strong>. Toda escrita passa pela RPC <code>wms_inserir_movimentacao</code> com lock pessimista.
+</div>
+
+<h3>8.1 Modelo de dados</h3>
+
+<div class="mermaid">
+erDiagram
+  siso_produtos ||--o{ siso_produto_empresas : "N:N (tiny_produto_id)"
+  siso_produtos ||--o{ siso_estoque : "tem saldo em"
+  siso_localizacoes ||--o{ siso_estoque : "abriga"
+  siso_empresas ||--o{ siso_estoque : "é dona de"
+  siso_galpoes ||--o{ siso_localizacoes : "contém"
+  siso_galpoes ||--o{ siso_estoque : "fica em"
+  siso_estoque ||--o{ siso_movimentacoes : "histórico"
+  siso_movimentacoes ||--o| siso_movimentacoes : "estorno_de"
+
+  siso_produtos {
+    uuid id PK
+    text sku UK
+    text descricao
+    text gtin
+    text imagem_url
+    text unidade
+    text ncm
+    bool ativo
+  }
+  siso_estoque {
+    uuid id PK
+    uuid produto_id FK
+    uuid empresa_id FK
+    uuid galpao_id FK
+    uuid localizacao_id FK
+    numeric saldo
+    numeric reservado
+    numeric disponivel "GENERATED"
+    numeric custo_medio
+  }
+  siso_movimentacoes {
+    uuid id PK
+    uuid estoque_id FK
+    char tipo "E S R L"
+    numeric quantidade
+    numeric saldo_anterior
+    numeric saldo_posterior
+    text origem_tipo
+    uuid origem_id
+    uuid estorno_de FK
+  }
+</div>
+
+<h3>8.2 RPC <code>wms_inserir_movimentacao</code></h3>
+
+<div class="mermaid">
+sequenceDiagram
+  participant Caller as API ou Service
+  participant RPC as wms_inserir_movimentacao
+  participant Stock as siso_estoque
+  participant Ledger as siso_movimentacoes
+
+  Caller->>RPC: { produto_id, dona, galpao, loc, tipo, qty, origem_tipo, observacoes }
+  RPC->>Stock: SELECT FOR UPDATE (lock pessimista)
+  alt linha não existe
+    RPC->>Stock: INSERT (saldo=0, reservado=0)
+  end
+  RPC->>RPC: valida saldo>=qty se tipo=S
+  RPC->>RPC: valida reservado<=saldo se tipo=R
+  RPC->>Stock: UPDATE saldo+=delta, reservado+=delta_R
+  RPC->>Ledger: INSERT (saldo_anterior, saldo_posterior, reservado_anterior, reservado_posterior, origem_tipo, ...)
+  RPC-->>Caller: { mov_id, novo_saldo, novo_reservado }
+</div>
+
+<h3>8.3 Tipos de movimentação</h3>
+<table>
+<tr><th>tipo</th><th>Semântica</th><th>origem_tipo (exemplos)</th></tr>
+<tr><td><code>E</code></td><td>Entrada (soma saldo)</td><td><code>recebimento</code>, <code>retorno_nf</code>, <code>devolucao_cliente</code>, <code>transferencia_recebida</code></td></tr>
+<tr><td><code>S</code></td><td>Saída (subtrai saldo)</td><td><code>nf_venda</code>, <code>transferencia_envio</code>, <code>ajuste_negativo</code>, <code>perda</code></td></tr>
+<tr><td><code>R</code></td><td>Reserva (move pra reservado)</td><td><code>reserva_pedido</code>, <code>emprestimo</code></td></tr>
+<tr><td><code>L</code></td><td>Libera reserva</td><td><code>reserva_cancelada</code>, <code>reserva_expirada</code></td></tr>
+</table>
+
+<h3>8.4 Perspectivas de visualização</h3>
+<p>Tela <code>/wms/estoque</code> mostra os mesmos dados em 4 ângulos:</p>
+<ul>
+  <li><strong>Por dona</strong> — soma por empresa</li>
+  <li><strong>Por galpão</strong> — soma por local físico</li>
+  <li><strong>Por localização</strong> — saldo em cada endereço</li>
+  <li><strong>Por produto</strong> — todas posições de um SKU</li>
+</ul>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-receber">9. WMS — Recebimento em 2 Etapas</h2>
+<p>Implementado 2026-05-14. Quebra recebimento em duas fases pra alinhar com fluxo físico.</p>
+
+<div class="mermaid">
+flowchart LR
+  subgraph dock [Etapa 1: Dock RECEBIMENTO]
+    A[/wms/receber] --> B[Operador escolhe<br/>produto + qty + empresa<br/>+ loc destino opcional]
+    B --> C[POST /api/wms/receber]
+    C --> D[Mov tipo=E em loc RECEBIMENTO]
+    D --> E[INSERT siso_wms_pendencias_guarda<br/>1 linha por linha do recebimento]
+    E --> ETIQ{imprimir etiquetas?}
+    ETIQ -->|sim| LBL[POST /guarda/imprimir-lote<br/>ZPL 2-por-folha N etiquetas]
+  end
+
+  subgraph tablet [Etapa 2: Put-away no tablet]
+    F[/wms/guarda] --> G[Fila agrupada por lote_id]
+    G --> H{Ação}
+    H -->|Iniciar rota| ROTA[/wms/guarda/rota]
+    H -->|Individual| IND[/wms/guarda/id]
+    ROTA --> BIPA[Operador bipa loc destino + qty]
+    IND --> BIPA
+    BIPA --> CONF[POST /guarda/id/confirmar]
+    CONF --> MOV[Mov par S+E<br/>RECEBIMENTO → loc destino<br/>origem_tipo=replenishment_intra]
+    MOV --> UPD[pendência<br/>qty_guardada+=qty]
+    UPD --> CHECK{guardada total?}
+    CHECK -->|sim| DONE[status=guardada]
+    CHECK -->|não| PEND[mantém pendente]
+  end
+
+  E --> F
+</div>
+
+<h3>9.1 Rotas WMS Recebimento/Guarda</h3>
+<table>
+<tr><th>Rota</th><th>Função</th></tr>
+<tr><td><span class="badge b-post">POST</span> /api/wms/receber</td><td>Cria mov entrada + pendências de guarda</td></tr>
+<tr><td><span class="badge b-get">GET</span> /api/wms/guarda</td><td>Lista pendências (filtros galpão, status)</td></tr>
+<tr><td><span class="badge b-get">GET</span> /api/wms/guarda/rota</td><td>Pendências ordenadas por loc destino</td></tr>
+<tr><td><span class="badge b-get">GET</span> /api/wms/guarda/[id]</td><td>Detalhe + sugestão putaway</td></tr>
+<tr><td><span class="badge b-post">POST</span> /guarda/[id]/iniciar</td><td>status=em_guarda</td></tr>
+<tr><td><span class="badge b-post">POST</span> /guarda/[id]/confirmar</td><td>Mov par S+E + atualiza qty</td></tr>
+<tr><td><span class="badge b-post">POST</span> /guarda/[id]/cancelar</td><td>Cancela com motivo</td></tr>
+<tr><td><span class="badge b-post">POST</span> /guarda/[id]/imprimir</td><td>Etiqueta do produto</td></tr>
+<tr><td><span class="badge b-post">POST</span> /guarda/imprimir-lote</td><td>Maço inteiro</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-movs">10. WMS — Movimentações Operacionais</h2>
+
+<h3>10.1 Transferência inter-galpão</h3>
+<div class="mermaid">
+flowchart LR
+  T[/wms/transferir] --> API[POST /transferir-galpao]
+  API --> MS[Mov S<br/>origem galpão A<br/>tipo=transferencia_envio]
+  API --> ME[Mov E<br/>destino galpão B<br/>tipo=transferencia_recebida<br/>origem_id=ME.id]
+  MS -.linkado.-> ME
+</div>
+
+<h3>10.2 Replenishment intra-galpão</h3>
+<p>Mover entre localizações no mesmo galpão (ex: tira do overstock pro picking).</p>
+<div class="mermaid">
+flowchart LR
+  R[/wms/replenishment] --> API[POST /replenishment]
+  API --> MS[Mov S<br/>loc origem]
+  API --> ME[Mov E<br/>loc destino<br/>mesmo galpão]
+</div>
+
+<h3>10.3 Ajuste manual com motivo</h3>
+<table>
+<tr><th>Motivo</th><th>Tipo</th></tr>
+<tr><td>Encontrado</td><td><code>E</code> origem_tipo=<code>ajuste_positivo</code></td></tr>
+<tr><td>Perda / quebra</td><td><code>S</code> origem_tipo=<code>perda</code></td></tr>
+<tr><td>Correção sistêmica</td><td><code>E</code>/<code>S</code> origem_tipo=<code>ajuste_correcao</code></td></tr>
+</table>
+
+<h3>10.4 Lançamento retroativo</h3>
+<p>Para emergências (sistema fora do ar). Operador registra mov com timestamp passado; depois, quando o sistema volta, reconcilia com mov "real" inserindo estorno.</p>
+<div class="mermaid">
+sequenceDiagram
+  actor Op as Operador
+  Op->>API: POST /lancamento-retroativo<br/>{ data_evento, qty, motivo }
+  API->>DB: Mov com timestamp passado
+  DB-->>Op: pendência registrada
+  Note over Op,DB: Tempo depois...
+  Op->>API: POST /lancamento-retroativo/[id]/reconciliar
+  API->>DB: INSERT mov estorno (se mov real veio diferente)
+  API->>DB: marca pendência reconciliada
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-inventario">11. WMS — Inventário (Pull Queue + Claim Hierárquico)</h2>
+<p>v2 reescrita 2026-05-12. Substituiu divisão estática por pool compartilhado com slots OP1..OP5 e pull queue.</p>
+
+<h3>11.1 Estados de sessão</h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> planejada: criar sessão
+  planejada --> em_andamento: primeiro operador entra (auto)
+  em_andamento --> revisao: supervisor encerra (parcial ou total)
+  em_andamento --> cancelada: supervisor cancela
+  revisao --> aprovada: supervisor aprova divergências
+  aprovada --> aplicada: aplica movs origem=inventario
+  aplicada --> [*]
+  cancelada --> [*]
+</div>
+
+<h3>11.2 3 tipos de sessão</h3>
+<table>
+<tr><th>Tipo</th><th>Como escolhe locs</th></tr>
+<tr><td><strong>Inteligente</strong></td><td>RPC <code>wms_inventario_sugerir</code>: 50% curva A + 30% divergentes 60d + 20% sem contagem 30d+</td></tr>
+<tr><td><strong>Manual</strong></td><td>Supervisor seleciona locs no UI</td></tr>
+<tr><td><strong>Completo</strong></td><td>Todas as locs do galpão</td></tr>
+</table>
+
+<h3>11.3 Claim hierárquico (rua &gt; prédio &gt; buffer &gt; colisão)</h3>
+<p>Endereço = rua-prédio-andar (ex: <code>A-03-02</code>). Operador "reivindica" uma unidade e desce nela até esgotar.</p>
+
+<div class="mermaid">
+flowchart TD
+  START([wms_inventario_proxima_loc]) --> P1{tem claim ativo?}
+  P1 -->|sim| F1[Fase 1: próxima loc<br/>dentro do claim<br/>respeita direção]
+  P1 -->|não| P2{rua livre<br/>sem nenhum op?}
+  P2 -->|sim| F2A[Fase 2a: claim rua<br/>com mais pendentes]
+  P2 -->|não| P3{prédio com<br/>buffer ≥1?}
+  P3 -->|sim| F2B[Fase 2b: claim prédio<br/>+ auto-degrade rua adjacente]
+  P3 -->|não| P4{último prédio<br/>+ já 1 op?}
+  P4 -->|sim| F2D[Fase 2d: claim colisão<br/>direção desc, máx 2 ops]
+  P4 -->|não| P5{prédio mais distante?}
+  P5 -->|sim| F2C[Fase 2c: distância máxima<br/>sem buffer]
+  P5 -->|não| EMPTY[pool_vazio: true]
+  F1 --> RET[Retorna loc<br/>lock atômico]
+  F2A --> RET
+  F2B --> RET
+  F2C --> RET
+  F2D --> RET
+</div>
+
+<h3>11.4 Fluxo do operador (handheld)</h3>
+<div class="mermaid">
+sequenceDiagram
+  actor Op
+  participant H as /wms/inventario/[id]/contar
+  participant API as /api/wms/inventario
+  participant DB
+
+  Op->>H: seleciona slot OP1..OP5
+  H->>API: POST /slots/[slot]/entrar
+  API->>DB: INSERT siso_inventario_operadores
+  Note over API,DB: auto-inicia sessão se planejada
+
+  loop loop de contagem
+    Op->>H: botão "PRÓXIMA LOC"
+    H->>API: POST /proxima-loc
+    API->>DB: RPC wms_inventario_proxima_loc<br/>(claim hierárquico)
+    DB-->>API: { loc, claim_tipo, claim_codigo, direcao }
+    API-->>H: payload loc
+    Op->>H: confirma loc (QR ou manual)
+    loop bipar produtos
+      Op->>H: bipa SKU
+      H->>API: POST /contagens
+      API->>DB: INSERT siso_inventario_contagens
+    end
+    Op->>H: finalizar loc
+    H->>API: POST /localizacoes/[locId]/finalizar
+    API->>DB: status=contada, libera lock
+  end
+
+  Op->>H: sair do slot
+  H->>API: DELETE /slots
+  API->>DB: trigger limpa claim
+</div>
+
+<h3>11.5 Aprovação e aplicação</h3>
+<div class="mermaid">
+flowchart LR
+  R[Supervisor abre revisão] --> CMP[POST /aprovar<br/>computa divergências]
+  CMP --> DIV[(siso_inventario_divergencias)]
+  DIV --> DEC{Por divergência}
+  DEC -->|aprovar| APV[status=aprovada]
+  DEC -->|rejeitar| REJ[status=rejeitada, ignora]
+  APV --> APL[POST /aplicar]
+  APL --> MOV[Mov origem=inventario<br/>delta = qty_contada - saldo_sistema]
+  MOV --> LEDGER[(siso_movimentacoes)]
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-devolucoes">12. WMS — Devoluções (Classificação A/B/C/D)</h2>
+
+<div class="mermaid">
+flowchart TD
+  NF[Webhook NF entrada<br/>detecta devolução] --> Q[INSERT siso_devolucoes_pendentes]
+  Q --> UI[/wms/devolucoes]
+  UI --> CLS{Operador classifica}
+  CLS -->|A íntegro| A[Volta ao estoque<br/>mov E + recálculo custo médio]
+  CLS -->|B avariado| B[Vai pra QUARENTENA<br/>mov E em loc=quarentena]
+  CLS -->|C garantia| C[Encaminha pro RMA<br/>fornecedor]
+  CLS -->|D troca SKU| D[Mov par estorno + entrada<br/>do SKU novo]
+  A --> APL[status=aplicada]
+  B --> APL
+  C --> APL
+  D --> APL
+</div>
+
+<table>
+<tr><th>Classe</th><th>O que é</th><th>Destino</th></tr>
+<tr><td><strong>A</strong></td><td>Produto íntegro, voltou perfeito</td><td>Estoque normal (recálculo custo médio)</td></tr>
+<tr><td><strong>B</strong></td><td>Avariado, precisa reparo</td><td>Localização quarentena</td></tr>
+<tr><td><strong>C</strong></td><td>Defeito de fábrica → garantia</td><td>RMA com fornecedor</td></tr>
+<tr><td><strong>D</strong></td><td>Cliente pediu SKU diferente</td><td>Estorno + entrada do novo SKU</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-mini-swap">13. WMS — Mini-Swap Intra-Galpão</h2>
+<p>Antes de iniciar wave picking, consolida estoque das empresas no mesmo galpão em 1 loc canônica via swap (zero dívida) + empréstimo (limitado pelo roteamento).</p>
+
+<div class="mermaid">
+flowchart LR
+  WAVE[Wave picking iniciada] --> CHK{mini-swap ativo<br/>no galpão?}
+  CHK -->|não| GO[Wave segue normal]
+  CHK -->|sim| SIM[planejarMiniSwap<br/>algoritmo puro]
+  SIM --> PLAN{plano viável?}
+  PLAN -->|sim| EXEC[RPC wms_executar_mini_swap<br/>lock pessimista]
+  PLAN -->|não| GO
+  EXEC --> SWAP[Movs swap N×N<br/>zero dívida]
+  EXEC --> EMP[Movs empréstimo<br/>respeita limites por par+produto]
+  SWAP --> GO
+  EMP --> GO
+</div>
+
+<div class="callout">
+<strong>Graceful degradation:</strong> qualquer falha no mini-swap → wave segue sem otimização. Toggle on/off por galpão em <code>/wms/configuracoes/otimizacoes</code>.
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="wms-roteamento">14. WMS — Roteamento + Empréstimos</h2>
+
+<h3>14.1 Geo-priority</h3>
+<table>
+<tr><th>Distância</th><th>Score</th></tr>
+<tr><td>Galpão preferencial da empresa (home)</td><td>0</td></tr>
+<tr><td>Mesma cidade</td><td>1</td></tr>
+<tr><td>Mesmo estado</td><td>2</td></tr>
+<tr><td>Outro estado</td><td>3</td></tr>
+</table>
+
+<h3>14.2 Reservas atômicas com TTL</h3>
+<div class="mermaid">
+sequenceDiagram
+  participant API
+  participant RPC as wms_reservar_atomico
+  participant Stock
+  participant Cron
+
+  API->>RPC: { produto, dona, galpao, loc, qty, ttl_horas=48 }
+  RPC->>Stock: lock + valida disponivel >= qty
+  RPC->>Stock: reservado += qty
+  RPC->>Stock: INSERT mov tipo=R, expira_em=now()+48h
+  RPC-->>API: { mov_id }
+
+  Note over Cron: cron cada hora
+  Cron->>API: GET /reservas/cleanup (worker secret)
+  API->>RPC: wms_inserir_movimentacao tipo=L<br/>onde expira_em < now()
+</div>
+
+<h3>14.3 Matriz de empréstimos N×N</h3>
+<p>Direcional credora → devedora. Constraint <code>CHECK credora != devedora</code>. Tem <code>limites_por_produto jsonb</code> por SKU + <code>limite_max_por_produto numeric</code> global.</p>
+
+<div class="mermaid">
+flowchart LR
+  PED[Pedido empresa A<br/>sem estoque local] --> ROT[rotear]
+  ROT --> ENC{empresa B<br/>mesmo grupo<br/>tem saldo?}
+  ENC -->|sim| RG[Consulta siso_emprestimo_regras<br/>onde credora=B, devedora=A]
+  RG --> LIM{dentro do limite?}
+  LIM -->|sim| MOV[Mov emprestimo<br/>B→A]
+  LIM -->|não| FAIL[Roteamento falha]
+  MOV --> SD[(siso_movimentacoes<br/>origem_tipo=emprestimo)]
+  SD --> SALDO[wms_saldos_devedores<br/>RPC bidirecional]
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="cross">15. Módulo Cross (Catálogo / OEM / Equivalência)</h2>
+
+<div class="mermaid">
+flowchart TD
+  S[/wms/cross] --> Q[Busca SKU/OEM/nome]
+  Q --> API[GET /api/wms/cross/search]
+  API --> CACHE[(siso_produtos_catalogo<br/>cache Tiny)]
+  CACHE --> RES[Lista resultados]
+  RES --> D[/wms/cross/[sku]]
+  D --> DET[GET /produtos/[sku]]
+  DET --> LAZY{cache stale?}
+  LAZY -->|sim| FETCH[refetch Tiny ⚡]
+  LAZY -->|não| SHOW[Mostra ficha]
+  FETCH --> SHOW
+  SHOW --> OEMS[OEMs<br/>siso_produto_oems]
+  SHOW --> VEIC[Veículos compatíveis<br/>siso_produto_veiculos]
+  SHOW --> EQUIV[Equivalentes<br/>via OEM compartilhado]
+  SHOW --> ADD{Operador edita}
+  ADD -->|+ OEM| POEM[POST /oems]
+  ADD -->|+ Veículo| PVEIC[POST /veiculos]
+  ADD -->|Link manual| LNK[POST /links<br/>equivalência direta]
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="insights">16. Insights &amp; Dashboards</h2>
+
+<h3>16.1 Hub de insights</h3>
+<div class="mermaid">
+flowchart LR
+  HUB[/wms/insights] --> P[Pessoas KPIs]
+  HUB --> F[Fluxo operacional]
+  HUB --> E[Estoque]
+  HUB --> FI[Financeiro]
+  HUB --> D[Devoluções]
+  HUB --> R[Regras]
+
+  R --> RC{CRUD regras}
+  RC --> RT[Test regra]
+  RC --> ATIVOS[Alertas ativos]
+  ATIVOS --> DISP[Dispensar alerta]
+
+  CRON[Cron worker secret] --> REF[POST /insights/refresh<br/>recomputa agregados]
+</div>
+
+<h3>16.2 Dashboard geral</h3>
+<p>Tela <code>/wms/dashboard</code>. Refresh 30s. Agrega 7 contadores cross-módulo via RPC.</p>
+
+<table>
+<tr><th>Card</th><th>O que mostra</th></tr>
+<tr><td>Pedidos pendentes</td><td>status=pendente em /wms/pedidos</td></tr>
+<tr><td>Em separação</td><td>status_separacao=em_separacao</td></tr>
+<tr><td>Aguardando recebimento</td><td>compras tab Receber</td></tr>
+<tr><td>Cobertura crítica</td><td>siso_cobertura_estoque status=critico</td></tr>
+<tr><td>Inventários abertos</td><td>siso_inventario_sessoes em_andamento</td></tr>
+<tr><td>Devoluções pendentes</td><td>siso_devolucoes_pendentes aguardando</td></tr>
+<tr><td>Pendências de guarda</td><td>siso_wms_pendencias_guarda pendente</td></tr>
+</table>
+
+<h3>16.3 Cobertura por giro</h3>
+<p>Materialized view <code>siso_cobertura_estoque</code> agrega disponível + giro 30d + lead time fornecedor preferencial.</p>
+
+<table>
+<tr><th>Status</th><th>Significado</th></tr>
+<tr><td><code>ok</code></td><td>Cobertura suficiente pro giro projetado</td></tr>
+<tr><td><code>atencao</code></td><td>Coberto, mas cobertura cai abaixo do limite seguro em breve</td></tr>
+<tr><td><code>critico</code></td><td>Saldo abaixo do giro projetado pra próximo período</td></tr>
+<tr><td><code>lead_time_risco</code></td><td>Coberto agora mas lead time do fornecedor excede a queda projetada</td></tr>
+<tr><td><code>sem_giro</code></td><td>Sem vendas 30d</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="estados">17. Máquinas de Estado Consolidadas</h2>
+
+<h3>17.1 <code>siso_pedidos.status</code></h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> pendente: webhook (não-auto)
+  [*] --> executando: webhook (auto-aprov.)
+  pendente --> executando: aprovar
+  pendente --> cancelado: webhook cancelamento
+  executando --> concluido: worker ok
+  executando --> erro: max tentativas
+  executando --> cancelado: webhook cancelamento
+  erro --> executando: reprocessar
+  erro --> cancelado: webhook
+  concluido --> [*]
+  cancelado --> [*]
+</div>
+
+<h3>17.2 <code>siso_pedidos.status_separacao</code></h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> aguardando_compra: oc
+  [*] --> aguardando_nf: propria/transferencia
+  aguardando_compra --> aguardando_nf: compras-release
+  aguardando_compra --> aguardando_separacao: compras-release com NF
+  aguardando_nf --> aguardando_separacao: webhook NF
+  aguardando_nf --> aguardando_separacao: admin force
+  validacao_oc --> em_separacao: iniciar (sem oc_pendente)
+  aguardando_separacao --> em_separacao: iniciar
+  em_separacao --> separado: concluir
+  em_separacao --> aguardando_compra: parcial OC
+  em_separacao --> pendente_realocacao: short pick sem cobertura
+  pendente_realocacao --> em_separacao: desfazer-parcial
+  em_separacao --> aguardando_separacao: cancelar
+  separado --> embalado: bipar-embalagem completo
+  embalado --> expedido: expedir
+  expedido --> [*]
+</div>
+
+<h3>17.3 <code>siso_fila_execucao.status</code></h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> pendente
+  pendente --> executando: atomic claim
+  executando --> concluido: ok
+  executando --> pendente: retry (proximo_retry_em exponencial)
+  executando --> erro: tentativas >= max
+  executando --> cancelado: pedido cancelado
+  pendente --> cancelado: webhook cancelamento
+  concluido --> [*]
+  erro --> [*]
+  cancelado --> [*]
+</div>
+
+<h3>17.4 <code>siso_inventario_sessoes.status</code></h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> planejada
+  planejada --> em_andamento: 1º operador entra
+  planejada --> cancelada: supervisor cancela
+  em_andamento --> revisao: encerrar (parcial ou total)
+  em_andamento --> cancelada
+  revisao --> aprovada: aprovar divergências
+  aprovada --> aplicada: aplicar movs
+  aplicada --> [*]
+  cancelada --> [*]
+</div>
+
+<h3>17.5 Compra item (<code>compra_status</code>)</h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> aguardando_compra: webhook detecta oc
+  aguardando_compra --> comprado: marcar comprado
+  aguardando_compra --> cancelado: cancelar item
+  comprado --> recebido: receber FIFO
+  comprado --> indisponivel: marcar indisponível
+  indisponivel --> equivalente_proposto: propor equiv
+  equivalente_proposto --> recebido: confirmar
+  indisponivel --> cancelamento_proposto: propor cancel
+  cancelamento_proposto --> cancelado: confirmar
+  recebido --> [*]
+  cancelado --> [*]
+</div>
+
+<h3>17.6 <code>siso_wms_pendencias_guarda.status</code></h3>
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> pendente: receber cria
+  pendente --> em_guarda: operador inicia
+  em_guarda --> guardada: confirmar (qty_guardada = qty_inicial)
+  em_guarda --> pendente: confirmar parcial
+  pendente --> cancelada: cancelar com motivo
+  em_guarda --> cancelada
+  guardada --> [*]
+  cancelada --> [*]
+</div>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="tabelas">18. Tabelas do Banco (Resumo)</h2>
+
+<h3>18.1 Núcleo (pedidos + execução)</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_pedidos</code></td><td>Pedidos com sugestão, status, decisão, marcadores</td></tr>
+<tr><td><code>siso_pedido_itens</code></td><td>Itens por pedido (FK produto, quantidades bipadas)</td></tr>
+<tr><td><code>siso_pedido_item_estoques</code></td><td>Estoque normalizado por empresa (legado, será descontinuado)</td></tr>
+<tr><td><code>siso_pedido_item_realocacoes</code></td><td>Re-alocação por short pick</td></tr>
+<tr><td><code>siso_fila_execucao</code></td><td>Fila de jobs do worker (retry exponencial)</td></tr>
+<tr><td><code>siso_pedido_historico</code></td><td>Audit trail imutável</td></tr>
+<tr><td><code>siso_ordens_compra</code></td><td>OCs consolidadas por fornecedor</td></tr>
+</table>
+
+<h3>18.2 WMS Foundation</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_produtos</code></td><td>Catálogo unificado (sku, descricao, gtin, imagem)</td></tr>
+<tr><td><code>siso_produto_empresas</code></td><td>N:N produto ↔ tiny_produto_id por empresa</td></tr>
+<tr><td><code>siso_localizacoes</code></td><td>Localizações do galpão (picking, overstock, recebimento...)</td></tr>
+<tr><td><code>siso_estoque</code></td><td>Cache 4D: saldo + reservado + custo_medio por (produto, dona, galpão, loc)</td></tr>
+<tr><td><code>siso_movimentacoes</code></td><td><strong>Ledger imutável.</strong> Toda mov tem saldo_anterior/posterior</td></tr>
+</table>
+
+<h3>18.3 WMS Operações</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_wms_pendencias_guarda</code></td><td>Fila de put-away (1 por linha de recebimento)</td></tr>
+<tr><td><code>siso_fornecedores</code></td><td>Fornecedores únicos com lead time default</td></tr>
+<tr><td><code>siso_produto_fornecedores</code></td><td>Relação produto↔fornecedor (override de lead time, custo, qty mín)</td></tr>
+<tr><td><code>siso_emprestimo_regras</code></td><td>Matriz N×N credora→devedora com limites por SKU</td></tr>
+<tr><td><code>siso_localizacao_locks</code></td><td>Locks operacionais (cycle_count, manutencao)</td></tr>
+<tr><td><code>siso_devolucoes_pendentes</code></td><td>Fila NFs entrada esperando classificação</td></tr>
+<tr><td><code>siso_wms_mini_swap_config</code></td><td>Toggle mini-swap por galpão</td></tr>
+</table>
+
+<h3>18.4 WMS Inventário v2</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_inventario_sessoes</code></td><td>Sessão master (tipo, modo, tolerância)</td></tr>
+<tr><td><code>siso_inventario_operadores</code></td><td>Slots OP1..OP5 + claim hierárquico (rua/prédio/colisão)</td></tr>
+<tr><td><code>siso_inventario_localizacoes</code></td><td>Pool de locs da sessão (status + lock)</td></tr>
+<tr><td><code>siso_inventario_contagens</code></td><td>Cada bipe individual indexado por quádrupla</td></tr>
+<tr><td><code>siso_inventario_divergencias</code></td><td>Sistema vs contagem (delta + delta_pct GENERATED)</td></tr>
+</table>
+
+<h3>18.5 Hierarquia &amp; Auth</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_galpoes</code></td><td>Locais físicos + config impressora</td></tr>
+<tr><td><code>siso_empresas</code></td><td>Contas Tiny (CNPJ unique). <code>galpao_id</code> deprecado.</td></tr>
+<tr><td><code>siso_empresa_galpoes_preferenciais</code></td><td>N:N preferências (geo-priority=0)</td></tr>
+<tr><td><code>siso_grupos</code></td><td>Grupos de afinidade (legado SISO)</td></tr>
+<tr><td><code>siso_grupo_empresas</code></td><td>Tier por empresa no grupo (legado SISO)</td></tr>
+<tr><td><code>siso_usuarios</code></td><td>Users com PIN + cargos[]</td></tr>
+<tr><td><code>siso_sessoes</code></td><td>Sessões server-side (token + expira_em)</td></tr>
+<tr><td><code>siso_tiny_connections</code></td><td>OAuth2 por empresa</td></tr>
+</table>
+
+<h3>18.6 Cross + observabilidade</h3>
+<table>
+<tr><th>Tabela</th><th>Função</th></tr>
+<tr><td><code>siso_produtos_catalogo</code></td><td>Cache Tiny do Cross</td></tr>
+<tr><td><code>siso_produto_oems</code></td><td>Códigos OEM por produto (audit)</td></tr>
+<tr><td><code>siso_produto_veiculos</code></td><td>Compatibilidade veicular (audit)</td></tr>
+<tr><td><code>siso_cross_logs</code></td><td>Telemetria de buscas</td></tr>
+<tr><td><code>siso_webhook_logs</code></td><td>Dedup + status webhooks</td></tr>
+<tr><td><code>siso_api_calls</code></td><td>Tracking de chamadas Tiny</td></tr>
+<tr><td><code>siso_logs</code></td><td>Logs estruturados</td></tr>
+<tr><td><code>siso_erros</code></td><td>Erros com stack trace + categoria + correlação</td></tr>
+<tr><td><code>siso_configuracoes</code></td><td>KV store (PrintNode key, webhook URL...)</td></tr>
+</table>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="rotas">19. Catálogo Completo de Rotas API</h2>
+
+<details open>
+<summary><strong>Auth (2 rotas)</strong></summary>
+<table>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/auth/login</td><td>PIN auth</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/auth/me</td><td>Sessão atual</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Webhook + Worker</strong></summary>
+<table>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/wms/webhook/tiny</td><td>Único endpoint (pedido + NF + cancel)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/wms/webhook/reprocessar</td><td>Retry de webhooks falhos</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/wms/worker/processar</td><td>Dispara loop (WORKER_SECRET)</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Pedidos (5 rotas)</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/pedidos</td><td>Lista com filtros status</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/pedidos/tracking</td><td>Tracking universal</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/wms/pedidos/aprovar</td><td>Aprova + enfileira execução</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/pedidos/[id]/detalhe</td><td>Detalhe consolidado</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/pedidos/[id]/historico</td><td>Timeline audit</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/api/wms/pedidos/[id]/observacoes</td><td>Comentários</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Separação (29 rotas)</strong> — vide §5.3</summary>
+</details>
+
+<details>
+<summary><strong>Compras (16 rotas)</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/compras</td><td>Lista itens (?tab=)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/comprar</td><td>Marca comprado (multi-select)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/receber</td><td>Distribui qty por FIFO</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/preparar-embalagem</td><td>Stage pra packing</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/trocar-sku</td><td>Substitui SKU + reconsulta Tiny</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/compras/ordens</td><td>OCs por fornecedor</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/compras/conferencia/[ocId]</td><td>Receber itens da OC</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/pedidos/[id]/cancelar</td><td>Cancela decisão</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/indisponivel</td><td>Marca indisponível</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/devolver</td><td>Volta pra fila</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/cancelamento</td><td>Propõe cancelamento</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/cancelamento/confirmar</td><td>Confirma cancel</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/equivalente</td><td>Propõe SKU equivalente</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/compras/itens/[id]/equivalente/confirmar</td><td>Confirma equivalente</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Cross (14 rotas)</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span></td><td>/api/wms/cross/search</td><td>Busca SKU/OEM/nome</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/produtos/[sku]</td><td>Detalhe + lazy fetch</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/cross/produtos/[sku]/refetch</td><td>Força sync Tiny</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/cross/produtos/[sku]/oems</td><td>+ OEM</td></tr>
+<tr><td><span class="badge b-delete">DELETE</span></td><td>/cross/produtos/[sku]/oems/[codigo]</td><td>- OEM</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/cross/produtos/[sku]/veiculos</td><td>+ Veículo</td></tr>
+<tr><td><span class="badge b-delete">DELETE</span></td><td>/cross/produtos/[sku]/veiculos/[id]</td><td>- Veículo</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/produtos/[sku]/equivalentes-rapidos</td><td>Curtos via OEM</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/produtos/[sku]/estoque</td><td>Saldo agregado</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/produtos/[sku]/has-cross</td><td>Flag rápida</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/cross/produtos/[sku]/links</td><td>Links manuais</td></tr>
+<tr><td><span class="badge b-delete">DELETE</span></td><td>/cross/produtos/[sku]/links/[skuAlvo]</td><td>- Link</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/sugestoes/marcas</td><td>Sugere marca</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cross/sugestoes/modelos</td><td>Sugere modelo</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>WMS — Produtos / Localizações / Estoque / Ledger</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/api/wms/produtos</td><td>Catálogo</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-patch">PATCH</span></td><td>/produtos/[id]</td><td>Detalhe</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/produtos/[id]/sync</td><td>Sync com Tiny</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/produtos/[id]/kit</td><td>Componentes de kit</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/produtos/[id]/ultimas-contagens</td><td>Por loc+dona</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/produtos/backfill-imagens</td><td>Admin</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/localizacoes</td><td>Por galpão</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/localizacoes/lote</td><td>Cria em lote</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/localizacoes/[id]</td><td>Protege saldo>0</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/localizacoes/[id]/saldos</td><td>Saldos > 0</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/localizacoes/[id]/substituir-e-excluir</td><td>Migra tudo + desativa</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/estoque?view=dono|galpao|localizacao|produto</td><td>4 perspectivas</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/ledger</td><td>Histórico imutável (filtros)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/snapshot-inicial</td><td>Bulk-load Tiny (admin, ?dryRun)</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/reconciliacao?fix=true</td><td>Ledger ↔ cache (worker secret)</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>WMS — Movimentações Operacionais</strong></summary>
+<table>
+<tr><td><span class="badge b-post">POST</span></td><td>/api/wms/receber</td><td>Dock RECEBIMENTO + pendências</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/transferir-galpao</td><td>Inter-galpão (par S+E)</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/transferencias</td><td>Lista + sessões</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/transferencias/[id]/cancelar</td><td>Cancela</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/transferencias/[id]/receber</td><td>Recebe</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/replenishment</td><td>Intra-galpão</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/ajuste</td><td>Manual com motivo</td></tr>
+<tr><td><span class="badge b-post">POST</span>/<span class="badge b-get">GET</span></td><td>/lancamento-retroativo</td><td>Emergência</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/lancamento-retroativo/[id]/reconciliar</td><td>Reconcilia com mov real</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>WMS — Guarda (Put-away)</strong> — vide §9.1</summary>
+</details>
+
+<details>
+<summary><strong>WMS — Inventário</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/api/wms/inventario</td><td>Lista + criar sessão</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/sugerir</td><td>RPC sugestão inteligente</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/inventario/[id]</td><td>Sessão completa</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/iniciar</td><td>Cria locks</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/slots/[slot]/entrar</td><td>Operador assume OP{n}</td></tr>
+<tr><td><span class="badge b-delete">DELETE</span></td><td>/inventario/[id]/slots</td><td>Sai do slot</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/proxima-loc</td><td>Pull queue + claim</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/localizacoes/[locId]/finalizar</td><td>Finaliza loc</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/aprovar</td><td>Computa divergências</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/aprovar-sessao</td><td>Aprova sessão inteira</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/aplicar</td><td>Gera movs origem=inventario</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/inventario/[id]/contagens</td><td>Registra bipe</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-patch">PATCH</span></td><td>/inventario/[id]/divergencias</td><td>Aprovar/rejeitar</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/inventario/metricas</td><td>Acuracidade operador+loc</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/inventario/cleanup</td><td>Libera locks órfãos (worker secret)</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>WMS — Fornecedores + Empréstimos</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/fornecedores</td><td>CRUD</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/fornecedores/[id]</td><td>Soft delete</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/fornecedores/auto-cadastro</td><td>Admin: semeia mapeamento canônico</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/produto-fornecedores</td><td>Vínculo produto↔fornecedor</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/emprestimo-regras</td><td>Matriz N×N</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/emprestimo-regras/[id]</td><td>Update/remove</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-patch">PATCH</span></td><td>/emprestimo-regras/[id]/limites</td><td>Limites por produto (jsonb)</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/emprestimos/saldos</td><td>Saldo devedor líquido</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/rotear</td><td>Testa algoritmo</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/reservas/cleanup</td><td>Libera expiradas (worker secret)</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>WMS — Devoluções + Dashboards + Mini-Swap</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span></td><td>/devolucoes</td><td>Fila pendente</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/devolucoes/[id]/classificar</td><td>A/B/C/D</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cobertura</td><td>Por giro</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/cobertura/refresh</td><td>Refresh MV (worker secret)</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/dashboard-geral</td><td>7 contadores</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/mini-swap/config</td><td>Lista config</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span></td><td>/mini-swap/config/[galpaoId]</td><td>Toggle (admin)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/mini-swap/simular</td><td>Dry-run</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/swap/detectar</td><td>Swap N×N</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/swap/executar</td><td>Aplica</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Insights</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/hub</td><td>Dashboard</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/pessoas</td><td>Lista + KPIs</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/pessoas/[id]</td><td>Detalhe</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/fluxo</td><td>Fluxo operacional</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/estoque</td><td>Insights estoque</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/financeiro</td><td>Financeiro</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/insights/devolucoes</td><td>Devoluções</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/insights/regras</td><td>CRUD regras</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/insights/regras/[id]</td><td>Update/del</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/insights/regras/[id]/test</td><td>Testa</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/insights/refresh</td><td>Refresh (worker secret)</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/insights/ativos/[id]/dispensar</td><td>Dispensa alerta</td></tr>
+</table>
+</details>
+
+<details>
+<summary><strong>Admin / Tiny OAuth / Mercado Livre</strong></summary>
+<table>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span>/<span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/admin/usuarios</td><td>CRUD users</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/admin/galpoes</td><td>CRUD (GET com hierarquia)</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/admin/galpoes/[id]</td><td>Update/del</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-post">POST</span></td><td>/admin/empresas</td><td>CRUD</td></tr>
+<tr><td><span class="badge b-patch">PATCH</span>/<span class="badge b-delete">DELETE</span></td><td>/admin/empresas/[id]</td><td>Update/del</td></tr>
+<tr><td>—</td><td>/admin/grupos[/...]</td><td>Legacy SISO mantido pra compat</td></tr>
+<tr><td><span class="badge b-get">GET</span>/<span class="badge b-put">PUT</span>/<span class="badge b-delete">DELETE</span></td><td>/admin/printnode/api-key</td><td>PrintNode key</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/admin/printnode/printers</td><td>Lista impressoras</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/admin/printnode/test</td><td>Test print</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/admin/backfill-agrupamentos</td><td>Backfill Tiny</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/admin/backfill-lvr</td><td>Backfill LVR</td></tr>
+<tr><td>—</td><td>/tiny/connections[/...]</td><td>CRUD OAuth</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/tiny/test-connection</td><td>Testa conexão</td></tr>
+<tr><td><span class="badge b-get">GET</span></td><td>/tiny/deposits</td><td>Lista depósitos</td></tr>
+<tr><td><span class="badge b-post">POST</span></td><td>/tiny/stock/ajustar</td><td>Ajusta estoque Tiny</td></tr>
+<tr><td>—</td><td>/tiny/oauth + /callback</td><td>OAuth2 flow</td></tr>
+<tr><td>—</td><td>/ml/anuncios + /app + /connections[/...]</td><td>Mercado Livre</td></tr>
+<tr><td>—</td><td>/ml/oauth + /callback</td><td>ML OAuth2</td></tr>
+</table>
+</details>
+
+<hr>
+
+<!-- ============================================================ -->
+<h2 id="paginas">20. Catálogo de Páginas (Frontend)</h2>
+<p>Pós-cutover: apenas <code>/login</code> e <code>/wms/*</code> existem.</p>
+
+<h3>20.1 Vendas (pedidos)</h3>
+<table>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/pedidos</td><td>Painel principal (Pendente/Concluídos/Auto/Todos)</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/pedidos/[id]</td><td>Detalhe + timeline + observações</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/separacao</td><td>Dashboard de wave picking</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/separacao/checklist</td><td>Tela handheld de bipagem</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/separacao/embalagem</td><td>Conferência + impressão etiqueta</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/compras</td><td>3 abas: Comprar / Receber / Histórico</td></tr>
+</table>
+
+<h3>20.2 Visibilidade</h3>
+<table>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/cross</td><td>Busca universal (SKU/OEM/nome)</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/cross/[sku]</td><td>Detalhe OEMs/veículos/equivalentes</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/produtos</td><td>Catálogo unificado</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/estoque</td><td>4 perspectivas (dono/galpão/loc/produto)</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/ledger</td><td>Histórico imutável</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/cobertura</td><td>Cobertura por giro</td></tr>
+</table>
+
+<h3>20.3 Operações</h3>
+<table>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/receber</td><td>Etapa 1/2 — dock RECEBIMENTO</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/guarda</td><td>Fila de put-away (agrupada por lote)</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/guarda/rota</td><td>Tablet — rota ordenada por loc</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/guarda/[id]</td><td>Tablet individual</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/transferir</td><td>Inter-galpão</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/replenishment</td><td>Intra-galpão</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/ajuste</td><td>Manual com motivo</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/retroativos</td><td>Pendências de reconciliação</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/devolucoes</td><td>Lista pendentes</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/devolucoes/[id]</td><td>Classificação A/B/C/D</td></tr>
+</table>
+
+<h3>20.4 Inventário</h3>
+<table>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/inventario</td><td>Lista sessões + modal criação</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/inventario/[id]</td><td>Painel realtime do supervisor</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/inventario/[id]/contar</td><td>Handheld do operador</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/inventario/[id]/divergencias</td><td>Aprovar/rejeitar</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/inventario/metricas</td><td>Acuracidade operador/loc</td></tr>
+</table>
+
+<h3>20.5 Insights &amp; Cadastros</h3>
+<table>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/dashboard</td><td>4 cards refresh 30s</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/insights</td><td>Hub</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/insights/pessoas</td><td>KPIs por pessoa</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/insights/fluxo|estoque|financeiro|devolucoes</td><td>Vistas temáticas</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/fornecedores</td><td>CRUD + auto-cadastro</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/emprestimos</td><td>Saldos devedores (read-only)</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/localizacoes</td><td>CRUD por galpão</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/configuracoes</td><td>3 abas: Galpões / Empresas / Empréstimos&amp;Swaps</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/configuracoes/conexoes</td><td>Tiny OAuth + PrintNode</td></tr>
+<tr><td><span class="badge b-page">PAGE</span></td><td>/wms/configuracoes/otimizacoes</td><td>Toggle mini-swap por galpão</td></tr>
+</table>
+
+<hr>
+
+<h2>Apêndice — Símbolos &amp; Convenções</h2>
+<table>
+<tr><th>Símbolo</th><th>Significado</th></tr>
+<tr><td>⚡</td><td>Operação fire-and-forget (não bloqueia resposta)</td></tr>
+<tr><td>📡</td><td>Chamada externa (Tiny / PrintNode / ML)</td></tr>
+<tr><td>📝</td><td>Side effect em DB</td></tr>
+<tr><td>🔒</td><td>Requer autenticação ou role específica</td></tr>
+<tr><td><code>→</code></td><td>Transição de estado</td></tr>
+</table>
+
+<div class="meta" style="margin-top:48px; border-top:1px solid var(--border); padding-top:24px;">
+  <span>📁 Fontes: <code>CLAUDE.md</code> · <code>docs/fluxos/01..10</code> · <code>docs/superpowers/specs/*</code></span>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+    sequence: { useMaxWidth: true, mirrorActors: false },
+    er: { useMaxWidth: true },
+    stateDiagram: { useMaxWidth: true }
+  });
+</script>
+</body>
+</html>

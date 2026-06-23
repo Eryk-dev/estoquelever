@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Finalizar a separação — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Separação de pedidos</p>
+<h1>Finalizar a separação</h1><p class="lead">Quando o operador termina de coletar todos os itens de um pedido (marca tudo na lista) e clica no botão 'Concluir separação', o sistema avalia o que foi pego, verifica se há compras pendentes ou realocações, e libera o pedido pra ir pro próximo passo (embalagem/estoque).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+
+<div class="stat"><div class="n" style="color:#9a6a00">3</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">1</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Todos os itens coletados: o pedido marca como pronto e segue pra embalagem</span></li><li><span class="dot">✓</span><span>Coleta parcial (pegou parte): o sistema aceita, realoca o restante se houver prateleira alternativa</span></li><li><span class="dot">✓</span><span>Itens que estão em compra de fornecedor: o sistema pausa o pedido até a mercadoria chegar</span></li><li><span class="dot">✓</span><span>Clique repetido no botão: o sistema trava a resposta pra não contar duas vezes</span></li></ul></div><h2>Decisões pra você tomar · 3</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D087</span>Se o operador clica 'Concluir' duas vezes rapidamente (conexão lenta, ou por acaso), o que faz o sistema?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um operador terminou de separar o pedido P-001 (5 itens já guardados), clica em 'Concluir a separação'. A conexão tá lenta. Ele pensa que não funcionou e clica de novo em 100ms.</p><p class="ln"><b>Hoje o sistema:</b> O sistema processa o primeiro clique normalmente (marca o pedido como 'separado'). O segundo clique tenta fazer a mesma coisa, mas descobre que já foi feito. Nesse momento, o segundo clique OU falha (mostra erro), OU faz nada silenciosamente (e o operador não sabe se funcionou).</p><p class="ln why"><b>Por que importa:</b> Se der erro no segundo clique, o operador fica confuso (clicou em um botão dois, recebeu resposta diferente). Se o sistema responde 'ok' e faz nada, o operador pensa que a segunda tentativa também funcionou, quando na verdade já estava feito. Qualquer um desses cenários gera dúvida: 'o pedido foi marcado uma vez ou duas?'</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (segundo clique gera erro)</b> — Operador vê mensagem de erro na segunda tentativa, fica claro que já havia processado. Desvantagem: tela fica com 'erro' mesmo que nada de ruim tenha acontecido.</span></li><li class=""><span class="ck"></span><span><b>Fazer segundo clique ser igual ao primeiro</b> — Ambos os cliques sempre retornam 'sucesso' com o mesmo resultado. Operador nunca vê erro. Sistema trata ambos como a mesma ação. Mais amigável.</span></li><li class=""><span class="ck"></span><span><b>Bloquear segundo clique antes de processar</b> — Sistema recusa o segundo clique (ex: mostra 'operação já em andamento', fica o botão cinzento). Operador não consegue nem clicar de novo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2: o segundo clique deve retornar sempre 'ok' com o mesmo resultado que o primeiro. Assim operador nunca fica em dúvida, não importa quantas vezes clique por acaso.</p></div><p class="refp">route.ts:233</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D088</span>Como o sistema trata um item que pede quantidade zero (ou foi ajustado a zero)?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido P-002 foi criado com 1 item: 'Parafuso A' quantidade 5. Depois, ajustaram para quantidade 0 (cancelaram aquele parafuso do pedido). Agora um operador abre a separação e vê o parafuso listado.</p><p class="ln"><b>Hoje o sistema:</b> O sistema deixa o operador marcar o item (clicar checkmark) mesmo com quantidade zero. O sistema processa: item fica marcado como 'coletado', mas nenhuma quantidade sai do estoque (porque é zero). O pedido segue normalmente para 'separado'.</p><p class="ln why"><b>Por que importa:</b> Quantidades zero não deveriam precisar de picking. Se o operador marca como coletado, confunde a sequência de trabalho: parece que ele pegou algo do estoque, mas na verdade pegou nada. Além disso, o registro fica inconsistente (marcado como 'feito' mas sem movimento no estoque).</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (operador marca item com qty zero como qualquer outro)</b> — Operador vê item na lista, marca, sistema aceita, nada sai do estoque. Confuso mas funciona.</span></li><li class=""><span class="ck"></span><span><b>Esconder itens com quantidade zero da lista</b> — Operador só vê itens que realmente precisa separar. Mais limpo.</span></li><li class=""><span class="ck"></span><span><b>Marcar automaticamente itens com quantidade zero</b> — Sistema marca sozinho sem operador fazer nada. Operador vê já como 'pronto'.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 3 (marcar automático): o sistema deveria marcar itens com quantidade zero como 'já foi' automaticamente, sem operador fazer nada. Assim lista fica leve (só mostra o que realmente precisa) e ninguém fica confuso.</p></div><p class="refp">marcar-item/route.ts:87-180</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">D089</span>Se o sistema não consegue enfileirar a próxima etapa (recebimento do estoque), o pedido fica preso?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador termina de separar o pedido P-003 (5 itens). Sistema marca como 'separado' e tenta enfileirar a próxima etapa (recebimento no depósito). No mesmo instante, o banco de dados fica indisponível 2 segundos.</p><p class="ln"><b>Hoje o sistema:</b> O sistema tenta enfileirar a próxima etapa e falha (banco de dados não respondeu). Ele registra um aviso (log), mas NÃO desfaz o 'separado'. Pedido continua marcado como 'separado', a próxima etapa não foi enfileirada. Operador vê 'ok' (pedido de sucesso), mas a próxima etapa nunca sai do lugar.</p><p class="ln why"><b>Por que importa:</b> Pedido fica congelado entre duas etapas. Parece estar em um estado ok, mas a próxima fase da operação nunca acontece. Operador ou gerente descobre horas depois quando notam que o pedido não saiu do separado.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Deixar como está (falha silenciosa, operador descobre depois)</b> — Pedido fica preso, descoberta posterior. Risco de atraso na entrega.</span></li><li class=""><span class="ck"></span><span><b>Tentar novamente automaticamente a cada X segundos</b> — Sistema tenta novamente em background, sem operador fazer nada. Quando banco voltar, próxima etapa sai sozinha.</span></li><li class=""><span class="ck"></span><span><b>Mostrar no painel que há pedidos aguardando próxima etapa</b> — Operador vê em um indicador 'há 2 pedidos aguardando fila'. Assim ele sabe que algo não saiu como planejado.</span></li></ul><p class="recnote"><b>Recomendo:</b> Opção 2 + Opção 3: sistema tenta novamente automaticamente (em background), E mostra um indicador no painel para operador saber que há algo pendente. Assim pedido não fica invisível, e sistema tenta resolver sozinho.</p></div><p class="refp">route.ts:283-292, cutover.ts:110-134</p></div><h2>Ainda a conferir · 1</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Desmarcar um item dias depois (quando o estoque apartado para esse pedido já expirou ou foi usado por outro pedido) — sistema tenta devolver, mas pode falhar se espaço não tá disponível</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

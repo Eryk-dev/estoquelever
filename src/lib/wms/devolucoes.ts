@@ -81,6 +81,52 @@ export async function registrarDevolucaoPendente(
   return (data as { id: string }).id;
 }
 
+/**
+ * BUG-12: quando um pedido é cancelado COM itens já picados (S de venda viva),
+ * a peça saiu fisicamente da prateleira mas NÃO há NF de devolução — o estoque
+ * não volta sozinho. Antes, isso só virava a tag `cancelado_com_picks` sem
+ * nenhuma worklist (perda silenciosa). Aqui criamos uma pendência FORTE por
+ * item pego, apontando pedido_origem_mov_id pra S do pick: aparece na fila de
+ * devoluções e classificar 'integro' devolve a peça ao estoque (E).
+ *
+ * Best-effort: NUNCA bloqueia o cancelamento. Idempotente por mov_saida_id
+ * (não duplica pendência se o cancelamento rodar de novo).
+ */
+export async function registrarPicksCanceladosParaDevolucao(
+  itens: Array<{ pedido_id: string; mov_saida_id: string; sku?: string | null; qty?: number | null }>,
+): Promise<number> {
+  if (itens.length === 0) return 0;
+  const sb = createServiceClient();
+  let criadas = 0;
+  for (const it of itens) {
+    if (!it.mov_saida_id) continue;
+    try {
+      const { data: existe } = await sb
+        .from("siso_devolucoes_pendentes")
+        .select("id")
+        .eq("pedido_origem_mov_id", it.mov_saida_id)
+        .maybeSingle();
+      if (existe) continue;
+      const { error } = await sb.from("siso_devolucoes_pendentes").insert({
+        pedido_origem_id: it.pedido_id,
+        pedido_origem_mov_id: it.mov_saida_id,
+        payload_webhook: { origem: "cancelado_com_picks", sku: it.sku ?? null, qty: it.qty ?? null },
+      });
+      if (error) throw error;
+      criadas++;
+    } catch (err) {
+      logger.logError({
+        error: err,
+        source: "devolucoes",
+        message: "Falhou criar pendência de devolução de pick cancelado",
+        category: "business_logic",
+        metadata: { pedido_id: it.pedido_id, mov_saida_id: it.mov_saida_id },
+      });
+    }
+  }
+  return criadas;
+}
+
 export interface ClassificarInput {
   devolucao_id: string;
   classificacao: Classificacao;

@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Marcar pedido como enviado — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Expedição (envio)</p>
+<h1>Marcar pedido como enviado</h1><p class="lead">Quando um pedido sai do galpão já embalado, o sistema precisa registrar que foi expedido (enviado ao cliente).</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">2</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">1</div><div class="l">decisões</div></div>
+<div class="stat"><div class="n" style="color:#3a5bb3">1</div><div class="l">a conferir</div></div>
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Quando funciona, o pedido passa de 'embalado' para 'enviado' corretamente</span></li><li><span class="dot">✓</span><span>O sistema valida se o operador trabalha no galpão certo do pedido</span></li><li><span class="dot">✓</span><span>Se o pedido já saiu ou nao esta embalado, o sistema rejeita a acao</span></li><li><span class="dot">✓</span><span>Se o operador nao tem permissao, o sistema bloqueia</span></li></ul></div><h2>Problemas pra resolver · 2</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P026</span>Dois cliques no mesmo instante expedem o pedido duas vezes</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Expedição de pedidos prontos para envio</p><p class="ln"><b>Hoje:</b> O operador clica em 'Enviar' duas vezes rapidinho (ou o sistema recebe duas solicitações ao mesmo tempo). A primeira muda o pedido de 'pronto pra enviar' para 'enviado'. A segunda clique também retorna sucesso, mas não faz nada — o pedido já estava 'enviado'. O operador não sabe que o segundo clique não funcionou, só vê dois sucessos.</p><p class="ln why"><b>Por que importa:</b> O pedido já saiu na primeira vez. Se o operador acha que enviou duas vezes, ele pode reenviar para o mesmo cliente (e pagar frete de novo, ou gerar confusão no rastreamento). A gente não registra que falhou, então fica silencioso.</p><div class="decision"><p class="q">Bloquear o segundo clique antes que chegue ao servidor, ou devolver erro claro quando acontecer</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Desabilitar botão de envio enquanto a primeira requisição tá processando</b> — Operador só consegue clicar uma vez; segundo clique não sai pro servidor</span></li><li class=""><span class="ck"></span><span><b>Devolver erro se tentarem enviar um pedido que já está 'enviado'</b> — Segundo clique avisa: 'Esse pedido já foi enviado', operador sabe que falhou</span></li></ul><p class="recnote"><b>Recomendo:</b> Desabilitar botão enquanto processa (mais rápido e evita confusão). Se alguém conseguir mandar dois ao mesmo tempo (improvável), devolver erro pro operador ver.</p></div><p class="refp">route.ts:115-155</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P027</span>Admin não consegue voltar um pedido já enviado</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Um pedido foi marcado como enviado, mas depois a loja pede pra cancelar ou ajustar algo</p><p class="ln"><b>Hoje:</b> Admin tenta mover o pedido de 'enviado' de volta para 'pronto pra enviar' (desfazer a expedição), mas o sistema não deixa. A lista de etapas aceitas só tem 'separado', 'embalado' — não inclui 'enviado'. Operador ou admin fica preso, não consegue desfazer.</p><p class="ln why"><b>Por que importa:</b> Às vezes precisa voltar (cliente quer cancelar depois que marcamos como enviado, ou marcamos errado). Sem isso, admin tem que mexer direto no banco de dados ou ligar pra TI.</p><div class="decision"><p class="q">Incluir 'enviado' na lista de etapas que podem ser desfeitas</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Adicionar 'enviado' na lista de etapas reversiveis</b> — Admin consegue clicar 'Voltar' de um pedido enviado e ele volta pra 'pronto pra enviar'</span></li><li class=""><span class="ck"></span><span><b>Deixar como tá (sem reverter enviado)</b> — Admin continua sem poder desfazer; tem que contornar manualmente</span></li></ul><p class="recnote"><b>Recomendo:</b> Incluir 'enviado' agora mesmo. Não custa nada e desbloqueia um caso que acontece.</p></div><p class="refp">src/lib/wms/cutover.ts:21-29</p></div><h2>Decisões pra você tomar · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D098</span>Como o operador envia o pedido? Tem um botão pra isso na tela?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Etapas do pedido (separação, embalagem, envio)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Expedição de pedidos prontos para envio</p><p class="ln"><b>Hoje o sistema:</b> Hoje não existe botão na tela. O operador vê a aba 'Pronto pra enviar' mas não tem nada pra clicar. A rota pra enviar só existe nos testes internos do sistema. O operador fecha o processo à mão ou o sistema nunca marca como enviado.</p><p class="ln why"><b>Por que importa:</b> Se o operador não consegue marcar como enviado de dentro do sistema, o rastreamento fica errado. A loja não sabe quando chegou pra sair, e cliente não recebe avisos corretos.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Adicionar botão 'Enviar' na aba 'Pronto pra enviar' (lado do operador)</b> — Operador clica um botão e o pedido fica marcado como enviado no sistema. Rastreamento atualiza automaticamente.</span></li><li class=""><span class="ck"></span><span><b>Deixar como tá (sem botão; só admin marca via outro lugar)</b> — Operador não envia; alguém de fora tem que fazer. Mais etapas manuais, risco de não marcar.</span></li><li class=""><span class="ck"></span><span><b>Enviar automaticamente quando o pedido sair da mão do operador (sem botão)</b> — Quando entrega pra transportadora, marca automaticamente. Nenhum clique. Risco: erro de rastreamento se transportadora não pegar no horário certo.</span></li></ul><p class="recnote"><b>Recomendo:</b> Adicionar botão 'Enviar' na tela. Operador tem controle, registra quando saiu de verdade.</p></div><p class="refp">separacao/page.tsx:1052-1078</p></div><h2>Ainda a conferir · 1</h2><div class="dcard"><ul class="clean"><li><span class="dot" style="color:#3a5bb3">?</span><span>Se o sistema falha ao registrar que um pedido foi enviado (erro no banco de dados no meio do processo), o pedido aparece como 'enviado' mas desaparece do histórico. Confere se isso é aceitável ou se a gente precisa garantir que ambos (status e histórico) sempre andam juntos.</span></li></ul></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

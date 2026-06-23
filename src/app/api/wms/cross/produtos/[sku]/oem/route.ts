@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { createServiceClient } from "@/lib/supabase-server";
 import { gerarPalpitesPorOem } from "@/lib/cross/equivalencias";
+import { normalizarOem } from "@/lib/cross/equivalencias-core";
 import { wmsErrorResponse } from "@/lib/wms/api-errors";
 import { logger } from "@/lib/logger";
 
@@ -33,11 +34,12 @@ export async function PATCH(
   if (!Array.isArray(body.oem)) {
     return NextResponse.json({ error: "Envie oem: string[]" }, { status: 400 });
   }
-  // Sanitiza: trim, remove vazios, dedup preservando ordem.
+  // Normaliza (so alfanumerico, UPPERCASE), remove vazios, dedup preservando ordem.
+  // Invariante: siso_produtos.oem guarda sempre OEM normalizado (ver normalizarOem).
   const vistos = new Set<string>();
   const oem: string[] = [];
   for (const item of body.oem) {
-    const v = String(item ?? "").trim();
+    const v = normalizarOem(String(item ?? ""));
     if (v && !vistos.has(v)) {
       vistos.add(v);
       oem.push(v);

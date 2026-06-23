@@ -14,6 +14,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { Cargo, UserGalpao } from "@/types";
 import type { PermissaoCodigo } from "@/lib/permissions";
+import { reportApiServerError } from "@/lib/client-error-report";
 
 interface AuthUser {
   id: string;
@@ -372,6 +373,10 @@ export async function sisoFetch(url: string | URL | Request, init?: RequestInit)
 
   if (response.status === 401 && !isAuthEndpoint(url)) {
     handleUnauthorized();
+  } else if (response.status >= 500) {
+    // Server error the operator just hit — forward to Discord. Clone so the
+    // caller can still read the body; fire-and-forget so reporting can't block.
+    void reportApiServerError(url, init, response.clone());
   }
 
   return response;

@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Revisão do fluxo OC → Validação → Compras → Recebimento unificado → Cross-docking</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e4e4e7;
+    --text: #18181b;
+    --muted: #71717a;
+    --accent: #0ea5e9;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --cyan: #0891b2;
+    --cyan-bg: #cffafe;
+    --zinc-50: #fafafa;
+    --zinc-100: #f4f4f5;
+    --zinc-200: #e4e4e7;
+    --zinc-700: #3f3f46;
+    --zinc-800: #27272a;
+    --zinc-900: #18181b;
+    --code-bg: #f4f4f5;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; margin: 0; padding: 0; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 32px; margin-bottom: 48px; }
+  h1 { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; color: var(--zinc-800); }
+  h4 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 0 0 16px; }
+  .subtitle { color: var(--muted); font-size: 16px; margin: 4px 0 0; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 16px; }
+
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 32px 0; }
+  .toc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+  .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  .callout { border-left: 4px solid; padding: 16px 20px; margin: 24px 0; border-radius: 0 8px 8px 0; font-size: 15px; }
+  .callout-info { background: #eff6ff; border-color: #3b82f6; }
+  .callout-warn { background: var(--amber-bg); border-color: var(--amber); }
+  .callout-success { background: var(--green-bg); border-color: var(--green); }
+  .callout-danger { background: var(--red-bg); border-color: var(--red); }
+  .callout-title { font-weight: 600; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
+  .mermaid { text-align: center; }
+
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 14px; background: var(--surface); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+  th { background: var(--zinc-100); text-align: left; padding: 10px 14px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--zinc-100); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+  .badge-info { background: #dbeafe; color: #1e40af; }
+  .badge-success { background: var(--green-bg); color: #166534; }
+  .badge-warning { background: var(--amber-bg); color: #92400e; }
+  .badge-danger { background: var(--red-bg); color: #991b1b; }
+  .badge-neutral { background: var(--zinc-100); color: var(--zinc-700); }
+
+  .stepper { counter-reset: step; margin: 24px 0; }
+  .stepper-item { position: relative; padding: 16px 16px 16px 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; counter-increment: step; }
+  .stepper-item::before { content: counter(step); position: absolute; left: 16px; top: 16px; width: 28px; height: 28px; background: var(--zinc-900); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .stepper-item strong { display: block; margin-bottom: 4px; color: var(--text); }
+  .stepper-item p { margin: 0; font-size: 14px; color: var(--muted); }
+
+  .scenario { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--amber); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 12px 0; }
+  .scenario-title { font-weight: 600; margin-bottom: 6px; color: var(--zinc-800); }
+  .scenario-flow { font-size: 14px; color: var(--muted); }
+  .scenario-flow strong { color: var(--text); }
+  .scenario-danger { border-left-color: var(--red); }
+  .scenario-success { border-left-color: var(--green); }
+
+  .decision { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+  .decision-title { font-weight: 600; color: var(--zinc-800); margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+  .decision-body { font-size: 14px; color: var(--muted); }
+  .decision-body strong { color: var(--text); }
+  .check { color: var(--green); font-weight: 700; }
+
+  .wireframe { background: var(--zinc-50); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; line-height: 1.5; white-space: pre; overflow-x: auto; color: var(--zinc-800); }
+
+  .three-cards { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .three-cards .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 13px; }
+  .three-cards .card-title { font-weight: 600; margin-bottom: 4px; }
+  .three-cards .card-meta { color: var(--muted); font-size: 12px; }
+  .three-cards .primary { border-color: var(--green); background: #f0fdf4; }
+  .three-cards .secondary { background: var(--zinc-50); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Revisão do fluxo OC → Validação → Compras → Recebimento unificado → Cross-docking</h1>
+  <p class="subtitle">Como pedidos sem cobertura viram compras, como produtos sem cadastro entram no sistema na hora do pick, e como o caminhão do fornecedor abastece embalagem direta.</p>
+  <p class="meta">Validação de fluxo · 28/05/2026 · v3 — decisões consolidadas · linguagem de negócio</p>
+</header>
+
+<div class="toc">
+  <div class="toc-title">Conteúdo</div>
+  <ol>
+    <li><a href="#resumo">Resumo</a></li>
+    <li><a href="#decisoes">Decisões validadas</a></li>
+    <li><a href="#fluxo">Fluxo principal (pedido OC)</a></li>
+    <li><a href="#exemplo">Exemplo passo-a-passo</a></li>
+    <li><a href="#estados">Estados e transições</a></li>
+    <li><a href="#bug-loop">Bug do "voltou pro SISO"</a></li>
+    <li><a href="#recebimento">Recebimento unificado (OC · Transferência · Avulso)</a></li>
+    <li><a href="#crossdock">Cross-docking via pendências de guarda</a></li>
+    <li><a href="#cenarios">Cenários alternativos</a></li>
+  </ol>
+</div>
+
+<h2 id="resumo">1. Resumo</h2>
+<p>Quando um pedido chega e nem todos os itens têm saldo confiável, o operador pode aprovar como "OC". Antes de virar compra real, o sistema obriga uma <strong>conferência física</strong> — separador vai na prateleira e diz "encontrei" ou "esgotado". Se encontrar mesmo sem cadastro no sistema, o WMS cria entrada+saída automaticamente e a localização passa a "conhecer" o produto. Quando a entrega chega (de uma OC, de uma Transferência ou avulsa), a mesma tela de Recebimento atende todas, e o sistema detecta automaticamente quanto vai pra embalagem direta (cross-dock) e quanto vai pra guarda normal.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">3 features encadeadas — uma decisão só</div>
+  Este doc valida 3 mudanças que conversam entre si: (1) revisão do fluxo OC com correção do "loop infinito", (2) recebimento unificado com OC + Transferência + Avulso na mesma porta, (3) cross-docking automático via 2 pendências de guarda. Os 3 juntos formam o ciclo completo "pedido sem estoque → compra → recepção → embalagem".
+</div>
+
+<h2 id="decisoes">2. Decisões validadas (28/05)</h2>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 1 — OC com saldo no snapshot fica desabilitada</div>
+  <div class="decision-body">
+    Botão OC fica desabilitado quando snapshot cobre o pedido. Operador forçado a escolher Própria/Transferência — que criam reserva. Acaba a degradação silenciosa.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 2 — Validação OC obrigatória mesmo sem cadastro</div>
+  <div class="decision-body">
+    Estamos na fase de implantação — produto sem cadastro pode existir fisicamente. Conferir é parte do processo.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 3 — "Encontrei" em produto sem cadastro gera Entrada + Saída</div>
+  <div class="decision-body">
+    Separador bipa loc onde achou. Sistema gera par de movimentos (entrada + saída na qty do pedido). Saldo final zero, mas loc "graduada" — passa a aparecer no inventário.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 4 — Sem aging/alerta em Validação OC</div>
+  <div class="decision-body">
+    Sem SLA específico. Operador resolve quando abre a separação normal.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 5 — Recebimento varre Validação OC + atualiza loc na Separação</div>
+  <div class="decision-body">
+    Toda entrada de SKU varre pedidos em Validação OC do mesmo SKU (flag "saldo apareceu") e atualiza loc sugerida na Separação aberta.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 6 — "Concluídos" significa "decisão tomada"</div>
+  <div class="decision-body">
+    Filtro expande pra incluir pedidos com decisao_final preenchida, ainda em execução. Operador vê pedidos OC e em separação na aba Concluídos.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 7 — Cross-dock prioriza demanda quando qty real diverge</div>
+  <div class="decision-body">
+    Chegou 18 íntegros em vez de 20 esperados → vira <strong>10 cross-dock + 8 guarda</strong> (não proporcional). Embalagem destrava primeiro, sobra fica pra próxima entrega.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 8 — 1 loc PACKING por galpão (por enquanto)</div>
+  <div class="decision-body">
+    Começa simples: PACKING-CWB, PACKING-SP. Se virar gargalo, divide em PACKING-01/02 por wave depois.
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 9 — Botão verde = aceitar cross-dock; rejeitar é exceção</div>
+  <div class="decision-body">
+    UI dá ênfase ao "guardar no PACKING". "Trocar destino" fica como link cinza com confirmação dupla: "Trocar destino vai desvincular X pedidos — confirma?".
+  </div>
+</div>
+
+<div class="decision">
+  <div class="decision-title"><span class="check">✓</span> Decisão 10 — Recebimento de Transferência só mostra destinos do galpão do operador</div>
+  <div class="decision-body">
+    Operador SP só vê transferências em_trânsito com destino = SP. Evita receber pelo galpão errado.
+  </div>
+</div>
+
+<h2 id="fluxo">3. Fluxo principal — pedido com sugestão OC</h2>
+
+<div class="diagram">
+  <div class="diagram-title">Caminho completo — do gatilho à expedição</div>
+  <pre class="mermaid">
+flowchart TD
+    A[Pedido chega<br/>SKU sem cobertura] --> B{Snapshot<br/>cobre?}
+    B -->|Sim, completo| C[OC desabilitado<br/>obrigatório Própria/Transf]
+    B -->|Parcial ou zero| D[OC ativo]
+    C --> E[Aprova Própria/Transf<br/>cria Reserva R]
+    D --> F[Aprova OC]
+    F --> G[Validação OC<br/>conferência física]
+    G --> H{Separador<br/>confere}
+    H -->|Encontrei + cadastro| I[Pick normal]
+    H -->|Encontrei + sem cadastro| J[Bipa loc onde achou<br/>Entrada + Saída automático]
+    H -->|Esgotado| K[Compra_status=aguardando_compra<br/>vai pra Comprador]
+    E --> I
+    J --> I
+    K --> L[Comprador compra]
+    L --> M[Caminhão chega]
+    M --> N{Sistema detecta<br/>demanda?}
+    N -->|Sim| O[Cross-dock:<br/>2 pendências guarda]
+    N -->|Não| P[1 pendência guarda<br/>normal]
+    O --> Q[Pendência A → PACKING<br/>Pedidos pulam pra Separado]
+    O --> R[Pendência B → loc normal]
+    P --> R
+    Q --> S[Embalador<br/>imprime etiqueta<br/>expede]
+    I --> S
+
+    style J fill:#dcfce7,stroke:#16a34a
+    style K fill:#fef3c7,stroke:#d97706
+    style Q fill:#dcfce7,stroke:#16a34a
+  </pre>
+</div>
+
+<h2 id="exemplo">4. Exemplo passo-a-passo</h2>
+
+<div class="callout callout-info">
+  <div class="callout-title">Cenário</div>
+  Pedido #87654 chegou 14h32 — cliente João Silva (ML), 2un ACD006. NetAir/CWB. ACD006 sem cadastro no WMS, saldo zero. Operador aprova OC. Comprador compra 50un. Caminhão chega no dia seguinte.
+</div>
+
+<div class="stepper">
+  <div class="stepper-item">
+    <strong>14h32 — Pedido entra na fila</strong>
+    <p>Snapshot diz zero pra ACD006. Botões Própria/Transferência desabilitados. Tag laranja "Sugestão OC".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h11 — Maria aprova OC</strong>
+    <p>Sistema gera NF e marca o item como "OC pendente — validar fisicamente". Pedido vai pra Separação tab "Aguardando separação".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h22 — João (separador) abre o pedido</strong>
+    <p>Vê ACD006 com botões "Encontrei" e "Esgotado". Vai dar uma volta no depósito, não acha. Clica "Esgotado".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>15h22 — Item cai pra Compras</strong>
+    <p>Item vira compra_status=aguardando_compra. Pedido vira status_separacao=aguardando_compra. Aparece em Compras aba Comprar (Fornecedor Diversos · 1 SKU · 1 pedido bloqueado).</p>
+  </div>
+  <div class="stepper-item">
+    <strong>16h00 — Pedro (comprador) compra 50un do fornecedor</strong>
+    <p>Cria OC #221 (Diversos · CWB · 50un). Item vira compra_status=comprado. Pedido fica esperando entrega.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>(dia seguinte) 09h15 — Caminhão chega</strong>
+    <p>Motorista entrega documento OC #221. Operador SP abre /wms/receber → clica "Receber OC pendente".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h16 — Tela mostra OC #221 com itens pré-preenchidos</strong>
+    <p>Esperado: 50un ACD006 @ R$ 12,80. Operador conta o monte: chegaram 48 íntegros (2 quebrados). Ajusta qty=48, motivo "avaria em trânsito".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h17 — Confirma recebimento</strong>
+    <p>Sistema: cria mov de entrada de 48un em RECEBIMENTO com custo unitário R$ 12,80 (atualiza custo médio). Detecta demanda: tem 1 pedido pendente (2un do #87654). Cria 2 pendências de guarda.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h17 — Toast informativo</strong>
+    <p>"ACD006: 2un → PACKING-CWB (1 pedido) · 46un → guarda normal · 2un avariados (não recebidos)".</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h25 — Operador da guarda vê fila</strong>
+    <p>Na /wms/guarda aparecem 2 pendências de ACD006: uma com badge "🎯 CROSS-DOCK 2un → PACKING-CWB" (topo da fila), outra "46un → destino livre". Pega o monte do recebimento.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h27 — Separa 2un, leva pro carrinho PACKING</strong>
+    <p>Bipa o QR do carrinho PACKING-CWB. Pendência A vira "guardada". Trigger automático: pedido #87654 vira status_separacao=separado, agrupamento Tiny criado, etiqueta baixa.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h28 — Leva os 46un pra A-05-03</strong>
+    <p>Bipa QR de A-05-03. Pendência B vira "guardada". Saldo em A-05-03: 46un.</p>
+  </div>
+  <div class="stepper-item">
+    <strong>09h45 — Embalador abre /wms/separacao tab "Aguard. OC"</strong>
+    <p>Vê #87654 como "Separado — em PACKING-CWB, pronto pra embalar". Bipa as 2un de PACKING-CWB, embala, imprime etiqueta, despacha.</p>
+  </div>
+</div>
+
+<h2 id="estados">5. Estados e transições</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Status do pedido</th>
+      <th>Significado</th>
+      <th>Como entra</th>
+      <th>Como sai</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="badge badge-neutral">Pendente</span></td>
+      <td>Esperando decisão do operador</td>
+      <td>Webhook chegou</td>
+      <td>Operador aprova/recusa</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Validação OC</span></td>
+      <td>Aprovado OC, esperando conferência física</td>
+      <td>Aprovou OC + falta real</td>
+      <td>Separador marca todos itens</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando compra</span></td>
+      <td>Esperando comprador comprar</td>
+      <td>Separador "Esgotado" OU cascade esgotou</td>
+      <td>Comprador clica "Comprado"</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-warning">Aguardando NF</span></td>
+      <td>Esperando NF voltar do ERP</td>
+      <td>Aprovou Própria/Transf OU todos OC viraram "Encontrei"</td>
+      <td>NF chega</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-info">Aguardando separação</span></td>
+      <td>NF emitida, pronto pra picking</td>
+      <td>NF chegou + (se OC) todos itens recebidos</td>
+      <td>Separador inicia</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Separado</span></td>
+      <td>Pronto pra embalar</td>
+      <td>Pick completo OU veio do cross-dock</td>
+      <td>Embalador inicia</td>
+    </tr>
+    <tr>
+      <td><span class="badge badge-success">Expedido</span></td>
+      <td>Pacote saiu</td>
+      <td>Operador clica "Expedir"</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="bug-loop">6. Bug: "voltou pro SISO" — o loop infinito</h2>
+
+<div class="callout callout-danger">
+  <div class="callout-title">Caso real — Pedido #49569 ACD006 qty 1 (CWB)</div>
+  <p>Snapshot tinha saldo 1 em A-01-04. Operador aprovou OC. Sistema degradou pra Própria silenciosa. Pick chegou na A-01-04 — vazia. Marcou Parcial loc_zerou. Cascade não achou outra loc. Pedido virou "Realocação manual" e apareceu de novo em Pedidos Pendentes. Operador clica Encaminhar → reseta tudo → aprova OC de novo → snapshot ainda diz 1 → loop.</p>
+</div>
+
+<div class="diagram">
+  <div class="diagram-title">O loop infinito (estado atual)</div>
+  <pre class="mermaid">
+flowchart LR
+    A[Aprova OC] --> B[Snapshot diz: tem 1]
+    B --> C[Degrada Própria<br/>sem reserva]
+    C --> D[Pick em A-01-04]
+    D --> E[Loc vazia<br/>Parcial loc_zerou]
+    E --> F[Cascade busca<br/>outra loc]
+    F -->|Sem cobertura| G[pendente_realocacao]
+    G --> H[Volta pra Pedidos<br/>Pendentes]
+    H --> I[Operador Encaminhar<br/>reset total]
+    I --> J[Re-aprova OC]
+    J --> B
+
+    style G fill:#fee2e2,stroke:#dc2626
+    style I fill:#fee2e2,stroke:#dc2626
+  </pre>
+</div>
+
+<h3>Correções</h3>
+
+<div class="callout callout-success">
+  <div class="callout-title">Mudança A — Cascade esgotado oferece "Mandar pra Compras" direto</div>
+  <p>Quando Parcial loc_zerou + cascade sem cobertura, modal pro separador: <strong>"Não há saldo em nenhum galpão. [Mandar pra Compras] · trocar pra realocação manual"</strong>. Botão verde = Compras. Item vira aguardando_compra, pedido vira status_separacao=aguardando_compra. Aparece em /wms/separacao tab "Aguard. OC" + /wms/compras. Nunca volta pra Pedidos Pendentes.</p>
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-title">Mudança B — loc_zerou atualiza snapshot do pedido</div>
+  <p>Ao confirmar Parcial loc_zerou, sistema atualiza o snapshot do estoque do pedido pra refletir saldo real pós-ajuste. Qualquer re-processamento vê a verdade. Resolve também a Decisão 5 (recebimento varre Validação OC) — snapshot fica live.</p>
+</div>
+
+<h2 id="recebimento">7. Recebimento unificado — 3 fontes, 1 tela</h2>
+
+<p>Hoje o operador do recebimento bipa SKU + qty no escuro. Novo: a tela `/wms/receber` vira porta única com 3 botões.</p>
+
+<div class="three-cards">
+  <div class="card primary">
+    <div class="card-title">📦 Receber OC pendente</div>
+    <div class="card-meta">Caminhão de fornecedor chegou</div>
+  </div>
+  <div class="card primary">
+    <div class="card-title">🚚 Receber Transferência</div>
+    <div class="card-meta">Veio de outro galpão</div>
+  </div>
+  <div class="card secondary">
+    <div class="card-title">✋ Recebimento avulso</div>
+    <div class="card-meta">Achado, devolução, ajuste</div>
+  </div>
+</div>
+
+<h3>Via OC pendente</h3>
+<p>Lista mostra OCs com status "comprado" não totalmente recebidas, agrupadas por fornecedor. Operador seleciona → tela pré-preenchida com itens + qty esperada + custo unitário. Ajusta qty conforme físico (motivo "avaria · faltou · veio mais"). Confirma → entradas vão pra ledger com custo do OC (atualiza custo médio) + cross-dock detection roda por item.</p>
+
+<h3>Via Transferência pendente</h3>
+<p>Lista mostra transferências em_trânsito <strong>cujo destino é o galpão do operador autenticado</strong> (Decisão 10). Estrutura igual à de OC, mas: sem custo unitário (custo médio já existe), motivos de divergência são "perda em trânsito · veio mais · errou caixa". Confirma → entrada vai pra ledger sem mexer em custo médio.</p>
+
+<h3>Via Recebimento avulso (botão secundário)</h3>
+<p>Fluxo atual mantido. Operador bipa SKU + qty manual, escolhe motivo, confirma. Útil pra devolução de cliente, achado, ajuste de inventário.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Benefícios da unificação</div>
+  <ul>
+    <li><strong>Custo médio automático</strong> nas OCs — preço da OC entra no ledger sem o operador precisar saber</li>
+    <li><strong>OC se fecha sozinha</strong> quando recebida em qty cheia — comprador não precisa marcar manualmente</li>
+    <li><strong>Audit de divergência</strong> — cada qty&lt;esperado fica registrada com motivo, visível no histórico do fornecedor</li>
+    <li><strong>Cross-dock por item</strong> — uma OC com 5 SKUs gera detecção independente em cada um</li>
+  </ul>
+</div>
+
+<h2 id="crossdock">8. Cross-docking via pendências de guarda — sem tela nova</h2>
+
+<p>O sistema usa a infra existente: cria <strong>2 pendências de guarda</strong> em vez de 1 quando detecta demanda.</p>
+
+<div class="diagram">
+  <div class="diagram-title">Recebimento detecta demanda → 2 pendências automáticas</div>
+  <pre class="mermaid">
+flowchart TD
+    A[Bipa 50un ACD006<br/>OC #221] --> B{Tem pedido<br/>pendente<br/>desse SKU?}
+    B -->|Não| C[1 pendência<br/>50un destino livre]
+    B -->|Sim, 18un demanda| D[2 pendências:]
+    D --> E[Pendência A<br/>18un destino=PACKING<br/>badge CROSS-DOCK<br/>vinculada aos pedidos]
+    D --> F[Pendência B<br/>32un destino livre<br/>guarda normal]
+    E --> G[Operador guarda<br/>bipa QR PACKING-CWB]
+    G --> H[Trigger automático:<br/>pedidos viram Separado<br/>etiquetas baixam]
+    F --> I[Operador guarda<br/>bipa QR prateleira]
+    I --> J[Saldo entra na loc]
+    H --> K[Embalador imprime<br/>expede]
+
+    style E fill:#dcfce7,stroke:#16a34a
+    style H fill:#dcfce7,stroke:#16a34a
+  </pre>
+</div>
+
+<h3>Regras do cross-dock</h3>
+<ul>
+  <li><strong>Match por SKU + ordem_compra_id</strong>: sistema lista pedidos com item.compra_status=comprado vinculados à OC sendo recebida</li>
+  <li><strong>Pedido só vai pra cross-dock se 100% completo</strong>: se um pedido tem 2 itens OC e só 1 chegou, fica em Aguard. OC esperando o outro. Senão etiqueta sai antes do produto.</li>
+  <li><strong>FIFO por aging</strong>: pedidos mais antigos pegam primeiro</li>
+  <li><strong>Qty divergente prioriza cross-dock</strong> (Decisão 7): chegou 18 em vez de 20 → recalcula como 10 cross-dock + 8 guarda</li>
+  <li><strong>Loc PACKING tipo dedicado</strong> (Decisão 8): 1 por galpão (PACKING-CWB, PACKING-SP) — categoria nova de loc no WMS</li>
+</ul>
+
+<h3>UI da pendência de guarda</h3>
+<div class="wireframe">┌── /wms/guarda — fila de pendências ──┐
+│                                          │
+│ 🎯 CROSS-DOCK · ACD006 · 18un            │  ← topo, badge verde, prioridade alta
+│    Destino sugerido: PACKING-CWB        │
+│    Atende: #87654, #88001, #88112 +9    │
+│    [ Bipar destino → PACKING-CWB ]      │  ← botão verde
+│    Trocar destino (desvincula pedidos)  │  ← link cinza
+│                                          │
+│ ─────────────────────────────────────── │
+│                                          │
+│ ACD006 · 32un                            │  ← normal
+│    Destino sugerido: A-05-03            │
+│    [ Bipar destino ]                    │
+│                                          │
+└──────────────────────────────────────────┘</div>
+
+<h3>Rejeitar o cross-dock (exceção)</h3>
+<p>Se operador clica "Trocar destino" na pendência cross-dock, sistema avisa: <strong>"Trocar destino vai desvincular 12 pedidos do cross-dock — eles vão esperar próxima entrega. Confirma?"</strong> Default = cancelar. Só confirma com clique consciente. Cenário típico: chegou no fim do expediente, embalagem fechou — operador prefere guardar tudo e embalar no dia seguinte.</p>
+
+<h2 id="cenarios">9. Cenários alternativos</h2>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">OC com saldo no snapshot — botão fica desabilitado</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> EW123 tem saldo 5 em CWB. Operador olha o pedido.<br/>
+    <strong>Sistema (novo):</strong> botão OC desabilitado, só Própria/Transferência ativos. Tooltip explica.<br/>
+    <strong>Usuário vê:</strong> Não consegue clicar OC por engano.
+  </div>
+</div>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">Cascade esgotou — vai pra Compras direto</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pick em A-01-04, loc vazia, cascade sem cobertura.<br/>
+    <strong>Sistema (novo):</strong> Modal pro separador "Mandar pra Compras? [Sim, comprar] · realocação manual". Default Sim.<br/>
+    <strong>Usuário vê:</strong> Item cai pra Compras + tab "Aguard. OC" da Separação. Pedido NÃO volta pra Pendentes.
+  </div>
+</div>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">Separador acha peça sem cadastro</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> ACD006 sem loc cadastrada. Separador acha 2un na A-05-03.<br/>
+    <strong>Sistema (novo):</strong> Bipa loc → gera Entrada + Saída em A-05-03 → loc passa a conhecer SKU.<br/>
+    <strong>Usuário vê:</strong> Pick segue normal. Próximo inventário em A-05-03 lista ACD006.
+  </div>
+</div>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">Recebimento de OC com qty divergente</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> OC #221 tinha 50un esperadas, chegaram 48 íntegros + 2 quebrados.<br/>
+    <strong>Sistema (novo):</strong> Operador ajusta qty=48, motivo "avaria". Sistema recalcula cross-dock: prioriza demanda. Se demanda era 18, vira 18 cross-dock + 30 guarda. OC fica parcialmente recebida (2un faltam).<br/>
+    <strong>Usuário vê:</strong> Toast "48un confirmados · 2 avariados não recebidos · OC parcialmente recebida".
+  </div>
+</div>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">Caminhão chegou com 50un, 18un demanda</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> OC #221 entrega 50un ACD006, 12 pedidos pendentes (total 18un).<br/>
+    <strong>Sistema (novo):</strong> 2 pendências automáticas: 18un → PACKING (badge cross-dock), 32un → guarda normal.<br/>
+    <strong>Usuário vê:</strong> Operador guarda pega o monte, separa em 2 visualmente, bipa cada destino. Pedidos viram Separado, etiquetas baixam.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Pedido com 2 itens OC, só 1 chegou</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido tem ACD006 + GB45. ACD006 chegou hoje em PACKING-CWB. GB45 ainda em rota.<br/>
+    <strong>Sistema:</strong> 2un ACD006 vão pra PACKING e ficam "alocadas" ao pedido (saldo entra na loc, mas reservado). Pedido continua status_separacao=aguardando_compra (ainda falta item). Quando GB45 chegar via qualquer OC, sistema verifica que pedido está completo → vira Separado, etiqueta baixa, embalador pode pegar.<br/>
+    <strong>Usuário vê:</strong> Em /wms/separacao tab "Aguard. OC", pedido aparece com indicador "1 de 2 itens recebidos — aguardando GB45". Embalador não consegue iniciar embalagem (botão desabilitado).
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Recebimento de Transferência com galpão errado</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Operador SP autenticado, tenta receber transferência destinada a CWB.<br/>
+    <strong>Sistema (novo):</strong> Lista de transferências só mostra as com destino=SP. Transferência destino=CWB nem aparece.<br/>
+    <strong>Usuário vê:</strong> Não consegue receber pelo galpão errado por engano.
+  </div>
+</div>
+
+<div class="scenario">
+  <div class="scenario-title">Operador rejeita cross-dock</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Fim de expediente, embalagem fechou. Pendência cross-dock 18un → PACKING.<br/>
+    <strong>Sistema (novo):</strong> Operador clica "Trocar destino". Modal "Vai desvincular 12 pedidos — confirma?". Confirma → pendência vira destino livre. Operador bipa A-05-03. 18un viram saldo normal. Pedidos do cross-dock voltam pra "Aguard. OC".<br/>
+    <strong>Usuário vê:</strong> Modal de confirmação dupla — não dá pra rejeitar por engano.
+  </div>
+</div>
+
+<div class="scenario scenario-success">
+  <div class="scenario-title">Recebimento varre Validação OC</div>
+  <div class="scenario-flow">
+    <strong>Situação:</strong> Pedido #87654 em Validação OC pro ACD006. Chega ACD006 de outra OC.<br/>
+    <strong>Sistema (novo):</strong> Após entrada de saldo, sistema atualiza pedidos em Validação OC do mesmo SKU. Marca com flag "saldo apareceu" + atualiza loc sugerida.<br/>
+    <strong>Usuário vê:</strong> Separador abre pedido, banner "Chegou saldo novo em A-05-03 — confere antes de marcar Esgotado".
+  </div>
+</div>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    themeVariables: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '14px',
+      primaryColor: '#f0f9ff',
+      primaryTextColor: '#0c4a6e',
+      primaryBorderColor: '#0ea5e9',
+      lineColor: '#71717a',
+      secondaryColor: '#fef3c7',
+      tertiaryColor: '#dcfce7'
+    },
+    flowchart: { htmlLabels: true, curve: 'basis', padding: 16 }
+  });
+</script>
+</body>
+</html>

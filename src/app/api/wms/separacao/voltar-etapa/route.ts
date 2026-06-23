@@ -293,6 +293,7 @@ export async function POST(request: NextRequest) {
     //   - Backward saindo do conjunto forward com estoque_lancado=true: reverterCutoverSeRetrocedeu
     // Ambos são idempotentes e checkam a invariante internamente — chamar
     // os dois pra cada pid é seguro (um vira no-op pelo motivo).
+    const reversaoFalhou: string[] = [];
     for (const pid of validIds) {
       await dispararCutoverSePronto(pid).catch((err) => {
         logger.warn("voltar-etapa", "Falha ao disparar cutover", {
@@ -300,13 +301,29 @@ export async function POST(request: NextRequest) {
           err: err instanceof Error ? err.message : String(err),
         });
       });
-      await reverterCutoverSeRetrocedeu(pid, novoStatus, "voltar_etapa", session.id).catch(
-        (err) => {
-          logger.warn("voltar-etapa", "Falha ao reverter cutover", {
-            pedidoId: pid,
-            err: err instanceof Error ? err.message : String(err),
-          });
-        },
+      // FAIL-LOUD: reverterCutover NÃO lança em falha da RPC — retorna
+      // motivo='rpc_error'. Ignorar isso deixaria o status retrocedido mas
+      // estoque_lancado=true + S viva → re-pick com baixa DUPLA. Coletamos os
+      // pids que falharam e respondemos 500 (a operação é idempotente; retry
+      // converge).
+      const rev = await reverterCutoverSeRetrocedeu(pid, novoStatus, "voltar_etapa", session.id).catch(
+        () => ({ reverted: false, motivo: "rpc_error" as const }),
+      );
+      if (rev.motivo === "rpc_error") {
+        reversaoFalhou.push(pid);
+        logger.logError({
+          error: "wms_reverter_cutover_atomico falhou",
+          source: "voltar-etapa",
+          message: "Reversão de estoque falhou — estoque_lancado pode estar incoerente com status",
+          category: "business_logic",
+          metadata: { pedidoId: pid, novoStatus },
+        });
+      }
+    }
+    if (reversaoFalhou.length > 0) {
+      return NextResponse.json(
+        { error: "reverter_estoque_falhou", pedido_ids: reversaoFalhou },
+        { status: 500 },
       );
     }
 

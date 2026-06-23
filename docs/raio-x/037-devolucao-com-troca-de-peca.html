@@ -1,0 +1,89 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Devolução com Troca de Peça — raio-x</title><style>*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:#1b1b1b;font:16px/1.62 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:840px;margin:0 auto;padding:46px 22px 110px}
+a{color:#1b1b1b}
+h1{font-size:27px;line-height:1.2;margin:0 0 8px}
+.lead{color:#555;margin:0 0 4px;font-size:16.5px}
+.meta{color:#999;margin:0;font-size:13.5px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.06em;color:#888;font-weight:700;margin:44px 0 16px;border-bottom:1px solid #e6e6e6;padding-bottom:8px}
+.nav{display:flex;gap:9px;flex-wrap:wrap;margin:18px 0 6px}
+.nav a{font-size:13.5px;text-decoration:none;border:1px solid #d9d9d9;background:#fff;border-radius:999px;padding:7px 15px;color:#333}
+.nav a:hover{border-color:#888}
+.nav a.cur{background:#1b1b1b;color:#fff;border-color:#1b1b1b}
+.stats{display:flex;flex-wrap:wrap;gap:10px;margin:22px 0 0}
+.stat{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:12px 16px;min-width:104px}
+.stat .n{font-size:25px;font-weight:800;line-height:1}
+.stat .l{font-size:12px;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.callout{background:#fffdf6;border:1px solid #efe2bf;border-radius:13px;padding:16px 19px;margin:22px 0 0;font-size:15.5px}
+.callout a{font-weight:700}
+.toc{background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:14px 18px;margin:20px 0 0;font-size:14px;line-height:2}
+.toc a{color:#3a5bb3;text-decoration:none}
+.toc a:hover{text-decoration:underline}
+.chip{font-size:12px;font-weight:600;border-radius:999px;padding:4px 11px;border:1px solid;white-space:nowrap;display:inline-block}
+.chip.ok{color:#2f7d3a;border-color:#bfe0c4;background:#f1faf2}
+.chip.dec{color:#9a6a00;border-color:#ecd9a8;background:#fdf7ea}
+.chip.fix{color:#b3261e;border-color:#f0c9c5;background:#fdf0ef}
+.chip.check{color:#3a5bb3;border-color:#c9d4f0;background:#eff3fd}
+.chip.flat{color:#666;border-color:#e0e0e0;background:#fafafa;font-weight:500}
+.dcard{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:22px 24px;margin-bottom:16px}
+.dhead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:10px}
+.dhead h3{font-size:18.5px;margin:0;line-height:1.32}
+.idb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:700;background:#1b1b1b;color:#fff;border-radius:6px;padding:2px 8px;margin-right:8px;vertical-align:middle;letter-spacing:.02em}
+.fl .idbs{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#999;margin-right:6px}
+.dchips{display:flex;gap:7px;flex-wrap:wrap;flex:0 0 auto;justify-content:flex-end}
+.ln{font-size:15px;margin:9px 0;color:#2a2a2a}
+.ln b{color:#1b1b1b}
+.ln.scn{background:#fafafa;border:1px solid #eee;border-radius:9px;padding:11px 14px}
+.ln.why{color:#444}
+.decision{border-top:1px solid #eee;margin-top:15px;padding-top:14px}
+.q{font-size:15.5px;font-weight:600;margin:0 0 11px;color:#1b1b1b}
+ul.opts{list-style:none;margin:0;padding:0}
+ul.opts li{display:flex;gap:11px;align-items:flex-start;padding:10px 12px;border:1px solid #ececec;border-radius:9px;margin-bottom:8px;font-size:14.5px;background:#fdfdfd}
+ul.opts li.rec{background:#f4faf5;border-color:#cfe7d3}
+.ck{width:18px;height:18px;border:1.5px solid #bbb;border-radius:5px;flex:0 0 auto;margin-top:2px}
+li.rec .ck{background:#2f7d3a;border-color:#2f7d3a;position:relative}
+li.rec .ck::after{content:"✓";color:#fff;font-size:12px;position:absolute;left:3px;top:-2px}
+.recnote{font-size:14.5px;color:#2f6b39;background:#f4faf5;border:1px solid #d7ebda;border-radius:9px;padding:11px 14px;margin-top:6px}
+.recnote b{color:#235e2c}
+.origin{font-size:12.5px;color:#999;margin-top:12px;border-top:1px dashed #eee;padding-top:9px}
+.origin a{color:#3a5bb3;text-decoration:none}
+.origin a:hover{text-decoration:underline}
+.refi{font-family:ui-monospace,Menlo,monospace;color:#c2c2c2;font-size:11px}
+.refp{margin-top:10px;font-size:11.5px;color:#c2c2c2;font-family:ui-monospace,Menlo,monospace}
+ul.clean{list-style:none;margin:0;padding:0}
+ul.clean li{display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:1px solid #ececec;font-size:14.5px}
+ul.clean li:first-child{border-top:0}
+ul.clean li .dot{color:#2f7d3a;flex:0 0 auto;margin-top:1px;font-weight:700}
+.fl{display:block;text-decoration:none;color:inherit;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:15px 18px;margin-bottom:10px}
+.fl:hover{border-color:#888}
+.fl .t{font-size:16.5px;font-weight:600;margin-bottom:3px}
+.fl .f{font-size:13.5px;color:#777;margin-bottom:9px}
+.mini{display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;font-weight:600;border-radius:999px;padding:2px 9px;border:1px solid}
+.mchip.fix{color:#b3261e;border-color:#f2d2cd;background:#fdf3f2}
+.mchip.dec{color:#9a6a00;border-color:#eeddb2;background:#fdf9ee}
+.mchip.check{color:#3a5bb3;border-color:#d0daf2;background:#f3f6fd}
+.mchip.ok{color:#2f7d3a;border-color:#cfe7d3;background:#f4fbf5}
+.spine{background:#fff;border:1px solid #e6e6e6;border-radius:15px;padding:20px 22px;margin-bottom:16px}
+.spine .nm{font-size:19px;font-weight:700;margin:0}
+.spine .oq{color:#555;font-size:14.5px;margin:7px 0 14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.cols{grid-template-columns:1fr}}
+.col .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9a9a9a;margin-bottom:7px}
+.np{font-size:12px;background:#f3f3f4;border:1px solid #e6e6e6;border-radius:999px;padding:3px 10px;color:#444;display:inline-block;text-decoration:none;margin:0 4px 5px 0}
+a.np.lk:hover{border-color:#888;background:#ececed}
+.cf2{border-top:1px solid #eee;margin-top:16px;padding-top:14px}
+.cf2 .it{padding:11px 0}
+.cf2 .it + .it{border-top:1px dashed #eee}
+.cf2 .ct{font-size:15px;font-weight:600;color:#2a2a2a;display:flex;gap:9px;align-items:flex-start}
+.cf2 .cd{font-size:14px;color:#555;margin:5px 0 0 0}
+.cf2 .cq{font-size:13.5px;color:#9a6a00;margin-top:6px}
+.endnote{margin-top:42px;color:#9a9a9a;font-size:13px;line-height:1.7;border-top:1px solid #e6e6e6;padding-top:18px}
+</style></head><body><div class="page"><p class="meta"><a href="index.html">← Mapa do sistema</a> · Devoluções</p>
+<h1>Devolução com Troca de Peça</h1><p class="lead">Quando um cliente devolve uma peça errada (por exemplo, uma porca M8 em vez de M10), o operador registra no sistema que é uma troca. O produto errado entra no estoque e fica marcado com o custo original da venda.</p>
+<p class="meta">Lido do código · revisado em 3 jun 2026</p>
+<div class="stats">
+<div class="stat"><div class="n" style="color:#b3261e">4</div><div class="l">problemas</div></div>
+<div class="stat"><div class="n" style="color:#9a6a00">1</div><div class="l">decisões</div></div>
+
+</div><h2>O que já funciona</h2><div class="dcard"><ul class="clean"><li><span class="dot">✓</span><span>Receber e listar devoluções funciona normal</span></li><li><span class="dot">✓</span><span>Ao classificar como troca, o custo fica correto (herdado da venda original)</span></li><li><span class="dot">✓</span><span>Se o operador não preenche a quantidade, o sistema bloqueia no painel dele</span></li><li><span class="dot">✓</span><span>Se clicar duas vezes por acaso, o sistema só processa uma vez</span></li></ul></div><h2>Problemas pra resolver · 4</h2><div class="dcard"><div class="dhead"><h3><span class="idb">P053</span>Devolução antiga (antes de maio) não devolve o estoque pro monte quando cancela</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Devoluções</span></div></div><p class="ln scn"><b>Imagina assim:</b> Uma devolução foi registrada antes de 28 de maio. O operador quer desfazer e devolver o estoque. O sistema não consegue encontrar o registro dela e deixa o estoque prisioneiro.</p><p class="ln"><b>Hoje:</b> Quando tenta desistir da devolução, o sistema procura mas não acha o caminho histórico — o estoque que entrou não volta pro monte.</p><p class="ln why"><b>Por que importa:</b> O produto fica contado como se ainda estivesse em devolução, mas ninguém consegue vender. O saldo fica mentiroso.</p><div class="decision"><p class="q">Precisa de um ajuste no sistema pra encontrar devoluções antigas pela data em vez de só buscar por identificação.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Corrigir a lógica de busca: procurar devoluções antigas por data da transação + tipo, não só por ID</b> — Desclassificar volta a funcionar. Estoque volta pro monte como esperado.</span></li><li class=""><span class="ck"></span><span><b>Fazer uma varredura manual agora pra recompor os saldos de devoluções pré-maio que ficaram travadas</b> — Saldo fica correto de uma vez, mas não resolve o código — problema volta a acontecer.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer a correção no código (opção 1). É rápido e impede que o problema aconteça novamente com futuras devoluções.</p></div><p class="refp">devolucoes.ts:408-411</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P054</span>Estoque fica negativo quando dois operadores mexem na mesma prateleira ao mesmo tempo</h3><div class="dchips"><span class="chip fix">grave</span><span class="chip flat">Recebimento e guarda de mercadoria</span></div></div><p class="ln scn"><b>Imagina assim:</b> Mercadoria chega em RECEB-01 com 5 unidades. Um operador marca como danificado (4 para quarentena). Ao mesmo tempo, outro operador tira 3 unidades pra picking. O segundo tenta tirar mais do que existe.</p><p class="ln"><b>Hoje:</b> O sistema tenta processar os dois ao mesmo tempo. Tira 5, depois tira 3 de novo — saldo fica -3. Mas avisa erro só depois de começar. Marca como 'danificado' fica pela metade: entrou como danificado, mas não saiu da prateleira pra quarentena.</p><p class="ln why"><b>Por que importa:</b> Saldo vira negativo (impossível). Estoque fica numa situação confusa (meia entrada, meia saída), ninguém consegue arrumar.</p><div class="decision"><p class="q">Sistema precisa travar a prateleira enquanto uma operação está acontecendo — como se fosse só uma pessoa por vez mexendo nela.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Implementar trava/lock: quando começa a marcar como danificado, tranca a prateleira. Outros operadores esperam terminar.</b> — Operações nunca se cruzam. Sempre completa inteiro ou falha inteiro. Saldo sempre positivo.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está e ensinar os operadores a terem cuidado pra não clicar ao mesmo tempo</b> — Problema acontece de novo quando alguém esquece ou há pressa. Não é confiável.</span></li></ul><p class="recnote"><b>Recomendo:</b> Implementar o lock (opção 1). É a forma certa de garantir que duas operações não se pisam. Sem isso, é só sorte não quebrar.</p></div><p class="refp">devolucoes.ts:212-271; ledger.ts:95-105</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P157</span>Devolução chega sem informação de quem é a loja — fica como 'vazio'</h3><div class="dchips"><span class="chip dec">média</span><span class="chip flat">Integração com a loja (Tiny / marketplace)</span></div></div><p class="ln scn"><b>Imagina assim:</b> Uma devolução chega (talvez de um aviso automatizado que deu ruim, ou nota manual). Ninguém preencheu de qual loja/empresa veio. Operador classifica mesmo assim.</p><p class="ln"><b>Hoje:</b> O sistema tenta adivinhar procurando a nota de venda original. Não acha (talvez foi nota manual, talvez o aviso bugou). Campo de loja fica branco. Quando depois faz relatório de devoluções por loja, essa aparece como '(vazio)' — ninguém sabe de quem era.</p><p class="ln why"><b>Por que importa:</b> Relatórios ficam incompletos. Não dá pra rastrear se a devolução veio de qual loja/revenda. Pra fins de cobrança ou bônus, fica confuso.</p><div class="decision"><p class="q">Operador deve ser obrigado a digitar a loja/empresa manualmente quando o sistema não conseguir adivinhar.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Tornar obrigatório preenchimento de loja no formulário quando o sistema não achar a nota original</b> — Operador preenche na hora. Dados sempre completos. Relatórios mostram direitinho.</span></li><li class=""><span class="ck"></span><span><b>Deixar em branco e depois tentar corrigir manualmente no relatório (ex: exportar, preencher em planilha, reimportar)</b> — Trabalhoso e propenso a erro. Relatórios temporariamente incorretos.</span></li></ul><p class="recnote"><b>Recomendo:</b> Tornar obrigatório (opção 1). Pequeno incômodo do operador agora, grande ganho de integridade depois.</p></div><p class="refp">devolucoes.ts:142-165</p></div><div class="dcard"><div class="dhead"><h3><span class="idb">P158</span>Devolução com troca de produto aparece no relatório de compras (mistura tudo)</h3><div class="dchips"><span class="chip dec">média</span><span class="chip flat">Relatórios e indicadores</span></div></div><p class="ln scn"><b>Imagina assim:</b> Alguém devolveu um item, e ele entrou no sistema como 'devolução com troca de SKU' (novo produto). Quando faz relatório que lista 'quem comprou do fornecedor e quanto', essa entrada de devolução aparece misturada.</p><p class="ln"><b>Hoje:</b> Relatório de 'Movimentos por Loja' lista tipo de movimento. Vira matéria-prima: 'Produto XYZ | Loja ABC | Tipo: Entrada | 5 un | R$ 52,50 | Custo 10,50'. Mas quem vê o relatório não sabe se foi compra de verdade ou se foi devolução reprocessada. Campo de loja/empresa muitas vezes fica vazio pra esse tipo de entrada.</p><p class="ln why"><b>Por que importa:</b> Relatórios que agregam pra decisão (quanto custa um produto, quem fornece) ficam viciados. Cálculo de custo médio sai errado.</p><div class="decision"><p class="q">Relatório precisa deixar claro qual é a origem (compra real vs devolução reprocessada) pra quem olha.</p><ul class="opts"><li class=""><span class="ck"></span><span><b>Adicionar coluna 'Origem' no relatório mostrando se foi compra ou devolução</b> — Fica transparente. Analista consegue filtrar se quer. Custo fica correto pra análise.</span></li><li class=""><span class="ck"></span><span><b>Excluir devoluções do relatório de compras de fornecedor (mostrar só compras de verdade)</b> — Relatório fica limpo, mas se alguém quiser investigar origem de um item, precisa outro relatório.</span></li></ul><p class="recnote"><b>Recomendo:</b> Adicionar coluna 'Origem' (opção 1). Assim cada um usa o dado como precisa, e fica rastreável.</p></div><p class="refp">relatorios/movs-por-empresa/route.ts:54-61</p></div><h2>Decisões pra você tomar · 1</h2><div class="dcard"><div class="dhead"><h3><span class="idb">D295</span>Quando desiste de marcar como danificado, deve devolver tudo em uma operação única ou pode devolver em etapas?</h3><div class="dchips"><span class="chip dec">🟡 você decide</span><span class="chip flat">Devoluções</span></div></div><p class="ln scn"><b>Imagina assim:</b> Operador classificou uma devolução como danificado (B). Sistema fez 3 movimentos: 1) entrou do recebimento, 2) saiu do recebimento, 3) entrou em quarentena. Agora quer desistir (desclassificar).</p><p class="ln"><b>Hoje o sistema:</b> Sistema desfaz os 3 movimentos, cada um separado. Se o 2º falhar, o 1º já foi desfeito e fica inconsistente.</p><p class="ln why"><b>Por que importa:</b> Se uma operação falha no meio, fica confuso: estoque apartado em um lugar mas registro em outro. Operador não sabe se tudo funcionou ou ficou pelado.</p><div class="decision"><ul class="opts"><li class=""><span class="ck"></span><span><b>Fazer tudo junto (atômico): ou reverte os 3 movimentos inteiros, ou falha completamente sem fazer nenhum — não fica no meio do caminho</b> — Ou funciona 100% (os 3 voltam) ou volta pro estado anterior. Nunca fica inconsistente.</span></li><li class=""><span class="ck"></span><span><b>Deixar como está (desfaz um por um, se algum falha avisa depois)</b> — Mais simples de programar, mas risco de ficar com estoque em lugar errado se cair internet ou erro no meio.</span></li></ul><p class="recnote"><b>Recomendo:</b> Fazer tudo junto (opção 1). É a forma confiável. Sistema nunca fica em situação 'meia boca'.</p></div><p class="refp">devolucoes.ts:453-467</p></div><p class="endnote">Tudo em "hoje" foi lido do código. Etiquetas conforme a análise original. <a href="index.html">← mapa</a> · <a href="decisoes.html">decisões</a> · <a href="problemas.html">problemas</a></p></div></body></html>

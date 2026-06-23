@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     // Fetch pedidos that are aguardando_compra, ordered by data asc (oldest first)
     const { data: pedidos, error: pedidosErr } = await supabase
       .from("siso_pedidos")
-      .select("id, numero, empresa_origem_id, data, etiqueta_zpl, etiqueta_url, separacao_tags")
+      .select("id, numero, empresa_origem_id, data, etiqueta_zpl, etiqueta_url, separacao_tags, separacao_galpao_id")
       .in("id", pedido_ids)
       .eq("status_separacao", "aguardando_compra")
       .order("data", { ascending: true });
@@ -243,9 +243,12 @@ export async function POST(request: NextRequest) {
     let separacaoGalpaoId: string | null = null;
     let empresaExecId = pedido.empresa_origem_id;
 
-    // Fetch empresa's galpao
-    let pedidoGalpaoId: string | null = null;
-    if (pedido.empresa_origem_id) {
+    // Galpão do pedido: prefere separacao_galpao_id (autoritativo). O espelho
+    // siso_empresas.galpao_id é DEPRECADO (1º preferencial) e pode apontar pro
+    // galpão errado quando a empresa opera em N galpões — só cai nele se o
+    // pedido ainda não tem galpão de separação.
+    let pedidoGalpaoId: string | null = pedido.separacao_galpao_id ?? null;
+    if (!pedidoGalpaoId && pedido.empresa_origem_id) {
       const { data: empresa } = await supabase
         .from("siso_empresas")
         .select("galpao_id")

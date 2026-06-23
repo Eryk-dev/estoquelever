@@ -187,7 +187,7 @@ export default function WmsConferenciaPage() {
   const totalUnidades = (ultimo?.itens ?? []).reduce((s, i) => s + i.quantidade_pedida, 0);
 
   return (
-    <>
+    <div className="wms-conf-page">
       <PageHeader
         title="Conferência de embalagem"
         subtitle="Escolha o modo — abre em tela cheia pronto pra bipar a etiqueta de envio"
@@ -378,7 +378,7 @@ export default function WmsConferenciaPage() {
         onCancel={() => setDivergenciaAberta(false)}
         pedidoNumero={pedido?.numero ?? pedido?.id ?? ""}
       />
-    </>
+    </div>
   );
 }
 
@@ -488,8 +488,15 @@ function DivergenciaModal({
 // operador embale só 1. O operador bate o olho e entende o pacote.
 
 function ItensGrid({ itens }: { itens: ItemConferencia[] }) {
+  // Colunas = ceil(sqrt(n)): 1→1, 2→2 (lado a lado), 3-4→2, 5-9→3. As linhas
+  // esticam (grid-auto-rows:1fr) pra ocupar toda a área abaixo do bip — assim
+  // a foto fica a maior possível e o bloco centra preenchendo o espaço.
+  const cols = Math.max(1, Math.ceil(Math.sqrt(itens.length)));
   return (
-    <div className="wms-emb-grid">
+    <div
+      className="wms-emb-grid"
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+    >
       {itens.map((item) => {
         const multi = item.quantidade_pedida > 1;
         return (

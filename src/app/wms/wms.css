@@ -850,6 +850,12 @@
 .wms-conf-launch-t { font-size: 26px; font-weight: 800; }
 .wms-conf-launch-d { font-size: 13px; color: var(--wms-c-mute, #6b7280); }
 
+/* Conferência · fonte Arial em toda a tela (pedido do operador) */
+.wms-conf-page,
+.wms-conf-page .wms-conf-kiosk {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+}
+
 /* Conferência · kiosk em tela cheia (bipar + ver fotos/qtd em destaque) */
 .wms-conf-kiosk {
   position: fixed; inset: 0;
@@ -881,11 +887,15 @@
   min-height: 0;
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* colunas vêm inline (repeat(N, minmax(0,1fr))) — N = ceil(sqrt(nº itens)) */
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;        /* linhas esticam pra preencher toda a altura */
   gap: 18px;
-  align-content: start;
-  overflow-y: auto;
+  align-content: stretch;
+  justify-items: center;      /* card não estica na largura — vira quadrado centrado */
+  align-items: center;
   padding: 4px;
+  overflow: hidden;
 }
 .wms-emb-card {
   position: relative;
@@ -893,6 +903,13 @@
   border-radius: 14px;
   overflow: hidden;
   display: flex; flex-direction: column;
+  /* card = quadrado dimensionado pela altura da célula (área landscape):
+     o branco acompanha a foto, não ocupa a tela inteira */
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  min-height: 0;
   border: 1px solid var(--wms-c-border, #e5e7eb);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .10);
 }
@@ -903,7 +920,8 @@
 }
 .wms-emb-photo {
   position: relative;
-  aspect-ratio: 1 / 1;
+  flex: 1;            /* foto cresce pra ocupar a altura toda do card */
+  min-height: 0;
   background: #fff;
 }
 .wms-emb-photo img { width: 100%; height: 100%; object-fit: contain; }

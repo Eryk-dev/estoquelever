@@ -6861,3 +6861,33 @@ erros:
     files:
       - src/lib/wms/trocas-equivalencia.ts
     tags: [troca-equivalencia, separacao, status-pedido, concluido, oc, checklist, guard]
+
+  - id: conferencia-bip-qr-ml-nao-encontrado
+    date: "2026-06-23"
+    source: conferencia
+    category: business_logic
+    message: >
+      Bipar o QR da etiqueta ML na Conferência (kiosk) dava "Nenhum pedido
+      encontrado pra esse código" — o Code128 funcionava, o QR não.
+    cause: >
+      O payload do QR ML é um JSON ({"id":"<shipmentId>","t":"lm"}), guardado em
+      siso_pedidos.etiqueta_barcodes ao lado do mesmo shipment id como Code128
+      cru. resolverPedidoPorBarcode só fazia match EXATO do valor cru
+      (contains([codigo])). O JSON do QR não casava por 2 motivos: (1) num
+      teclado ABNT2 o leitor em keyboard-wedge garbleia chaves/aspas/`:` (dígitos
+      sobrevivem); (2) mesmo limpo, o contains do PostgREST não encoda um
+      elemento de array com `{`/`,`/`"`. O Code128 (só dígitos) nunca teve esse
+      problema, por isso funcionava.
+    fix: >
+      derivarCandidatos(codigo) extrai candidatos do valor cru: valor original,
+      sem prefixo AIM (]Q1…), id do JSON e runs de 8+ dígitos. O step 1 passou a
+      casar por overlap (etiqueta_barcodes && {candidatos seguros}) — o shipment
+      id (run de dígitos) casa o Code128 guardado, contornando garble e encode.
+      Steps 2/3/4 também consomem os candidatos (chave 44-díg, id_pedido_ecommerce
+      via .in, ZPL ILIKE por run de dígitos). Mantém match exato do cru como
+      fallback pro QR JSON limpo. Formato real confirmado no staging
+      (pedido 1046453837).
+    files:
+      - src/lib/wms/conferencia.ts
+      - src/lib/wms/conferencia.test.ts
+    tags: [conferencia, bip, qr, mercado-livre, etiqueta-barcodes, abnt2, postgrest, overlap]

@@ -1341,6 +1341,7 @@ export default function WmsSeparacaoPage() {
                 retryEtiquetaMut.mutate(ids ?? effectiveIds)
               }
               onConferir={() => router.push("/wms/separacao/conferencia")}
+              onEncaixotar={() => router.push("/wms/separacao/encaixotamento")}
             />
           </div>
         )}
@@ -1957,6 +1958,7 @@ interface PrimaryTabActionsProps {
   onEmbalar: (modo?: string, idsOverride?: string[]) => void;
   onRetryEtiqueta: (ids?: string[]) => void;
   onConferir: () => void;
+  onEncaixotar: () => void;
 }
 
 function PrimaryTabActions({
@@ -1973,10 +1975,24 @@ function PrimaryTabActions({
   onEmbalar,
   onRetryEtiqueta,
   onConferir,
+  onEncaixotar,
 }: PrimaryTabActionsProps) {
   // Separação futura PARA em `separado` (peça na caixa do dia) — a etiqueta/NF
-  // só na promoção. Sem ação de embalar nesta tela.
-  if (futura && tab === "separado") return null;
+  // só na promoção. Sem ação de embalar; a ação desta aba é ENCAIXOTAR por dia
+  // (botão → sub-tela, mesmo padrão do "Conferir" da aba Embalados).
+  if (futura && tab === "separado") {
+    return (
+      <button
+        className="wms-btn wms-btn-primary wms-btn-sm"
+        onClick={() => onEncaixotar()}
+        type="button"
+        title="Abrir o encaixotamento por dia — bipar SKU/EAN e distribuir o carrinho nas caixas"
+      >
+        <Icon name="box" size={11} />
+        Encaixotar
+      </button>
+    );
+  }
   // Indicador "operando em todos" vs "operando em selection" (texto consistente)
   const countLabel = hasSelection
     ? `${selectedCount} selecionado(s)`

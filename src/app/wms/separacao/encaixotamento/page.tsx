@@ -186,7 +186,7 @@ export default function WmsEncaixotamentoPage() {
       <PageHeader
         title="Encaixotamento"
         subtitle="Distribua o carrinho da separação futura nas caixas por dia de despacho — bipe o item, informe a quantidade, deposite na caixa indicada."
-        backHref="/wms/separacao-futura"
+        backHref="/wms/separacao-futura?tab=separado"
         backLabel="Sep. futura"
       />
 

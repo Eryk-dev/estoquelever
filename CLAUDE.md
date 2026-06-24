@@ -91,7 +91,8 @@ Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) →
            → confirmar-item-embalagem → embalado → [conferência opcional: embalador bipa etiqueta
            (embalado_real_por, status não muda) → conferente bipa → conferido] → expedir → expedido
            (parcial = 2 movs + re-busca cascade; encaminhar = manda pra outro galpão)
-           [pista FUTURA para em `separado` → /wms/encaixotamento: bipa SKU/EAN+qty, distribui o
+           [pista FUTURA para em `separado` → botão "Encaixotar" na aba Separados (não é item de sidebar;
+            mesmo padrão do "Conferir") abre /wms/separacao/encaixotamento: bipa SKU/EAN+qty, distribui o
             carrinho nas caixas = DIA de prazo_envio (FIFO), grava quantidade_encaixotada/encaixotado_em,
             NÃO muda status; a promoção da etiqueta é que segue p/ embalagem]
 ```
@@ -152,7 +153,7 @@ src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
     api/wms/**/route.ts                 # 209 rotas — TODO o backend
-    wms/**                              # 47 pages (+layout) — TODO o frontend, todas "use client"
+    wms/**                              # 48 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
   components/

@@ -52,6 +52,11 @@ export function extrairBarcodesDoZpl(zpl: string | null | undefined): string[] {
     if (barcodeCmd && token.startsWith("FD")) {
       const valor = normalizarDado(barcodeCmd, token.slice(2));
       if (valor.length >= 4) valores.add(valor);
+      // QR ML: o shipment id viaja dentro do JSON (`{"id":"…",…}`). No Flex NÃO
+      // há Code128 com o id cru — só o QR — então guarda o `id` standalone,
+      // senão o bip do QR não casa por overlap (igualdade de elemento do array).
+      const idMl = /"id"\s*:\s*"?(\d{8,})"?/.exec(valor);
+      if (idMl) valores.add(idMl[1]);
       barcodeCmd = null;
       continue;
     }

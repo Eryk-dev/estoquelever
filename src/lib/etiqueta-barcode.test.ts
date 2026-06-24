@@ -63,6 +63,14 @@ describe("extrairBarcodesDoZpl", () => {
     expect(r).toEqual([]);
   });
 
+  it("QR ML Flex (só ^BQ JSON, sem ^BC): guarda o shipment id do campo `id` standalone", () => {
+    // Etiqueta Flex real: o shipment id viaja SÓ dentro do JSON do QR — não há
+    // Code128 com o id cru. Sem extrair o `id`, o bip do QR não casa por overlap.
+    const zpl =
+      '^XA^FO500,50^BQN,2,7^FDLA,{"id":"47362787565","sender_id":735198837,"hash_code":"udz6=","security_digit":"0"}^FS^XZ';
+    expect(extrairBarcodesDoZpl(zpl)).toContain("47362787565");
+  });
+
   it("ZPL raster Shopee (~DG, sem ^BC) retorna []", () => {
     const shopee = "~DGR:SHOPEE.GRF,30000,75,:Z64:eJzt0jEKw...^XA^FO0,0^XGR:SHOPEE.GRF,1,1^FS^XZ^XA^IDR:SHOPEE.GRF^FS^XZ";
     expect(extrairBarcodesDoZpl(shopee)).toEqual([]);

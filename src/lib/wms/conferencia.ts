@@ -5,11 +5,14 @@
  * codigoRastreio; DANFE: chave NF 44 dígitos) e precisamos achar o pedido.
  *
  * O valor cru do leitor vira uma lista de CANDIDATOS (`derivarCandidatos`): o
- * próprio valor, sem prefixo AIM (`]Q1…`), o `id` do JSON do QR e os runs de
- * dígitos. Isso é o que faz o QR do ML casar: seu payload é
- * `{"id":"47362139627","t":"lm"}`, mas o mesmo shipment id está guardado como
- * Code128 cru — então casamos por ele mesmo quando o JSON vem garbleado pelo
- * teclado ABNT2 ou o PostgREST não encoda o elemento com `{`/`,`/`"`.
+ * próprio valor, sem prefixo AIM (`]Q1…`) e o `id` do JSON do QR (ancorado no
+ * campo `id`; runs de dígitos só quando NÃO é QR ML). Isso é o que faz o QR do
+ * ML casar: o payload é `{"id":"47362139627","t":"lm"}` (Flex traz mais campos:
+ * `sender_id`/`hash_code`/`security_digit`), mas o shipment id também fica
+ * guardado standalone — então casamos por ele quando o JSON vem garbleado pelo
+ * teclado ABNT2 ou o PostgREST não encoda o elemento com `{`/`,`/`"`. NÃO
+ * emitimos `sender_id` como candidato: é o id da conta do vendedor (constante
+ * entre pedidos do mesmo vendedor) e casaria o pedido errado.
  *
  * Cadeia de matching (mais forte → mais fraco):
  *   1. etiqueta_barcodes && {candidatos}  (overlap; + match exato do cru)
@@ -99,9 +102,21 @@ export function derivarCandidatos(codigoRaw: string): string[] {
   if (codigo) out.add(codigo);
   const semAim = tirarPrefixoAim(codigo);
   if (semAim) out.add(semAim);
-  const idJson = /"id"\s*:\s*"?([\w-]{6,})"?/.exec(codigo);
-  if (idJson) out.add(idJson[1]);
-  for (const run of extrairRunsDigitos(semAim)) out.add(run);
+  // O shipment id é o campo `id` do QR (1º campo). Ancorar NELE:
+  // - idLimpo: JSON íntegro (cobre id alfanumérico, ex. `"id":"AB12CD34"`).
+  // - idGarble: teclado ABNT2 garbleia `"id":` → `^id^Ç^`, mas os dígitos
+  //   sobrevivem. `.exec` (não-global) pega a 1ª ocorrência = o id real, nunca
+  //   o `id` de `sender_id` que vem depois.
+  const idLimpo = /"id"\s*:\s*"?([\w-]{6,})"?/.exec(codigo);
+  const idGarble = /(?:^|[^0-9a-z])id[^0-9]{0,6}(\d{8,})/i.exec(codigo);
+  if (idLimpo) out.add(idLimpo[1]);
+  if (idGarble) out.add(idGarble[1]);
+  // Runs cegos SÓ quando não é QR ML (Code128 cru, chave NF). No QR Flex os
+  // campos extras (`sender_id` constante por vendedor, `security_digit`)
+  // colidiriam entre pedidos — por isso não os emitimos como candidatos.
+  if (!idLimpo && !idGarble) {
+    for (const run of extrairRunsDigitos(semAim)) out.add(run);
+  }
   return Array.from(out);
 }
 
@@ -175,10 +190,12 @@ export async function resolverPedidoPorBarcode(
   if (porEcommerce && porEcommerce.length > 1) return { ok: false, erro: "ambiguo" };
 
   // 4. Fallback: etiqueta antiga sem etiqueta_barcodes — procura no ZPL bruto
-  //    (janela 30d). Tenta os runs de dígitos (sobrevivem ao garble) e o cru;
-  //    achando, self-heal: persiste os barcodes (incl. o shipment id).
+  //    (janela 30d). Usa os candidatos seguros (shipment id, sobrevive ao garble)
+  //    e o cru; achando, self-heal: persiste os barcodes (incl. o shipment id).
+  //    NÃO usa runs cegos: o `sender_id` do QR Flex aparece no ZPL de TODO pedido
+  //    do mesmo vendedor → daria falso "ambíguo".
   const corte = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const alvosZpl = Array.from(new Set([...extrairRunsDigitos(codigo), codigo]));
+  const alvosZpl = Array.from(new Set([...seguros, codigo]));
   for (const alvo of alvosZpl) {
     if (alvo.length < 4) continue;
     const { data: porZpl } = await supabase
@@ -192,10 +209,12 @@ export async function resolverPedidoPorBarcode(
     if (porZpl && porZpl.length > 1) return { ok: false, erro: "ambiguo" };
     if (porZpl && porZpl.length === 1) {
       const pedido = porZpl[0];
-      const barcodes = montarBarcodesEtiqueta(pedido.etiqueta_zpl, [
-        codigo,
-        ...extrairRunsDigitos(codigo),
-      ]);
+      // Candidatos derivados (cru + shipment id), NÃO runs cegos — senão o
+      // sender_id do QR Flex voltaria a ser guardado standalone e re-colidiria.
+      const barcodes = montarBarcodesEtiqueta(
+        pedido.etiqueta_zpl,
+        derivarCandidatos(codigo),
+      );
       supabase
         .from("siso_pedidos")
         .update({ etiqueta_barcodes: barcodes })

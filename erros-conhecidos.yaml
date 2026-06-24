@@ -6892,6 +6892,42 @@ erros:
       - src/lib/wms/conferencia.test.ts
     tags: [conferencia, bip, qr, mercado-livre, etiqueta-barcodes, abnt2, postgrest, overlap]
 
+  - id: conferencia-bip-flex-ml-pedido-errado
+    date: "2026-06-23"
+    source: conferencia
+    category: business_logic
+    message: >
+      Bipar a etiqueta ML Flex na Conferência abria o PEDIDO ERRADO (outro pedido
+      do mesmo vendedor) — não "não encontrado". Confirmado no staging: bipar o
+      shipment 47362787565 (pedido 52074) abria o 52040.
+    cause: >
+      O QR do Flex é um JSON mais rico que o ML simples ({"id":"<ship>","t":"lm"}):
+      {"id":<ship>,"sender_id":<vendedor>,"hash_code":"…","security_digit":"0"}.
+      Dois efeitos combinados: (1) derivarCandidatos extraía TODO run de 8+ dígitos
+      (extrairRunsDigitos) → pegava também o sender_id, que é o id da CONTA do
+      vendedor (constante entre todos os pedidos do mesmo vendedor); um pedido
+      anterior já tinha esse sender_id guardado standalone (via self-heal), então o
+      overlap casava esse pedido errado. (2) a etiqueta Flex é QR-only (só ^BQ, sem
+      ^BC Code128), então o shipment id só existe DENTRO do JSON em etiqueta_barcodes
+      e o overlap (igualdade de elemento do array) nunca casa o pedido certo por ele.
+      Resultado: id certo não casa, sender_id casa o pedido errado.
+    fix: >
+      (a) conferencia.ts derivarCandidatos ancora no campo `id` (regex limpa p/ id
+      alfanumérico + regex garble-tolerant /id[^0-9]{0,6}(\d{8,})/i, .exec pega só a
+      1ª ocorrência = shipment id) e NÃO emite runs cegos quando achou o id → o
+      sender_id deixa de ser candidato. (b) etiqueta-barcode.ts extrairBarcodesDoZpl
+      passa a guardar o `id` do JSON do QR standalone → Flex (QR-only) casa por
+      overlap direto. (c) step 4 (ZPL self-heal) e alvosZpl usam candidatos
+      seguros/derivados em vez de runs cegos → não re-guardam nem buscam pelo
+      sender_id (evita re-poison + falso "ambíguo"). Validado no staging: bip do
+      47362787565 resolve o pedido certo 52074 (era 52040 via sender_id 735198837).
+    files:
+      - src/lib/wms/conferencia.ts
+      - src/lib/etiqueta-barcode.ts
+      - src/lib/wms/conferencia.test.ts
+      - src/lib/etiqueta-barcode.test.ts
+    tags: [conferencia, bip, qr, mercado-livre, flex, sender_id, etiqueta-barcodes, overlap, abnt2]
+
   - id: inventario-bipe-loc-2x-soma-no-primeiro-produto
     date: "2026-06-23"
     source: wms.inventario.contar

@@ -80,6 +80,28 @@ describe("derivarCandidatos", () => {
     expect(c).toContain("AB12CD34");
   });
 
+  // QR da etiqueta ML Flex: JSON mais rico que o ML simples —
+  // {"id":<shipment>,"sender_id":<vendedor>,"hash_code":"…","security_digit":"0"}.
+  // sender_id é o id da CONTA do vendedor (constante entre TODOS os pedidos do
+  // mesmo vendedor) — não pode virar candidato, senão o bip de um Flex casa
+  // outro Flex qualquer do mesmo vendedor.
+  const FLEX_GARBLE =
+    "^id^Ç^47362787565^,^sender_id^Ç735198837,^hash_code^Çûdz6sjaD0s+D+0Pu26yE4nUZ+UGyZg22bS4b8wPETBc=^,^security_digit^Ç^0^{";
+  const FLEX_CLEAN =
+    '{"id":"47362787565","sender_id":735198837,"hash_code":"udz6sjaD0s+D+0Pu26yE4nUZ+UGyZg22bS4b8wPETBc=","security_digit":"0"}';
+
+  it("QR Flex garbleado → shipment id, IGNORA sender_id (senão colide entre pedidos do mesmo vendedor)", () => {
+    const c = derivarCandidatos(FLEX_GARBLE);
+    expect(c).toContain("47362787565");
+    expect(c).not.toContain("735198837");
+  });
+
+  it("QR Flex limpo → shipment id sem sender_id espúrio", () => {
+    const c = derivarCandidatos(FLEX_CLEAN);
+    expect(c).toContain("47362787565");
+    expect(c).not.toContain("735198837");
+  });
+
   it("dedup — sem repetidos", () => {
     const c = derivarCandidatos(SHIPMENT);
     expect(c.filter((x) => x === SHIPMENT)).toHaveLength(1);

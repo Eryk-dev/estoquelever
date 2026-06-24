@@ -462,6 +462,188 @@ function EmpresaMultiSelect({
   );
 }
 
+/**
+ * Filtro de tag multi-select. Sem busca: lista só as tags presentes nos pedidos
+ * VISÍVEIS da aba (curto e relevante). Com busca: varre TODAS as tags do sistema
+ * (a lista cresce muito com tags por dia). Semântica OU no servidor.
+ */
+function TagMultiSelect({
+  contextualTags,
+  allTags,
+  selected,
+  onChange,
+}: {
+  contextualTags: string[];
+  allTags: string[];
+  selected: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const selectedSet = new Set(selected);
+  const label =
+    selected.length === 0
+      ? "Todas tags"
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} tags`;
+
+  const toggle = (tag: string) => {
+    const next = new Set(selectedSet);
+    if (next.has(tag)) next.delete(tag);
+    else next.add(tag);
+    onChange([...next]);
+  };
+
+  const q = search.trim().toLowerCase();
+  const lista = q
+    ? allTags.filter((t) => t.toLowerCase().includes(q))
+    : Array.from(new Set([...selected, ...contextualTags])).sort((a, b) =>
+        a.localeCompare(b, "pt-BR"),
+      );
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="wms-select"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 180,
+          textAlign: "left",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </span>
+        <Icon name="chevron-r" size={11} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 30,
+            width: 240,
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+            padding: 4,
+          }}
+        >
+          <div className="wms-search-wrap" style={{ margin: "2px 2px 6px" }}>
+            <Icon name="search" size={13} />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar tag (todos os pedidos)…"
+            />
+            {search && (
+              <button
+                className="wms-search-clear"
+                onClick={() => setSearch("")}
+                type="button"
+              >
+                <Icon name="x" size={11} />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            style={{
+              display: "flex",
+              width: "100%",
+              alignItems: "center",
+              padding: "6px 8px",
+              fontSize: 12,
+              color:
+                selected.length === 0
+                  ? "var(--wms-c-fg)"
+                  : "var(--wms-c-fg-2)",
+              fontWeight: selected.length === 0 ? 600 : 400,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            Todas tags
+          </button>
+          <div style={{ maxHeight: 260, overflowY: "auto" }}>
+            {lista.length === 0 ? (
+              <div
+                style={{
+                  padding: 8,
+                  fontSize: 12,
+                  color: "var(--wms-c-fg-2)",
+                }}
+              >
+                {q
+                  ? "Nenhuma tag encontrada"
+                  : "Nenhuma tag nos pedidos visíveis — busque acima"}
+              </div>
+            ) : (
+              lista.map((t) => (
+                <label
+                  key={t}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 8px",
+                    fontSize: 12,
+                    cursor: "pointer",
+                    borderRadius: 6,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedSet.has(t)}
+                    onChange={() => toggle(t)}
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WmsSeparacaoPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -659,6 +841,23 @@ export default function WmsSeparacaoPage() {
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
   }, [pedidosRaw, tab]);
+
+  // Tags selecionadas (filtro) ← URL param "tag" separado por vírgula.
+  const selectedTags = useMemo(
+    () =>
+      tagFilter
+        ? tagFilter.split(",").map((s) => s.trim()).filter(Boolean)
+        : [],
+    [tagFilter],
+  );
+  // Tags presentes nos pedidos VISÍVEIS da aba — lista curta do dropdown.
+  const contextualTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of pedidos) {
+      for (const t of p.separacao_tags) if (t) set.add(t);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [pedidos]);
 
   const moveTargets = MOVE_TARGETS[tab];
 
@@ -1053,19 +1252,12 @@ export default function WmsSeparacaoPage() {
           ))}
         </select>
 
-        <select
-          className="wms-select"
-          value={tagFilter}
-          onChange={(e) => updateParam("tag", e.target.value)}
-          style={{ width: 180 }}
-        >
-          <option value="">Todas tags</option>
-          {allTags.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
+        <TagMultiSelect
+          contextualTags={contextualTags}
+          allTags={allTags}
+          selected={selectedTags}
+          onChange={(tags) => updateParam("tag", tags.join(","))}
+        />
 
         <select
           className="wms-select"

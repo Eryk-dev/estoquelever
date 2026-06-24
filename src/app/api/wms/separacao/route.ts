@@ -66,6 +66,11 @@ export async function GET(request: NextRequest) {
   const marketplaceFilter = searchParams.get("marketplace");
   const busca = searchParams.get("busca");
   const tagFilter = searchParams.get("tag");
+  // Multi-tag: aceita lista separada por vírgula (multi-select, semântica OU).
+  // overlaps([a]) ≡ contains([a]), então single-tag mantém o comportamento.
+  const tagList = tagFilter
+    ? tagFilter.split(",").map((s) => s.trim()).filter(Boolean)
+    : [];
   // Filtro por prazo de envio (range calculado no cliente p/ respeitar o
   // fuso local). prazoSem = só pedidos sem prazo. hasPrazo força os counts
   // pro caminho legado (a RPC não filtra prazo).
@@ -182,7 +187,7 @@ export async function GET(request: NextRequest) {
           if (marketplaceFilter) q = q.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
           q = applyBuscaFilter(q);
           q = applyPrazoFilter(q);
-          if (tagFilter) q = q.contains("separacao_tags", [tagFilter]);
+          if (tagList.length) q = q.overlaps("separacao_tags", tagList);
           return q;
         }),
       );
@@ -248,8 +253,8 @@ export async function GET(request: NextRequest) {
     }
     pedidosQuery = applyBuscaFilter(pedidosQuery);
     pedidosQuery = applyPrazoFilter(pedidosQuery);
-    if (tagFilter) {
-      pedidosQuery = pedidosQuery.contains("separacao_tags", [tagFilter]);
+    if (tagList.length) {
+      pedidosQuery = pedidosQuery.overlaps("separacao_tags", tagList);
     }
     if (statusFilters.includes("embalado") || statusFilters.includes("conferido")) {
       pedidosQuery = pedidosQuery
@@ -287,7 +292,7 @@ export async function GET(request: NextRequest) {
       if (marketplaceFilter) ocQ = ocQ.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
       ocQ = applyBuscaFilter(ocQ);
       ocQ = applyPrazoFilter(ocQ);
-      if (tagFilter) ocQ = ocQ.contains("separacao_tags", [tagFilter]);
+      if (tagList.length) ocQ = ocQ.overlaps("separacao_tags", tagList);
       const { data: ocPedidos } = await ocQ;
       if (!ocPedidos?.length) return [];
       const { data: items } = await supabase

@@ -3,7 +3,11 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { aprovarTroca, TrocaError } from "@/lib/wms/trocas-equivalencia";
-import { aprovarPedidoPosTroca, liberarPedidoPosTrocaOC } from "@/lib/wms/trocas-roteamento";
+import {
+  aprovarPedidoPosTroca,
+  liberarPedidoPosTrocaOC,
+  cascataTrocaOC,
+} from "@/lib/wms/trocas-roteamento";
 import { trocaErrorResponse } from "@/lib/wms/trocas-api";
 
 /**
@@ -71,7 +75,38 @@ export async function POST(
       }
     }
 
-    return NextResponse.json({ ok: true, troca, pedido_aprovado: pedidoAprovado });
+    // CASCATA OC: aplica o mesmo substituto aos pedidos IRMÃOS parados em OC
+    // (mesmo produto original + galpão), enquanto o saldo do substituto cobrir
+    // (FIFO). O operador aprovou o par uma vez → vale pra todos os irmãos.
+    // Não-fatal: a troca principal já foi aprovada.
+    let pedidosCascateados: string[] = [];
+    if (troca.galpao_id) {
+      try {
+        const c = await cascataTrocaOC({
+          trocaAprovada: {
+            pedido_item_id: troca.pedido_item_id,
+            galpao_id: troca.galpao_id,
+            sku_vendido: troca.sku_vendido,
+            sku_substituto: troca.sku_substituto,
+          },
+          usuarioId: session.id,
+          usuarioNome: session.nome,
+        });
+        pedidosCascateados = c.pedidosCascateados;
+      } catch (e) {
+        logger.warn("api.wms.trocas.aprovar", "cascata OC falhou (não-fatal)", {
+          troca_id: id,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      troca,
+      pedido_aprovado: pedidoAprovado,
+      pedidos_cascateados: pedidosCascateados,
+    });
   } catch (err) {
     if (err instanceof TrocaError) return trocaErrorResponse(err);
     logger.error("api.wms.trocas.aprovar", "erro aprovando troca", {

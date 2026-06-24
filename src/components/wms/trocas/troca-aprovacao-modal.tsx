@@ -355,13 +355,20 @@ export function TrocaAprovacaoModal({
       const r = await sisoFetch(`/api/wms/trocas/${troca.id}/aprovar`, {
         method: "POST",
       });
-      if (!r.ok) {
-        const b = (await r.json().catch(() => ({}))) as { error?: string };
-        throw new Error(b.error || `HTTP ${r.status}`);
-      }
+      const b = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        pedidos_cascateados?: string[];
+      };
+      if (!r.ok) throw new Error(b.error || `HTTP ${r.status}`);
+      return b;
     },
-    onSuccess: () => {
-      toast.success(`Troca aprovada — ${troca.sku_vendido} → ${subSku}`);
+    onSuccess: (b) => {
+      const n = b?.pedidos_cascateados?.length ?? 0;
+      toast.success(
+        n > 0
+          ? `Troca aprovada — ${troca.sku_vendido} → ${subSku} · aplicada também a ${n} pedido${n > 1 ? "s" : ""} em OC`
+          : `Troca aprovada — ${troca.sku_vendido} → ${subSku}`,
+      );
       invalidar();
       onDecidido?.();
       onClose();

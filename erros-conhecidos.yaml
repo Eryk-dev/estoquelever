@@ -6958,6 +6958,38 @@ erros:
       - src/app/wms/inventario/[id]/contar/page.tsx
     tags: [inventario, bip, contagem, sku, gtin, localizacao, fuzzy, produtos, double-bip]
 
+  - id: troca-equivalencia-aprovacao-nao-cascateava-irmaos-oc
+    date: "2026-06-23"
+    source: api.wms.trocas.aprovar
+    category: business_logic
+    message: >
+      aprovar a troca de equivalência de UM pedido em validação OC só trocava
+      aquele pedido; outros pedidos parados em OC esperando o MESMO produto
+      original (com saldo do substituto sobrando) ficavam intocados, exigindo
+      aprovação manual pedido a pedido.
+    cause: >
+      a rota /trocas/[id]/aprovar resolvia só o pedido da própria troca: troca
+      origem 'roteamento' → aprovarPedidoPosTroca; demais → liberarPedidoPosTrocaOC.
+      Nenhum caminho olhava os pedidos IRMÃOS (mesmo sku_vendido + galpão) também
+      parados em validacao_oc/aguardando_compra. O operador confirmava o
+      substituto uma vez mas tinha que repetir a aprovação N vezes.
+    fix: >
+      Nova cascataTrocaOC (trocas-roteamento.ts), chamada pela rota após a
+      aprovação principal. Acha os itens irmãos (mesmo sku original, sem troca
+      aplicada, compra pendente, pedido em OC no mesmo separacao_galpao_id),
+      ordena FIFO (ordenarIrmaosCascata, pura) e pra cada um reusa
+      solicitarTroca (R forte = guarda atômica de saldo) + aprovarTroca (humano
+      já confirmou o par) + liberarPedidoPosTrocaOC. SEM_SALDO_SUBSTITUTO = saldo
+      do substituto esgotou → para (FIFO estrito, espelha reconciliador-oc).
+      Resposta inclui pedidos_cascateados; toast do modal informa quantos.
+      Não-fatal: a troca principal já foi aprovada antes da cascata.
+    files:
+      - src/lib/wms/trocas-roteamento.ts
+      - src/app/api/wms/trocas/[id]/aprovar/route.ts
+      - src/components/wms/trocas/troca-aprovacao-modal.tsx
+      - src/lib/wms/trocas-roteamento.test.ts
+    tags: [troca, equivalencia, oc, cascata, aprovacao, fifo, reserva, validacao-oc]
+
   - id: separacao-trocar-loc-nao-reflete-e-reordena
     date: "2026-06-23"
     source: api.wms.separacao.checklist-items

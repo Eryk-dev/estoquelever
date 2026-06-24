@@ -29,7 +29,12 @@ import {
 } from "./roteamento";
 import { locsBloqueadasSet } from "./loc-locks";
 import { kickWorker } from "@/lib/execution-worker";
-import { listarEquivalentesComEstoque } from "./trocas-equivalencia";
+import {
+  listarEquivalentesComEstoque,
+  solicitarTroca,
+  aprovarTroca,
+  TrocaError,
+} from "./trocas-equivalencia";
 import {
   regraTroca,
   type TierQualidade,
@@ -812,4 +817,153 @@ export async function reRotearPedidoPosTroca(args: {
   }
   kickWorker().catch(() => {});
   return { acao: "oc" };
+}
+
+// ──────────────────────────────────────────────────────────────────
+// CASCATA OC (2026-06-23) — quando uma troca é APROVADA, aplica o MESMO
+// substituto aos OUTROS pedidos parados em OC esperando o MESMO produto
+// original no MESMO galpão, enquanto o saldo do substituto cobrir.
+//
+// O operador, ao aprovar a troca de um pedido, está confirmando que aquele
+// equivalente serve no lugar do original em falta — então não faz sentido
+// pedir aprovação pedido a pedido. Espelha a mecânica do reconciliador-oc:
+// FIFO estrito (mais antigo primeiro), o saldo escasso vai pra fila mais
+// velha, e para na primeira falta (não fura a fila).
+
+interface IrmaoCascataRow {
+  id: number | string;
+  pedido_id: string;
+  siso_pedidos:
+    | { criado_em?: string }
+    | Array<{ criado_em?: string }>
+    | null;
+}
+
+export interface IrmaoCascata {
+  item_id: number;
+  pedido_id: string;
+  criado_em: string;
+}
+
+/**
+ * Pura: normaliza as linhas dos irmãos (pedido embedado vem array OU objeto
+ * pelo cliente Supabase) e ordena FIFO por criado_em, desempate estável por
+ * pedido_id (criado_em empata quando vários pedidos entram no mesmo lote de
+ * webhook). Mesma normalização do reconciliador-oc.
+ */
+export function ordenarIrmaosCascata(rows: IrmaoCascataRow[]): IrmaoCascata[] {
+  return rows
+    .map((r) => {
+      const pedRaw = r.siso_pedidos as unknown;
+      const ped = Array.isArray(pedRaw) ? pedRaw[0] : pedRaw;
+      return {
+        item_id: Number(r.id),
+        pedido_id: String(r.pedido_id),
+        criado_em: (ped as { criado_em?: string } | null)?.criado_em ?? "",
+      };
+    })
+    .sort(
+      (a, b) =>
+        a.criado_em.localeCompare(b.criado_em) ||
+        a.pedido_id.localeCompare(b.pedido_id),
+    );
+}
+
+/**
+ * Aplica a troca aprovada em cascata aos pedidos IRMÃOS parados em OC. Um irmão
+ * é um item de OUTRO pedido com o MESMO SKU original (`sku_vendido`), no MESMO
+ * galpão, ainda em OC (validacao_oc/aguardando_compra) e SEM troca aplicada.
+ *
+ * Pra cada irmão (FIFO): reusa `solicitarTroca` (cria a R forte no substituto —
+ * guarda atômica de saldo) + `aprovarTroca` (o humano já confirmou o par, não
+ * re-pergunta) + `liberarPedidoPosTrocaOC` (tira de compras, OC → propria).
+ * `SEM_SALDO_SUBSTITUTO` = saldo do substituto esgotou → PARA (FIFO estrito).
+ * Outros erros (irmão com troca pendente própria etc.) = pula, segue a fila.
+ *
+ * Chamada pela ROTA de aprovar troca (não pelo serviço — evita ciclo).
+ */
+export async function cascataTrocaOC(args: {
+  trocaAprovada: {
+    pedido_item_id: number;
+    galpao_id: string;
+    sku_vendido: string;
+    sku_substituto: string;
+  };
+  usuarioId: string;
+  usuarioNome?: string | null;
+}): Promise<{ pedidosCascateados: string[] }> {
+  const sb = createServiceClient();
+  const source = "wms.trocas-roteamento";
+  const { trocaAprovada } = args;
+
+  // Irmãos: mesmo SKU original, sem troca aplicada, item em compra pendente,
+  // pedido em OC no mesmo galpão. Exclui o próprio item recém-aprovado.
+  const { data: rows } = await sb
+    .from("siso_pedido_itens")
+    .select(
+      "id, pedido_id, siso_pedidos!inner(criado_em, status_separacao, separacao_galpao_id)",
+    )
+    .eq("sku", trocaAprovada.sku_vendido)
+    .is("produto_wms_substituto_id", null)
+    .in("compra_status", ["oc_pendente", "aguardando_compra"])
+    .eq("siso_pedidos.separacao_galpao_id", trocaAprovada.galpao_id)
+    .in("siso_pedidos.status_separacao", ["validacao_oc", "aguardando_compra"])
+    .neq("id", trocaAprovada.pedido_item_id);
+  if (!rows || rows.length === 0) return { pedidosCascateados: [] };
+
+  const irmaos = ordenarIrmaosCascata(rows as unknown as IrmaoCascataRow[]);
+
+  const pedidosCascateados: string[] = [];
+  for (const irmao of irmaos) {
+    try {
+      const { troca, auto } = await solicitarTroca({
+        pedidoItemId: irmao.item_id,
+        skuSubstituto: trocaAprovada.sku_substituto,
+        origem: "painel",
+        usuarioId: args.usuarioId,
+        usuarioNome: args.usuarioNome,
+        galpaoId: trocaAprovada.galpao_id,
+      });
+      // 'livre' já auto-aplicou; senão força a aprovação (humano já confirmou).
+      if (!auto) {
+        await aprovarTroca({
+          trocaId: troca.id,
+          usuarioId: args.usuarioId,
+          usuarioNome: args.usuarioNome,
+        });
+      }
+      const r = await liberarPedidoPosTrocaOC({
+        pedidoId: irmao.pedido_id,
+        pedidoItemId: irmao.item_id,
+        usuarioId: args.usuarioId,
+        usuarioNome: args.usuarioNome,
+      });
+      if (r.liberado) pedidosCascateados.push(irmao.pedido_id);
+    } catch (e) {
+      if (e instanceof TrocaError && e.code === "SEM_SALDO_SUBSTITUTO") {
+        logger.info(source, "cascata OC parou — saldo do substituto esgotou", {
+          sku_substituto: trocaAprovada.sku_substituto,
+          galpao_id: trocaAprovada.galpao_id,
+          pedido_irmao: irmao.pedido_id,
+        });
+        break;
+      }
+      // Irmão com troca pendente própria / outro estado — pula, segue a fila.
+      logger.warn(source, "cascata OC: irmão pulado (segue)", {
+        pedido_irmao: irmao.pedido_id,
+        item_id: irmao.item_id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  if (pedidosCascateados.length > 0) {
+    logger.info(source, "cascata OC aplicou troca a pedidos irmãos", {
+      sku_vendido: trocaAprovada.sku_vendido,
+      sku_substituto: trocaAprovada.sku_substituto,
+      galpao_id: trocaAprovada.galpao_id,
+      pedidos: pedidosCascateados,
+    });
+  }
+  return { pedidosCascateados };
 }

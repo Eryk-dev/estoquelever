@@ -83,7 +83,7 @@ vi.mock("@/lib/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), logError: vi.fn() },
 }));
 
-import { liberarPedidoPosTrocaOC } from "./trocas-roteamento";
+import { liberarPedidoPosTrocaOC, ordenarIrmaosCascata } from "./trocas-roteamento";
 
 const ARGS = { pedidoId: "P1", pedidoItemId: 10, usuarioId: "u1", usuarioNome: "Eryk" };
 
@@ -207,5 +207,39 @@ describe("liberarPedidoPosTrocaOC", () => {
 
     expect(r.liberado).toBe(true);
     expect(rec.jobInserts).toHaveLength(0);
+  });
+});
+
+/**
+ * Cascata OC (2026-06-23): ordenação FIFO dos pedidos irmãos parados em OC que
+ * recebem a mesma troca. Mais antigo primeiro (saldo escasso do substituto vai
+ * pra fila mais velha), desempate estável por pedido_id. Normaliza o pedido
+ * embedado que o cliente Supabase às vezes tipa como array.
+ */
+describe("ordenarIrmaosCascata", () => {
+  it("ordena FIFO por criado_em (mais antigo primeiro)", () => {
+    const out = ordenarIrmaosCascata([
+      { id: 30, pedido_id: "P3", siso_pedidos: { criado_em: "2026-06-23T12:00:00Z" } },
+      { id: 10, pedido_id: "P1", siso_pedidos: { criado_em: "2026-06-23T08:00:00Z" } },
+      { id: 20, pedido_id: "P2", siso_pedidos: { criado_em: "2026-06-23T10:00:00Z" } },
+    ]);
+    expect(out.map((i) => i.pedido_id)).toEqual(["P1", "P2", "P3"]);
+    expect(out[0]).toMatchObject({ item_id: 10, pedido_id: "P1" });
+  });
+
+  it("normaliza pedido embedado como array (cliente Supabase)", () => {
+    const out = ordenarIrmaosCascata([
+      { id: 10, pedido_id: "P1", siso_pedidos: [{ criado_em: "2026-06-23T08:00:00Z" }] },
+    ]);
+    expect(out[0].criado_em).toBe("2026-06-23T08:00:00Z");
+    expect(out[0].item_id).toBe(10);
+  });
+
+  it("desempata por pedido_id quando criado_em empata (mesmo lote de webhook)", () => {
+    const out = ordenarIrmaosCascata([
+      { id: 22, pedido_id: "P9", siso_pedidos: { criado_em: "2026-06-23T08:00:00Z" } },
+      { id: 21, pedido_id: "P5", siso_pedidos: { criado_em: "2026-06-23T08:00:00Z" } },
+    ]);
+    expect(out.map((i) => i.pedido_id)).toEqual(["P5", "P9"]);
   });
 });

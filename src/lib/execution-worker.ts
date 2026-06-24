@@ -647,9 +647,11 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("marcadores, empresa_origem_id, nota_fiscal_id")
+    .select("marcadores, empresa_origem_id, nota_fiscal_id, separacao_futura, prazo_envio")
     .eq("id", job.pedido_id)
     .single();
+
+  const futura = pedido?.separacao_futura === true;
 
   const { token } = await getValidTokenByEmpresa(job.empresa_id);
   const marcadores: string[] = pedido?.marcadores ?? [];
@@ -657,33 +659,35 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
   await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
 
   // ── NF generation + agrupamento for OC ──────────────────────────────────────
-  // OC now generates NF at approval time (creates Tiny reservation without
-  // deducting saldo). Failure-isolated: NF/agrupamento failure does NOT block
-  // compra item resolution below. Stock deduction remains deferred to Ciclo 2.
-  // enriquecerDadosNf won't trigger status_separacao transition because the
-  // pedido is not in aguardando_nf state at this point.
+  // OC normalmente gera NF no approval (cria reserva no Tiny sem baixar saldo).
+  // SEPARAÇÃO FUTURA: NÃO gera NF (etiqueta segurada/buffered; NF cedo + alto
+  // cancelamento = imposto sobre dinheiro não recebido). A NF nasce só na
+  // promoção, quando a etiqueta libera.
+  // Failure-isolated: falha de NF/agrupamento NÃO bloqueia a resolução de compra.
   let nfGerada = !!(pedido?.nota_fiscal_id);
-  try {
-    const notaId = await gerarNotaFiscalPedido(
-      job.empresa_id,
-      token,
-      job.pedido_id,
-      pedido?.nota_fiscal_id ?? null,
-    );
-    if (notaId) {
-      nfGerada = true;
-      await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
-      // Fase-1 agrupamento — fire-and-forget, never throws.
-      // If chave_acesso_nf is not yet available (NF pending SEFAZ authorization),
-      // criarAgrupamentoFase1 will skip and leave for second-chance entrypoints.
-      await criarAgrupamentoFase1(job.pedido_id);
+  if (!futura) {
+    try {
+      const notaId = await gerarNotaFiscalPedido(
+        job.empresa_id,
+        token,
+        job.pedido_id,
+        pedido?.nota_fiscal_id ?? null,
+      );
+      if (notaId) {
+        nfGerada = true;
+        await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
+        // Fase-1 agrupamento — fire-and-forget, never throws.
+        // If chave_acesso_nf is not yet available (NF pending SEFAZ authorization),
+        // criarAgrupamentoFase1 will skip and leave for second-chance entrypoints.
+        await criarAgrupamentoFase1(job.pedido_id);
+      }
+    } catch (err) {
+      // NF/agrupamento failure does not block compra item resolution
+      logger.warn("worker", "Falha na geração de NF/agrupamento para OC (prosseguindo com compra)", {
+        pedidoId: job.pedido_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-  } catch (err) {
-    // NF/agrupamento failure does not block compra item resolution
-    logger.warn("worker", "Falha na geração de NF/agrupamento para OC (prosseguindo com compra)", {
-      pedidoId: job.pedido_id,
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 
   // ── Resolve compra items ────────────────────────────────────────────────────
@@ -704,6 +708,27 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
         compra_solicitada_em: null,
       })
       .eq("pedido_id", job.pedido_id);
+
+    // SEPARAÇÃO FUTURA sem faltas (OC roteado mas estoque presente): vira futura
+    // propria → aguardando_separacao, SEM NF e SEM lancar_estoque (a peça é picada
+    // na pista futura, R→L+S; a NF nasce na promoção). Mantém separacao_futura=true.
+    if (futura) {
+      await supabase
+        .from("siso_pedidos")
+        .update({
+          decisao_final: "propria",
+          status: "executando",
+          status_separacao: "aguardando_separacao",
+        })
+        .eq("id", job.pedido_id);
+
+      logger.info(
+        "execution-worker",
+        "Pedido OC FUTURA sem faltas; vira futura propria (aguardando_separacao, sem NF)",
+        { pedidoId: job.pedido_id, empresaOrigemId: pedido?.empresa_origem_id ?? job.empresa_id },
+      );
+      return;
+    }
 
     // Always start at aguardando_nf — transition to aguardando_separacao
     // happens ONLY via NF webhook, even if NF was already generated.

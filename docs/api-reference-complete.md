@@ -1116,6 +1116,7 @@ Caminhos suportados:
 - `marketplace`: filter by e-commerce name (ilike)
 - `busca`: search numero, id_pedido_ecommerce, cliente_nome, item sku/gtin vendido **e** sku/gtin do substituto da troca de equivalência (ilike)
 - `tag`: filter by separacao_tags
+- `futura`: `1` → fila de **separação futura** (`separacao_futura=true`); ausente → fila normal (exclui futura). Os counts (`wms_separacao_counts`, param `p_separacao_futura`) seguem o mesmo filtro.
 
 **Response (200):**
 ```json
@@ -4859,6 +4860,16 @@ See `src/app/api/wms/tiny/deposits/route.ts`
 **Auth:** None (should be admin-only)
 
 See `src/app/api/wms/tiny/test-connection/route.ts`
+
+---
+
+### GET /api/wms/tiny/polling-futura
+
+**Purpose:** Separação futura — varre pedidos ABERTOS do Tiny, lê `shipment.substatus` no ML (`getMlShipmentStatus`) e carrega os `buffered` na pista futura (`processWebhook` com `separacaoFutura=true`): reserva/separa/compra sem NF. Cadência separada do `/tiny/polling` (ML-heavy). Cap de lookups ML/empresa/run.
+
+**Auth:** `X-Worker-Secret` (pg_cron ~30min) OU admin (`sistema.usuarios`).
+
+See `src/app/api/wms/tiny/polling-futura/route.ts` · `src/lib/tiny-polling-futura.ts`
 
 ---
 

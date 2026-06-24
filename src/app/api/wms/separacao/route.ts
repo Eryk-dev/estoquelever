@@ -78,6 +78,10 @@ export async function GET(request: NextRequest) {
   const prazoAte = searchParams.get("prazo_ate");
   const prazoSem = searchParams.get("prazo_sem") === "1";
   const hasPrazoFilter = !!(prazoDe || prazoAte || prazoSem);
+  // Pista futura (ML buffered): ?futura=1 → fila futura (separacao_futura=true).
+  // Ausente → fila NORMAL, que EXCLUI futura (senão um pedido futura cairia na
+  // embalagem normal e geraria NF cedo).
+  const futura = searchParams.get("futura") === "1";
 
   if (statusFilters.length > 0 && statusFilters.some((s) => !VALID_STATUSES.includes(s))) {
     return NextResponse.json(
@@ -180,7 +184,8 @@ export async function GET(request: NextRequest) {
           let q = supabase
             .from("siso_pedidos")
             .select("*", { count: "exact", head: true })
-            .eq("status_separacao", status);
+            .eq("status_separacao", status)
+            .eq("separacao_futura", futura);
           if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
           if (empresaIds.length === 1) q = q.eq("empresa_origem_id", empresaIds[0]);
           else if (empresaIds.length > 1) q = q.in("empresa_origem_id", empresaIds);
@@ -208,13 +213,15 @@ export async function GET(request: NextRequest) {
           p_tag: tagFilter ?? null,
           p_busca: busca ?? null,
           p_busca_pedido_ids: buscaItemPedidoIds,
+          p_separacao_futura: futura,
         });
 
     // 1b. Fetch distinct origin empresas inside the current separation context
     let empresasPromise = supabase
       .from("siso_pedidos")
       .select("empresa_origem_id, siso_empresas(id, nome)")
-      .not("status_separacao", "is", null);
+      .not("status_separacao", "is", null)
+      .eq("separacao_futura", futura);
 
     if (activeGalpaoId) {
       empresasPromise = empresasPromise.eq("separacao_galpao_id", activeGalpaoId);
@@ -230,7 +237,8 @@ export async function GET(request: NextRequest) {
          nota_fiscal_id, agrupamento_expedicao_id,
          encaminhado_de, siso_empresas(nome)`,
       )
-      .not("status_separacao", "is", null);
+      .not("status_separacao", "is", null)
+      .eq("separacao_futura", futura);
 
     // aguardando_compra: skip galpão filter — post-filtered by supplier destination
     const isAguardandoCompraOnly = statusFilters.length === 1 && statusFilters[0] === "aguardando_compra";
@@ -286,7 +294,8 @@ export async function GET(request: NextRequest) {
       let ocQ = supabase
         .from("siso_pedidos")
         .select("id")
-        .eq("status_separacao", "aguardando_compra");
+        .eq("status_separacao", "aguardando_compra")
+        .eq("separacao_futura", futura);
       if (empresaIds.length === 1) ocQ = ocQ.eq("empresa_origem_id", empresaIds[0]);
       else if (empresaIds.length > 1) ocQ = ocQ.in("empresa_origem_id", empresaIds);
       if (marketplaceFilter) ocQ = ocQ.ilike("nome_ecommerce", `%${marketplaceFilter}%`);

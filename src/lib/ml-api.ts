@@ -323,23 +323,18 @@ export async function getActiveMlConnectionForEmpresa(
 }
 
 /**
- * Busca o prazo de despacho (SLA) de um pedido ML.
+ * Resolve o shipmentId de um pedido ML.
  *
  * O `id_pedido_ecommerce` que o Tiny envia pode ser um **order_id** OU um
- * **pack_id** (carrinho com vários itens). Por isso resolve o shipment dos
- * dois jeitos:
+ * **pack_id** (carrinho com vários itens). Por isso resolve dos dois jeitos:
  *   - GET /orders/{id}  → shipping.id           (pedido simples)
  *   - GET /packs/{id}   → shipment.id           (carrinho; /orders dá 404)
- * Depois: GET /shipments/{id}/sla → expected_date (hora LIMITE de despacho,
- * mais preciso que o `dataEnvio` do Tiny, que traz só o dia). Retorna null
- * se não houver shipment ou se o envio não expõe SLA (não é erro fatal).
+ * Retorna null se o pedido não tem shipment (ex.: retirada na loja).
  */
-export async function getMlShipmentSla(
+async function resolverShipmentId(
   connectionId: string,
   orderId: string,
-): Promise<MlShipmentSlaResult | null> {
-  if (isMlDisabled()) return null;
-
+): Promise<number | null> {
   let shipmentId: number | null | undefined;
   try {
     const order = await mlFetch<MlOrderShippingRef>(
@@ -364,6 +359,28 @@ export async function getMlShipmentSla(
       return null;
     }
   }
+  return shipmentId ?? null;
+}
+
+/**
+ * Busca o prazo de despacho (SLA) de um pedido ML.
+ *
+ * O `id_pedido_ecommerce` que o Tiny envia pode ser um **order_id** OU um
+ * **pack_id** (carrinho com vários itens). Por isso resolve o shipment dos
+ * dois jeitos:
+ *   - GET /orders/{id}  → shipping.id           (pedido simples)
+ *   - GET /packs/{id}   → shipment.id           (carrinho; /orders dá 404)
+ * Depois: GET /shipments/{id}/sla → expected_date (hora LIMITE de despacho,
+ * mais preciso que o `dataEnvio` do Tiny, que traz só o dia). Retorna null
+ * se não houver shipment ou se o envio não expõe SLA (não é erro fatal).
+ */
+export async function getMlShipmentSla(
+  connectionId: string,
+  orderId: string,
+): Promise<MlShipmentSlaResult | null> {
+  if (isMlDisabled()) return null;
+
+  const shipmentId = await resolverShipmentId(connectionId, orderId);
   if (!shipmentId) return null;
 
   let expectedDate: string | null = null;
@@ -384,6 +401,55 @@ export async function getMlShipmentSla(
     });
   }
   return { shipmentId, expectedDate, status };
+}
+
+// ─── Substatus do shipment (Separação Futura) ───────────────────────
+
+interface MlShipmentDetail {
+  status?: string | null;
+  /** `buffered` = etiqueta segurada p/ data futura; `ready_to_print` = liberada. */
+  substatus?: string | null;
+}
+
+export interface MlShipmentStatusResult {
+  shipmentId: number;
+  status: string | null;
+  substatus: string | null;
+}
+
+/**
+ * Lê o `substatus` do shipment ML — sinal autoritativo de "etiqueta segurada
+ * (buffered) vs liberada (ready_to_print)". O endpoint /sla NÃO carrega
+ * `substatus`, por isso busca o objeto shipment direto (GET /shipments/{id}).
+ * Reusa a resolução de shipmentId (order/pack). Retorna null se não há shipment.
+ */
+export async function getMlShipmentStatus(
+  connectionId: string,
+  orderId: string,
+): Promise<MlShipmentStatusResult | null> {
+  if (isMlDisabled()) return null;
+
+  const shipmentId = await resolverShipmentId(connectionId, orderId);
+  if (!shipmentId) return null;
+
+  try {
+    const sh = await mlFetch<MlShipmentDetail>(
+      connectionId,
+      `/shipments/${shipmentId}`,
+    );
+    return {
+      shipmentId,
+      status: sh.status ?? null,
+      substatus: sh.substatus ?? null,
+    };
+  } catch (err) {
+    logger.info("ml-api", "falha ao ler shipment detail (substatus)", {
+      connectionId,
+      shipmentId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 // ─── Test connection ────────────────────────────────────────────────

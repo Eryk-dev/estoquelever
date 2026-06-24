@@ -6,6 +6,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { reservarAtomico } from "@/lib/wms/reservas";
+import { ttlHorasReservaFutura } from "@/lib/wms/separacao-futura";
 import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { registrarEvento } from "@/lib/historico-service";
 
@@ -93,7 +94,7 @@ export async function reconciliarEntradaEstoque(args: {
   const { data: rows } = await supabase
     .from("siso_pedido_itens")
     .select(
-      "id, pedido_id, quantidade_pedida, quantidade_pega, compra_status, ordem_compra_id, siso_pedidos!inner(id, criado_em, status_separacao, separacao_galpao_id)",
+      "id, pedido_id, quantidade_pedida, quantidade_pega, compra_status, ordem_compra_id, siso_pedidos!inner(id, criado_em, status_separacao, separacao_galpao_id, separacao_futura, prazo_envio)",
     )
     .eq("sku", sku)
     .in("compra_status", COMPRA_PENDENTE as unknown as string[])
@@ -109,14 +110,22 @@ export async function reconciliarEntradaEstoque(args: {
     ordem_compra_id: string | null;
     criado_em: string;
     outstanding: number;
+    separacaoFutura: boolean;
+    prazoEnvio: string | null;
+  };
+  type PedRaw = {
+    id: string;
+    criado_em?: string;
+    separacao_futura?: boolean;
+    prazo_envio?: string | null;
   };
   const pendentes: Linha[] = rows
     .map((r) => {
       // siso_pedidos!inner may be typed as array by the Supabase client — normalise
       const pedRaw = r.siso_pedidos as unknown;
-      const ped: { id: string; criado_em?: string } | null = Array.isArray(pedRaw)
-        ? (pedRaw[0] as { id: string; criado_em?: string } | undefined) ?? null
-        : (pedRaw as { id: string; criado_em?: string } | null);
+      const ped: PedRaw | null = Array.isArray(pedRaw)
+        ? (pedRaw[0] as PedRaw | undefined) ?? null
+        : (pedRaw as PedRaw | null);
       const outstanding = Math.max(
         0,
         Number(r.quantidade_pedida ?? 0) - Number(r.quantidade_pega ?? 0),
@@ -127,6 +136,8 @@ export async function reconciliarEntradaEstoque(args: {
         ordem_compra_id: (r.ordem_compra_id as string | null) ?? null,
         criado_em: ped?.criado_em ?? "",
         outstanding,
+        separacaoFutura: ped?.separacao_futura === true,
+        prazoEnvio: ped?.prazo_envio ?? null,
       };
     })
     .filter((l) => l.outstanding > 0)
@@ -233,7 +244,11 @@ export async function reconciliarEntradaEstoque(args: {
           tripla: { produto_id: produtoId, galpao_id: galpaoId, localizacao_id: locId },
           qty: linha.outstanding,
           pedido_id: linha.pedido_id,
-          ttl_horas: 24 * 30,
+          // Futura: TTL longo (dataPrevista+14d) — etiqueta buffered pode estar
+          // semanas à frente; 30d expiraria antes da promoção (oversold).
+          ttl_horas: linha.separacaoFutura
+            ? ttlHorasReservaFutura(linha.prazoEnvio)
+            : 24 * 30,
         });
       } catch (err) {
         // Loc esgotou na corrida — o item já voltou ao picking e será pego do
@@ -282,10 +297,34 @@ async function transicionarPedidoSeReconciliado(
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("id, status_separacao, empresa_origem_id")
+    .select("id, status_separacao, empresa_origem_id, separacao_futura")
     .eq("id", pedidoId)
     .maybeSingle();
   if (!pedido) return;
+
+  // SEPARAÇÃO FUTURA: o estoque chegou pra um pedido futura parado em OC. Vira
+  // futura propria → aguardando_separacao (a R já foi criada no passo 6 com TTL
+  // longo). SEM gerar NF / SEM lancar_estoque — a peça é picada na pista futura
+  // (R→L+S) e a NF nasce só na promoção. Mantém separacao_futura=true.
+  if (pedido.separacao_futura === true) {
+    const { error: futErr } = await supabase
+      .from("siso_pedidos")
+      .update({ decisao_final: "propria", status_separacao: "aguardando_separacao" })
+      .eq("id", pedidoId)
+      .in("status_separacao", ["validacao_oc", "aguardando_compra"]);
+    if (futErr) {
+      logger.logError({
+        error: futErr,
+        source: "reconciliador-oc",
+        message: `Falha ao transicionar pedido futura ${pedidoId} p/ aguardando_separacao`,
+        category: "database",
+      });
+    }
+    logger.info("reconciliador-oc", "pedido FUTURA devolvido à pista futura por saldo (sem NF)", {
+      pedidoId,
+    });
+    return;
+  }
 
   // I2: só os estados OC reentram no portão de NF. Qualquer estado mais
   // avançado (em_separacao/aguardando_separacao/separado/embalado/expedido)

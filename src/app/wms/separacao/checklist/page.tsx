@@ -304,6 +304,10 @@ export default function WmsChecklistPage() {
     [sp],
   );
   const modo = (sp?.get("modo") ?? null) as "pick-oc" | null;
+  // Pista futura (ML buffered): o checklist é o mesmo (iniciar/marcar/concluir),
+  // mas o pick PARA em `separado` (sem embalagem) e a volta é pra /separacao-futura.
+  const futura = sp?.get("futura") === "1";
+  const filaHref = futura ? "/wms/separacao-futura" : "/wms/separacao";
 
   // Mantém presença ativa em "Separação" durante o wave picking.
   useTrackPresencaWms("separacao");
@@ -709,7 +713,7 @@ export default function WmsChecklistPage() {
       }
       setEsgotadoModal(null);
       if ((body.pedidos_afetados ?? 0) >= pedidoIds.length) {
-        router.push("/wms/separacao");
+        router.push(filaHref);
         return;
       }
       queryClient.invalidateQueries({ queryKey });
@@ -804,7 +808,7 @@ export default function WmsChecklistPage() {
         const todos = pedidoIds.every((id) => transitioned.has(id));
         if (todos) {
           toast.success("Todos os itens OC resolvidos");
-          router.push("/wms/separacao");
+          router.push(filaHref);
         }
       }
     } catch {
@@ -853,7 +857,7 @@ export default function WmsChecklistPage() {
         const todos = pedidoIds.every((id) => transitioned.has(id));
         if (todos) {
           toast.success("Todos os itens OC resolvidos");
-          router.push("/wms/separacao");
+          router.push(filaHref);
         }
       }
     } catch {
@@ -1210,11 +1214,11 @@ export default function WmsChecklistPage() {
       }
       queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
       if (valOc > 0 && sep === 0 && ag === 0) {
-        router.push("/wms/separacao?tab=aguardando_separacao");
+        router.push(`${filaHref}?tab=aguardando_separacao`);
       } else if (ag > 0 && sep === 0) {
-        router.push("/wms/separacao?tab=aguardando_compra");
+        router.push(`${filaHref}?tab=aguardando_compra`);
       } else {
-        router.push("/wms/separacao?tab=separado");
+        router.push(`${filaHref}?tab=separado`);
       }
     } catch (e) {
       toastErroApi((e as Error).message || "Erro ao concluir");

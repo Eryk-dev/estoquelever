@@ -18,7 +18,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const state = {
   mappings: [] as Array<{ produto_id: string; tiny_produto_id: number }>,
   produtos: [] as Array<Record<string, unknown>>,
-  existente: null as { estoque_lancado: boolean } | null,
+  existente: null as
+    | {
+        estoque_lancado: boolean;
+        separacao_futura?: boolean;
+        status_separacao?: string | null;
+        decisao_final?: string | null;
+        empresa_origem_id?: string | null;
+      }
+    | null,
   vendedorPrev: null as { vendedor_id: string | null; vendedor_nome: string | null } | null,
   sysUser: null as { id: string } | null,
   // guarda 4b: job lancar_estoque do pedido (qualquer status)
@@ -263,5 +271,124 @@ describe("processWebhookWms — produto não vinculado / auto-provisionamento", 
 
     expect(ensureProdutoFromTinyMock).toHaveBeenCalledWith("ACD003", "emp-1", 111);
     expect(res.status).toBe("executando"); // resolvido → roteia propria normal
+  });
+});
+
+describe("processWebhookWms — separação futura (Fase 2)", () => {
+  it("futura propria NOVA: reserva sem NF, aguardando_separacao, flag+tag+marcador, ZERO job", async () => {
+    state.existente = null;
+    state.job = null;
+
+    const res = await processWebhookWms({ ...input(), separacaoFutura: true });
+
+    expect(res.status).toBe("executando");
+    expect(rec.pedidoUpserts).toHaveLength(1);
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: true,
+      // futura propria NÃO passa por aguardando_nf (sem etapa de NF)
+      status_separacao: "aguardando_separacao",
+      decisao_final: "propria",
+      separacao_tags: ["FUTURA"],
+    });
+    expect(rec.pedidoUpserts[0].marcadores).toContain("SEP FUTURA");
+    // CRUCIAL: futura propria não enfileira lancar_estoque (sem NF, sem baixa;
+    // a R segura o estoque; preserva re-processabilidade da promoção).
+    expect(rec.jobInserts).toHaveLength(0);
+  });
+
+  it("re-detecção de buffered já carregado (poll re-vê) → no-op, não regride pick", async () => {
+    // Futura já picada (separado), poll re-detecta como buffered.
+    state.existente = { estoque_lancado: false, separacao_futura: true, status_separacao: "separado" };
+    state.job = null;
+
+    const res = await processWebhookWms({ ...input(), separacaoFutura: true });
+
+    expect(res.status).toBe("duplicado");
+    expect(rec.pedidoUpserts).toHaveLength(0); // NÃO regride separado → aguardando_separacao
+    expect(rec.jobInserts).toHaveLength(0);
+    expect(rec.webhookUpdates[0]).toMatchObject({ status: "duplicado" });
+  });
+
+  it("pedido normal (separacaoFutura ausente) continua aguardando_nf + enfileira job", async () => {
+    state.existente = null;
+    state.job = null;
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("executando");
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: false,
+      status_separacao: "aguardando_nf",
+    });
+    expect(rec.pedidoUpserts[0].separacao_tags).toBeUndefined();
+    expect(rec.jobInserts).toHaveLength(1);
+  });
+
+  it("futura OC (sem cobertura): ENFILEIRA lancar_estoque decisao=oc (worker resolve compra sem NF)", async () => {
+    state.existente = null;
+    state.job = null;
+    // sem cobertura → rota oc; futura OC precisa do job pra resolver a compra.
+    rotearMock.mockResolvedValueOnce(
+      { decisao: "oc", motivo: "sem_cobertura" } as unknown as Awaited<
+        ReturnType<typeof rotearMock>
+      >,
+    );
+
+    const res = await processWebhookWms({ ...input(), separacaoFutura: true });
+
+    expect(res.status).toBe("executando");
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: true,
+      decisao_final: "oc",
+      status_separacao: null, // worker (executarMarcadoresOnly) seta validacao_oc
+    });
+    expect(rec.pedidoUpserts[0].marcadores).toEqual(
+      expect.arrayContaining(["OC", "SEP FUTURA"]),
+    );
+    expect(rec.jobInserts).toHaveLength(1);
+    expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "oc" });
+  });
+});
+
+describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", () => {
+  it("futura separado + webhook normal → PROMOVE: flip flag + enfileira lancar_estoque, SEM regredir o pick", async () => {
+    // Futura já picada (separado), decisao propria. Chega webhook normal (sem
+    // separacaoFutura) = etiqueta liberou.
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: "separado",
+      decisao_final: "propria",
+      empresa_origem_id: "emp-1",
+    };
+    state.job = null;
+    state.jobExistentePendente = null;
+
+    const res = await processWebhookWms(input()); // sem separacaoFutura
+
+    expect(res.status).toBe("promovido");
+    // NÃO passa pelo upsert ingênuo (não regride separado → aguardando_nf).
+    expect(rec.pedidoUpserts).toHaveLength(0);
+    // Enfileira lancar_estoque (agora gera NF + agrupamento).
+    expect(rec.jobInserts).toHaveLength(1);
+    expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "propria" });
+    expect(rec.webhookUpdates[0]).toMatchObject({ status: "concluido" });
+  });
+
+  it("promoção idempotente: 2ª re-entrega com job já existente → duplicado (não duplica NF)", async () => {
+    // Após promover, já há job lancar_estoque → early-return de idempotência.
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: false, // já promovido
+      status_separacao: "separado",
+      decisao_final: "propria",
+      empresa_origem_id: "emp-1",
+    };
+    state.job = { id: "job-promo" }; // job de promoção já existe
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("duplicado");
+    expect(rec.jobInserts).toHaveLength(0);
   });
 });

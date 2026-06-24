@@ -33,6 +33,9 @@ export async function processWebhook(
   empresaOrigemId: string,
   galpaoOrigemId: string,
   _grupoId: string | null,
+  /** Separação futura: o poll de buffered (tiny-polling-futura) passa true pra
+   *  rotear o pedido pela pista futura (reserva, sem NF). Default false. */
+  separacaoFutura = false,
 ) {
   const supabase = createServiceClient();
 
@@ -95,6 +98,7 @@ export async function processWebhook(
       empresaOrigemId,
       galpaoOrigemId,
       galpaoOrigemNome,
+      separacaoFutura,
     });
   } catch (err) {
     const msg = serializeError(err);

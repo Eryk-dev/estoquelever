@@ -56,6 +56,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `processado_em` | timestamptz | YES | | When operator approved/rejected |
 | `marcadores` | text[] | YES | | Tiny order markers/tags |
 | `separacao_tags` | text[] | YES | `{}` | User-created tags in separation module |
+| `separacao_futura` | boolean | NO | false | Pista de separação futura (ML buffered): reserva/separa/compra sem NF até a etiqueta liberar. Tela `/wms/separacao-futura` filtra por isto; a fila normal exclui. Promoção (etiqueta liberou) flipa pra false. Índice parcial `idx_pedidos_separacao_futura`. |
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |

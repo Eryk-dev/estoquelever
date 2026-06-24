@@ -91,6 +91,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/wms/pedidos", icon: "clipboard", label: "Pedidos", requires: ["pedidos.ver"] },
       { href: "/wms/trocas", icon: "swap", label: "Trocas", requires: ["vendas.aprovar_troca"] },
       { href: "/wms/separacao", icon: "list", label: "Separação", requires: ["separacao.ver"] },
+      { href: "/wms/separacao-futura", icon: "history", label: "Sep. futura", requires: ["separacao.ver"] },
       { href: "/wms/compras", icon: "truck", label: "Compras", requires: ["compras.ver"] },
     ],
   },

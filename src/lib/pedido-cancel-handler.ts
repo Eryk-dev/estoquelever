@@ -17,10 +17,15 @@
 import { createServiceClient } from "./supabase-server";
 import { logger } from "./logger";
 import { estornarReservaIndividual } from "./wms/reservas";
+import { estornarMovimentacao } from "./wms/ledger";
 import { cancelarTrocasPendentesDoPedido } from "./wms/trocas-equivalencia";
 import { classificarItensParaCancelamento } from "./wms/cancelamento-parcial";
 import { registrarPicksCanceladosParaDevolucao } from "./wms/devolucoes";
 import { registrarEvento } from "./historico-service";
+import { TAG_FUTURA } from "./wms/separacao-futura";
+
+/** Usuário "Sistema (automação)" — carimba estornos automáticos. */
+const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
 
 export interface CancelamentoResult {
   status: "cancelled" | "cancelled_unknown";
@@ -37,7 +42,7 @@ export async function handlePedidoCancelamento(params: {
 
   const { data: existingOrder } = await supabase
     .from("siso_pedidos")
-    .select("id, status, status_separacao, estoque_lancado, separacao_tags")
+    .select("id, status, status_separacao, estoque_lancado, separacao_tags, separacao_futura")
     .eq("id", pedidoId)
     .single();
 
@@ -152,15 +157,67 @@ export async function handlePedidoCancelamento(params: {
     );
     const estoqueLancado = existingOrder.estoque_lancado === true;
     const pegosIds = new Set(pegos.map((p) => p.id));
+
+    // --- SEPARAÇÃO FUTURA (Fase 8): a peça picada de uma futura está na CAIXA DO
+    // DIA (não foi expedida — não tem NF nem etiqueta). Cancelou → estorna a S e
+    // devolve à prateleira (re-trabalho aceito), SEM devolução manual. (Reservas
+    // não-picadas já foram liberadas no loop de R acima.) Strip da tag FUTURA.
+    if (existingOrder.separacao_futura === true) {
+      const picadosFutura = itens.filter(
+        (i) => i.mov_saida_id && Number(i.quantidade_pega ?? 0) > 0,
+      );
+      for (const it of picadosFutura) {
+        try {
+          await estornarMovimentacao({
+            mov_id: it.mov_saida_id as string,
+            usuario_id: SYSTEM_USER_ID,
+            motivo: "futura cancelada — peça volta à prateleira",
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          // Idempotente: re-entrega do cancelamento acha a S já estornada.
+          if (!/já foi estornada|já é um estorno/i.test(msg)) {
+            logger.warn("webhook", "falha estornando S de futura cancelada (segue)", {
+              pedidoId,
+              mov_saida_id: it.mov_saida_id,
+              error: msg,
+            });
+          }
+        }
+      }
+      const tagsFutura: string[] = (existingOrder.separacao_tags as string[] | null) ?? [];
+      if (tagsFutura.includes(TAG_FUTURA)) {
+        cancelUpdate.separacao_tags = tagsFutura.filter((t) => t !== TAG_FUTURA);
+      }
+      if (picadosFutura.length > 0) {
+        registrarEvento({
+          pedidoId,
+          evento: "cancelado",
+          detalhes: {
+            origem: "webhook_cancelamento",
+            modo: "futura_cancelada",
+            itens_estornados: picadosFutura.length,
+          },
+        }).catch(() => {});
+        logger.info("webhook", "futura cancelada — S estornada, peça volta à prateleira", {
+          pedidoId,
+          itens_estornados: picadosFutura.length,
+        });
+      }
+    }
+
     // estoque_lancado=true sem marker per-item (S veio do cutover/pos-NF, não
     // do pick — ex.: pedido em separado/embalado): TODOS os itens já saíram
     // no ledger → todos entram na lista de devolução manual.
+    // Futura é tratada acima (auto-estorno) → não entra na devolução manual.
     const baseDevolucao =
-      pegos.length > 0
-        ? itens.filter((i) => pegosIds.has(String(i.id)))
-        : estoqueLancado
-          ? itens
-          : [];
+      existingOrder.separacao_futura === true
+        ? []
+        : pegos.length > 0
+          ? itens.filter((i) => pegosIds.has(String(i.id)))
+          : estoqueLancado
+            ? itens
+            : [];
     const itensDevolucaoManual = baseDevolucao.map((i) => ({
       id: String(i.id),
       sku: i.sku ?? null,

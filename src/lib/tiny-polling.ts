@@ -137,20 +137,20 @@ export interface PollingResult {
   executado_em: string;
 }
 
-function dataInicialJanela(dias: number = DIAS_JANELA): string {
+export function dataInicialJanela(dias: number = DIAS_JANELA): string {
   return new Date(Date.now() - dias * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
 }
 
-function chunk<T>(arr: T[], size: number): T[][] {
+export function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
 /** Pagina uma listagem Tiny até esgotar (ou MAX_PAGES). */
-async function listarTodasPaginas<T>(
+export async function listarTodasPaginas<T>(
   fetchPage: (offset: number) => Promise<{ itens?: T[] }>,
 ): Promise<T[]> {
   const todos: T[] = [];

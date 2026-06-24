@@ -33,6 +33,12 @@ import { isMercadoLivre } from "./domain-helpers";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
 import { runWithEmpresa } from "./tiny-queue";
 import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
+import {
+  MARCADOR_FUTURA,
+  TAG_FUTURA,
+  ttlHorasReservaFutura,
+} from "./wms/separacao-futura";
+import { preemptarFuturasParaCobertura } from "./wms/preempcao-futura";
 import { ensureProdutoFromTiny } from "./wms/sync-tiny";
 import { rotearPedidoDoBanco } from "./wms/roteamento";
 import {
@@ -53,6 +59,8 @@ interface ProcessWebhookWmsInput {
   empresaOrigemId: string;
   galpaoOrigemId: string;
   galpaoOrigemNome: string;
+  /** Separação futura (ML buffered): reserva + separa sem gerar NF. Default false. */
+  separacaoFutura?: boolean;
 }
 
 interface ResolvedItem {
@@ -467,8 +475,12 @@ function formatDate(dateStr: string): string {
 export async function criarReservasRotaAtomico(args: {
   pedidoId: string;
   rotas: Array<{ produto_id: string; galpao_id: string; localizacao_id: string; qty: number }>;
+  /** TTL das R em horas. Default 30d. Separação futura passa um TTL mais longo
+   *  (derivado da dataPrevista) — etiqueta buffered pode estar semanas à frente. */
+  ttlHoras?: number;
 }): Promise<{ reservasCriadas: number }> {
   const { pedidoId, rotas } = args;
+  const ttlHoras = args.ttlHoras ?? 24 * 30;
   const criadas: string[] = [];
   for (const r of rotas) {
     try {
@@ -476,7 +488,7 @@ export async function criarReservasRotaAtomico(args: {
         tripla: { produto_id: r.produto_id, galpao_id: r.galpao_id, localizacao_id: r.localizacao_id },
         qty: r.qty,
         pedido_id: pedidoId,
-        ttl_horas: 24 * 30,
+        ttl_horas: ttlHoras,
       });
       criadas.push(id);
     } catch (err) {
@@ -507,6 +519,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
 }> {
   const sb = createServiceClient();
   const { webhookLogId, pedido, empresaOrigemId, galpaoOrigemId, galpaoOrigemNome } = input;
+  const separacaoFutura = input.separacaoFutura === true;
 
   // 1. Resolver itens (mapping Tiny → WMS produto)
   const itensResolvidos = await resolverItensWms(pedido, empresaOrigemId);
@@ -532,10 +545,37 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     .filter((i) => i.produtoIdWms)
     .map((i) => ({ produto_id: i.produtoIdWms as string, qty: i.quantidade }));
 
-  const rota: RotaResult =
+  let rota: RotaResult =
     itensPraRotear.length > 0
       ? await rotearPedidoDoBanco(empresaOrigemId, itensPraRotear)
       : { decisao: "oc", motivo: "sem_cobertura" };
+
+  // 3a. Preempção (Fase 7): uma venda que envia AGORA (não-futura) escassa ganha
+  //     de futura RESERVADA não-picada. Se a ready roteou 'oc' por falta, tenta
+  //     soltar reservas de futuras não-picadas no galpão-casa; se isso cobre,
+  //     re-roteia (vira propria) e as futuras afetadas viram OC. Futura JÁ picada
+  //     está travada (R consumida) → não é tocada e a ready segue pra OC.
+  if (!separacaoFutura && rota.decisao === "oc" && itensPraRotear.length > 0 && !requerSku) {
+    try {
+      const preempt = await preemptarFuturasParaCobertura({
+        itens: itensPraRotear,
+        galpaoId: galpaoOrigemId,
+      });
+      if (preempt.reservasLiberadas > 0) {
+        rota = await rotearPedidoDoBanco(empresaOrigemId, itensPraRotear);
+        logger.info("processor.wms", "re-roteado após preempção de futura", {
+          pedidoId: pedido.id,
+          reservasLiberadas: preempt.reservasLiberadas,
+          novaDecisao: rota.decisao,
+        });
+      }
+    } catch (e) {
+      logger.warn("processor.wms", "falha na preempção de futura (segue rota oc)", {
+        pedidoId: pedido.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   // 3b. Troca de equivalência (Fase 4): galpão-casa não cobre com o SKU
   //     original → tenta cobrir com SUBSTITUTOS do cluster cross (D10: troca
@@ -659,7 +699,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //     A guarda de estoque_lancado é mantida como rede redundante (post-pick).
   const { data: existente } = await sb
     .from("siso_pedidos")
-    .select("estoque_lancado")
+    .select("estoque_lancado, separacao_futura, status_separacao, decisao_final, empresa_origem_id")
     .eq("id", pedido.id)
     .maybeSingle();
 
@@ -685,6 +725,93 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       })
       .eq("id", webhookLogId);
     return { ok: true, pedidoId: pedido.id, status: "duplicado", sugestao };
+  }
+
+  // 4b-futura. Re-detecção de buffered já carregado na pista futura: o poll de
+  //   abertos pode re-ver o mesmo pedido buffered em runs seguintes. Se o pedido
+  //   JÁ é futura e estamos sendo chamados de novo como futura (ainda buffered),
+  //   é no-op — NÃO reprocessar (o upsert abaixo regrediria status_separacao e
+  //   apagaria um pick já feito na pista futura). A PROMOÇÃO (etiqueta liberou)
+  //   chega como webhook normal (separacaoFutura=false) e NÃO cai aqui → segue
+  //   pro ramo de promoção (§Fase 6).
+  if (existente?.separacao_futura === true && separacaoFutura) {
+    logger.info("processor.wms", "futura já carregada — skip re-detecção buffered", {
+      pedidoId: pedido.id,
+      statusSeparacao: existente.status_separacao,
+    });
+    await sb
+      .from("siso_webhook_logs")
+      .update({
+        status: "duplicado",
+        empresa_id: empresaOrigemId,
+        processado_em: new Date().toISOString(),
+      })
+      .eq("id", webhookLogId);
+    return { ok: true, pedidoId: pedido.id, status: "duplicado", sugestao };
+  }
+
+  // 4b-promoção. A etiqueta liberou: o pedido era futura e agora chega como
+  //   webhook NORMAL (separacaoFutura=false). PROMOVE — sem passar pelo upsert
+  //   ingênuo abaixo (que regrediria status_separacao e zeraria o pick já feito).
+  //   Flipa a flag, MANTÉM o status_separacao atual (separado/aguardando_separacao)
+  //   e enfileira lancar_estoque conforme a decisao_final → AGORA gera NF +
+  //   agrupamento (sai a etiqueta). A reserva já existe; o cutover/pos-NF é
+  //   idempotente (estorno_de) → não duplica S. Se já estava `separado`, o pedido
+  //   cai direto na fila de embalagem (não na de separação). A tag FUTURA fica no
+  //   card pro embalador saber que a peça está na caixa do dia.
+  if (existente?.separacao_futura === true && !separacaoFutura) {
+    const decisaoFinal = (existente.decisao_final as LegacyDecisao | null) ?? "propria";
+    const empresaJob = (existente.empresa_origem_id as string | null) ?? empresaOrigemId;
+
+    await sb
+      .from("siso_pedidos")
+      .update({ separacao_futura: false })
+      .eq("id", pedido.id);
+
+    const { data: jobExistente } = await sb
+      .from("siso_fila_execucao")
+      .select("id")
+      .eq("pedido_id", pedido.id)
+      .eq("tipo", "lancar_estoque")
+      .in("status", ["pendente", "executando"])
+      .maybeSingle();
+    if (!jobExistente) {
+      await sb.from("siso_fila_execucao").insert({
+        pedido_id: pedido.id,
+        tipo: "lancar_estoque",
+        filial_execucao: galpaoOrigemNome,
+        empresa_id: empresaJob,
+        decisao: decisaoFinal === "transferencia" ? "transferencia" : decisaoFinal === "oc" ? "oc" : "propria",
+      });
+    }
+    kickWorker().catch((err) => {
+      logger.error("processor.wms", "kickWorker falhou (promoção futura)", {
+        pedidoId: pedido.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    registrarEvento({
+      pedidoId: pedido.id,
+      evento: "auto_aprovado",
+      detalhes: { decisao: decisaoFinal, via: "wms", promocao_futura: true },
+    }).catch(() => {});
+
+    logger.info("processor.wms", "futura PROMOVIDA (etiqueta liberou) — gera NF + agrupamento", {
+      pedidoId: pedido.id,
+      decisao: decisaoFinal,
+      statusSeparacao: existente.status_separacao,
+    });
+
+    await sb
+      .from("siso_webhook_logs")
+      .update({
+        status: "concluido",
+        empresa_id: empresaOrigemId,
+        processado_em: new Date().toISOString(),
+      })
+      .eq("id", webhookLogId);
+    return { ok: true, pedidoId: pedido.id, status: "promovido", sugestao };
   }
 
   // 4c. Auto-vendedor_nome para marketplaces rastreados (ML/Shopee).
@@ -754,17 +881,27 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       tipo_resolucao: tipoResolucao,
       decisao_final: isAuto ? "propria" : (autoEnfileiraOc ? "oc" : null),
       separacao_galpao_id: separacaoGalpaoId,
-      // OC: status_separacao fica NULL aqui — o worker (executarMarcadoresOnly)
-      // seta validacao_oc/aguardando_nf. NÃO setar aguardando_nf p/ OC
-      // (dispararia enriquecerDadosNf cedo).
-      status_separacao: isAuto ? "aguardando_nf" : null,
+      separacao_futura: separacaoFutura,
+      // status_separacao no intake:
+      //  - futura propria → aguardando_separacao (não há etapa de NF; a R segura
+      //    o estoque, o pick na pista futura faz R→L+S).
+      //  - normal propria → aguardando_nf.
+      //  - OC (futura ou normal) → NULL: o worker (executarMarcadoresOnly) seta
+      //    validacao_oc; setar aguardando_nf dispararia enriquecerDadosNf cedo.
+      status_separacao: isAuto
+        ? (separacaoFutura ? "aguardando_separacao" : "aguardando_nf")
+        : null,
       prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
       processado_em: null,
       marcadores: requerSku
         ? ["REQUER_SKU", "LVR"]
-        : isAuto
-          ? [galpaoOrigemNome, "LVR"]
-          : (autoEnfileiraOc ? ["OC", galpaoOrigemNome, "LVR"] : ["LVR"]),
+        : (() => {
+            const base = isAuto
+              ? [galpaoOrigemNome, "LVR"]
+              : (autoEnfileiraOc ? ["OC", galpaoOrigemNome, "LVR"] : ["LVR"]);
+            return separacaoFutura ? [...base, MARCADOR_FUTURA] : base;
+          })(),
+      ...(separacaoFutura ? { separacao_tags: [TAG_FUTURA] } : {}),
       payload_original: pedido,
       vendedor_id: vendedorIdFinal,
       vendedor_nome: vendedorNomeFinal,
@@ -781,11 +918,14 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     void (async () => {
       try {
         const { token } = await getValidTokenByEmpresa(empresaOrigemId);
+        // Futura: marca SEP FUTURA além do WMS (visibilidade Tiny-side; ≠ NF).
+        const marcadoresTiny = separacaoFutura ? ["WMS", MARCADOR_FUTURA] : ["WMS"];
         await runWithEmpresa(empresaOrigemId, () =>
-          criarMarcadoresPedido(token, pedido.id, ["WMS"]),
+          criarMarcadoresPedido(token, pedido.id, marcadoresTiny),
         );
         logger.info("processor.wms", "marcador WMS aplicado no pedido Tiny", {
           pedidoId: pedido.id,
+          separacaoFutura,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -892,6 +1032,11 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    swaps AUTO (substituto), no galpão do plano (casa ou remoto). Swaps
   //    pendentes já têm R reserva_troca (7b). Remoto força tudo pendente → sem
   //    auto-swaps aqui.
+  // Futura: TTL longo derivado da dataPrevista (+14d) — etiqueta buffered pode
+  // estar segurada semanas à frente; o 30d default expiraria antes (oversold).
+  const ttlFutura = separacaoFutura
+    ? ttlHorasReservaFutura(pedido.dataEnvio ?? null)
+    : undefined;
   if (requerSku) {
     // Pedido parqueado aguardando SKU — não cria reservas. Serão criadas no
     // reprocessamento nativo após o operador definir o SKU.
@@ -912,7 +1057,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       })),
     ];
     if (rotasTroca.length > 0) {
-      await criarReservasRotaAtomico({ pedidoId: pedido.id, rotas: rotasTroca });
+      await criarReservasRotaAtomico({ pedidoId: pedido.id, rotas: rotasTroca, ttlHoras: ttlFutura });
     }
   } else if (rota.decisao === "propria" || rota.decisao === "transferencia") {
     await criarReservasRotaAtomico({
@@ -923,6 +1068,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
         localizacao_id: r.localizacao_id,
         qty: r.qty,
       })),
+      ttlHoras: ttlFutura,
     });
   }
 
@@ -937,38 +1083,48 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     registrarEvento({
       pedidoId: pedido.id,
       evento: "auto_aprovado",
-      detalhes: { decisao: isAuto ? "propria" : "oc", motivo, via: "wms" },
+      detalhes: { decisao: isAuto ? "propria" : "oc", motivo, futura: separacaoFutura, via: "wms" },
     }).catch(() => {});
 
-    // Idempotência de re-entrega: OC não seta estoque_lancado=true, então o
-    // early-return acima (que checa estoque_lancado) não cobre. Esta guarda
-    // protege a janela pendente/executando; re-entregas pós-concluido já são
-    // bloqueadas antes pelo dedup_key UNIQUE de siso_webhook_logs.
-    // (espelha worker:683-689)
-    const { data: jobExistente } = await sb
-      .from("siso_fila_execucao")
-      .select("id")
-      .eq("pedido_id", pedido.id)
-      .eq("tipo", "lancar_estoque")
-      .in("status", ["pendente", "executando"])
-      .maybeSingle();
+    // Futura PROPRIA NÃO enfileira lancar_estoque: não gera NF nem baixa estoque
+    // agora (a R segura o estoque; o pick na pista futura faz R→L+S; a NF nasce
+    // só na promoção). Crucial p/ a re-processabilidade da promoção: enfileirar
+    // o job ligaria o early-return de idempotência (jobComprometido) e travaria
+    // a promoção. Futura OC ENFILEIRA (decisao='oc') — o worker resolve a compra
+    // SEM gerar NF (gate em executarMarcadoresOnly, §Fase 3).
+    const enfileiraJob = !(separacaoFutura && isAuto);
 
-    if (!jobExistente) {
-      await sb.from("siso_fila_execucao").insert({
-        pedido_id: pedido.id,
-        tipo: "lancar_estoque",
-        filial_execucao: galpaoOrigemNome,
-        empresa_id: empresaOrigemId,
-        decisao: isAuto ? "propria" : "oc",
+    if (enfileiraJob) {
+      // Idempotência de re-entrega: OC não seta estoque_lancado=true, então o
+      // early-return acima (que checa estoque_lancado) não cobre. Esta guarda
+      // protege a janela pendente/executando; re-entregas pós-concluido já são
+      // bloqueadas antes pelo dedup_key UNIQUE de siso_webhook_logs.
+      // (espelha worker:683-689)
+      const { data: jobExistente } = await sb
+        .from("siso_fila_execucao")
+        .select("id")
+        .eq("pedido_id", pedido.id)
+        .eq("tipo", "lancar_estoque")
+        .in("status", ["pendente", "executando"])
+        .maybeSingle();
+
+      if (!jobExistente) {
+        await sb.from("siso_fila_execucao").insert({
+          pedido_id: pedido.id,
+          tipo: "lancar_estoque",
+          filial_execucao: galpaoOrigemNome,
+          empresa_id: empresaOrigemId,
+          decisao: isAuto ? "propria" : "oc",
+        });
+      }
+
+      kickWorker().catch((err) => {
+        logger.error("processor.wms", "kickWorker falhou", {
+          pedidoId: pedido.id,
+          err: err instanceof Error ? err.message : String(err),
+        });
       });
     }
-
-    kickWorker().catch((err) => {
-      logger.error("processor.wms", "kickWorker falhou", {
-        pedidoId: pedido.id,
-        err: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 
   await sb

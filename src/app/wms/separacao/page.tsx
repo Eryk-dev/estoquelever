@@ -26,7 +26,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
@@ -659,7 +659,21 @@ export default function WmsSeparacaoPage() {
   // esta aba estiver aberta.
   useTrackPresencaWms("separacao");
 
-  const tab = parseTab(searchParams?.get("tab"));
+  // Separação futura: a MESMA tela, servida em /wms/separacao-futura. Difere só
+  // em (a) filtrar separacao_futura=true na API, (b) levar futura=1 pro checklist,
+  // (c) parar em `separado` — sem tabs aguardando_nf/embalado/conferido nem ação
+  // de embalar (a etiqueta/NF só na promoção).
+  const pathname = usePathname();
+  const futura = (pathname ?? "").startsWith("/wms/separacao-futura");
+  const FUTURA_TABS: Tab[] = [
+    "aguardando_compra",
+    "aguardando_separacao",
+    "em_separacao",
+    "separado",
+  ];
+  const rawTab = parseTab(searchParams?.get("tab"));
+  // Em futura, tab fora do conjunto visível cai pra "pra separar".
+  const tab = futura && !FUTURA_TABS.includes(rawTab) ? "aguardando_separacao" : rawTab;
   const busca = searchParams?.get("busca") ?? "";
   const marketplace = searchParams?.get("marketplace") ?? "";
   const tagFilter = searchParams?.get("tag") ?? "";
@@ -751,13 +765,15 @@ export default function WmsSeparacaoPage() {
     if (tagFilter) params.set("tag", tagFilter);
     if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
     if (sort && sort !== "data_pedido") params.set("sort", sort);
+    if (futura) params.set("futura", "1");
     return params.toString();
-  }, [tab, busca, marketplace, tagFilter, empresaFilter, sort]);
+  }, [tab, busca, marketplace, tagFilter, empresaFilter, sort, futura]);
 
   const { data, isLoading, isError, error, refetch } =
     useQuery<SeparacaoResponse>({
       queryKey: [
         "wms-separacao",
+        futura ? "futura" : "normal",
         activeGalpaoId ?? "all",
         tab,
         busca,
@@ -1118,6 +1134,7 @@ export default function WmsSeparacaoPage() {
         const qs = new URLSearchParams();
         qs.set("pedidos", effectiveIds.join(","));
         if (modo) qs.set("modo", modo);
+        if (futura) qs.set("futura", "1");
         router.push(`/wms/separacao/checklist?${qs.toString()}`);
       },
     });
@@ -1176,8 +1193,12 @@ export default function WmsSeparacaoPage() {
   return (
     <>
       <PageHeader
-        title="Separação"
-        subtitle="Wave picking, embalagem e expedição"
+        title={futura ? "Separação futura" : "Separação"}
+        subtitle={
+          futura
+            ? "Vendas com etiqueta segurada (ML) — reserva e separa cedo, sem NF até a etiqueta liberar"
+            : "Wave picking, embalagem e expedição"
+        }
         backHref="/wms"
         backLabel="Voltar ao WMS"
       />
@@ -1185,6 +1206,7 @@ export default function WmsSeparacaoPage() {
       <TabsStatusSeparacao
         active={tab}
         counts={counts}
+        visibleTabs={futura ? FUTURA_TABS : undefined}
         onChange={(next) => {
           // BATCH em uma só chamada — chamadas consecutivas de updateParam
           // levavam searchParams stale e reverter mudanças (bug das tabs zeradas).
@@ -1301,6 +1323,7 @@ export default function WmsSeparacaoPage() {
           >
             <PrimaryTabActions
               tab={tab}
+              futura={futura}
               effectiveCount={effectiveCount}
               hasSelection={selectedArr.length > 0}
               selectedCount={selectedArr.length}
@@ -1540,7 +1563,7 @@ export default function WmsSeparacaoPage() {
       )}
 
       {/* Aviso "X sem etiqueta" no separado (paridade legado) */}
-      {tab === "separado" && separadoStats.semEtiqueta > 0 && (
+      {!futura && tab === "separado" && separadoStats.semEtiqueta > 0 && (
         <div
           style={{
             marginTop: 12,
@@ -1922,6 +1945,7 @@ export default function WmsSeparacaoPage() {
 
 interface PrimaryTabActionsProps {
   tab: Tab;
+  futura: boolean;
   effectiveCount: number;
   hasSelection: boolean;
   selectedCount: number;
@@ -1937,6 +1961,7 @@ interface PrimaryTabActionsProps {
 
 function PrimaryTabActions({
   tab,
+  futura,
   effectiveCount,
   hasSelection,
   selectedCount,
@@ -1949,6 +1974,9 @@ function PrimaryTabActions({
   onRetryEtiqueta,
   onConferir,
 }: PrimaryTabActionsProps) {
+  // Separação futura PARA em `separado` (peça na caixa do dia) — a etiqueta/NF
+  // só na promoção. Sem ação de embalar nesta tela.
+  if (futura && tab === "separado") return null;
   // Indicador "operando em todos" vs "operando em selection" (texto consistente)
   const countLabel = hasSelection
     ? `${selectedCount} selecionado(s)`

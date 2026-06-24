@@ -17,6 +17,9 @@ type TabId =
 interface TabsStatusSeparacaoProps {
   active: TabId;
   onChange: (tab: TabId) => void;
+  /** Limita as tabs exibidas (ex.: separação futura para em `separado` — sem
+   *  aguardando_nf/embalado/conferido). Default: todas. */
+  visibleTabs?: TabId[];
   counts: {
     aguardando_compra: number;
     aguardando_nf: number;
@@ -45,10 +48,14 @@ function TabsStatusSeparacao({
   active,
   onChange,
   counts,
+  visibleTabs,
 }: TabsStatusSeparacaoProps) {
+  const tabs = visibleTabs
+    ? TABS.filter((t) => visibleTabs.includes(t.id))
+    : TABS;
   return (
     <div className="wms-stab" role="tablist">
-      {TABS.map((t) => {
+      {tabs.map((t) => {
         const isActive = active === t.id;
         return (
           <button

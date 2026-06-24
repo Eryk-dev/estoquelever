@@ -91,6 +91,9 @@ Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) →
            → confirmar-item-embalagem → embalado → [conferência opcional: embalador bipa etiqueta
            (embalado_real_por, status não muda) → conferente bipa → conferido] → expedir → expedido
            (parcial = 2 movs + re-busca cascade; encaminhar = manda pra outro galpão)
+           [pista FUTURA para em `separado` → /wms/encaixotamento: bipa SKU/EAN+qty, distribui o
+            carrinho nas caixas = DIA de prazo_envio (FIFO), grava quantidade_encaixotada/encaixotado_em,
+            NÃO muda status; a promoção da etiqueta é que segue p/ embalagem]
 ```
 
 **`webhook-processor.ts` e `execution-worker.ts` são shells finos** — sempre delegam pros `-wms`. **Não existe mais flag `WMS_AS_SOURCE` / `flags.ts`**: o caminho WMS-as-source é permanente. A lógica legada de tier/multi-empresa nos arquivos base está dormante.
@@ -148,7 +151,7 @@ Fonte única de estoque. Cada posição é única por **`(produto_id, galpao_id,
 src/
   app/
     api/auth/{login,me}/route.ts        # ÚNICAS rotas fora de /api/wms (PIN login + sessão)
-    api/wms/**/route.ts                 # 206 rotas — TODO o backend
+    api/wms/**/route.ts                 # 209 rotas — TODO o backend
     wms/**                              # 47 pages (+layout) — TODO o frontend, todas "use client"
     login/page.tsx · page.tsx           # login + redirect pra /wms
     globals.css                         # Tailwind v4 (@theme inline)
@@ -201,9 +204,9 @@ docs/                                   # ground-truth gerada (ver abaixo)
 erros-conhecidos.yaml                   # base de erros (grep antes, adicionar depois)
 ```
 
-### API — grupos por domínio (206 rotas em `/api/wms`)
+### API — grupos por domínio (209 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`, `client-error`).
+`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) · `encaixotamento` (3) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`, `client-error`).
 
 ### Database — tabelas principais
 

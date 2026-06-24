@@ -57,6 +57,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `marcadores` | text[] | YES | | Tiny order markers/tags |
 | `separacao_tags` | text[] | YES | `{}` | User-created tags in separation module |
 | `separacao_futura` | boolean | NO | false | Pista de separação futura (ML buffered): reserva/separa/compra sem NF até a etiqueta liberar. Tela `/wms/separacao-futura` filtra por isto; a fila normal exclui. Promoção (etiqueta liberou) flipa pra false. Índice parcial `idx_pedidos_separacao_futura`. |
+| `encaixotado_em` | timestamptz | YES | | Quando o pedido futura ficou 100% encaixotado (todos os itens depositados na caixa do dia). Etapa `/wms/encaixotamento`. NÃO muda `status_separacao` (fica `separado`). |
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
@@ -194,6 +195,8 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `parcial_por` | uuid | YES | FK | User who registered the short pick |
 | `mov_saida_id` | uuid | YES | FK | WMS movement ID for the saida created on mark/parcial |
 | `mov_ajuste_loc_zerou_id` | uuid | YES | FK | WMS movement ID for loc_zerou physical adjustment |
+| **Encaixotamento (pista futura):** | | | | |
+| `quantidade_encaixotada` | integer | NO | 0 | Qty já depositada na caixa do dia (etapa pós-separação futura; `CHECK >= 0`). Alvo = `COALESCE(quantidade_pega, quantidade_pedida)`. Escrita só via RPC `wms_encaixotar_atomico`/`wms_desencaixotar_atomico`. NÃO muda `status_separacao`. |
 | **Cancellation handling:** | | | | |
 | `compra_cancelamento_motivo` | text | YES | | Reason for cancellation |
 | `compra_cancelamento_solicitado_em` | timestamptz | YES | | When cancellation was requested |

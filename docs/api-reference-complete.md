@@ -3199,6 +3199,32 @@ OR
 
 ---
 
+## Encaixotamento API
+
+Etapa pós-separação na pista **futura**: distribui o carrinho em caixas = DIA de despacho (`prazo_envio`). Gate: `requireWarehouseAccess`. Opera só sobre pedidos `separacao_futura=true` + `status_separacao='separado'`. NÃO muda `status_separacao`.
+
+### GET /api/wms/encaixotamento
+
+Painel das caixas. Agrega os pedidos futura `separado` por dia e devolve o progresso.
+
+**Resposta:** `{ caixas: [{ dia, pedidos, total_un, encaixotado_un, falta_un, completo }], total_un, falta_un }`
+
+### POST /api/wms/encaixotamento/bipar
+
+Bipa SKU/EAN + qty; deposita a qty nas caixas (FIFO por `prazo_envio`, mais urgente 1º) via RPC `wms_encaixotar_atomico` (lock por item serializa multi-operador).
+
+**Body:** `{ codigo: string, qty: number }`
+**Resposta 200:** `{ ok, codigo, sku, descricao, imagem_url, qty_pedida, qty_alocada, sobra, alocacoes: [{ pedido_id, pedido_item_id, numero, prazo_envio, dia, qty }] }`
+**Erros:** `400` validação · `404 sem_caixa` (nada futura/separado precisa do código)
+
+### POST /api/wms/encaixotamento/desfazer
+
+Desfaz o último bip (estorna `quantidade_encaixotada`, reabre caixas que deixaram de estar 100%) via RPC `wms_desencaixotar_atomico`.
+
+**Body:** `{ alocacoes: [{ pedido_id, pedido_item_id, qty }] }`
+
+---
+
 ## Compras API
 
 ### GET /api/wms/compras

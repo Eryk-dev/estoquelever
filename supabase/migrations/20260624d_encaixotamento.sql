@@ -88,8 +88,8 @@ BEGIN
       'pedido_item_id', v_item.id,
       'numero', v_item.numero,
       'prazo_envio', v_item.prazo_envio,
-      -- prazo_envio é ISO com offset -03:00; os 10 primeiros chars = dia local.
-      'dia', left(v_item.prazo_envio, 10),
+      -- prazo_envio é timestamptz (UTC) — converte pro fuso de SP e pega a DATA local.
+      'dia', to_char((v_item.prazo_envio AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD'),
       'qty', v_alocar
     );
   END LOOP;

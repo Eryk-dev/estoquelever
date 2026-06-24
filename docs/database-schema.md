@@ -85,7 +85,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `agrupamento_tiny_id` | bigint | YES | | Deprecated: Tiny agrupamento (grouping) ID |
 | `agrupamento_expedicao_id` | text | YES | | Tiny expedition grouping ID (used for label printing) |
 | `expedicao_id` | text | YES | | Tiny expedition ID within agrupamento |
-| `prazo_envio` | text | YES | | Shipping deadline string |
+| `prazo_envio` | timestamptz | YES | | Prazo de despacho (ML SLA / Tiny dataEnvio). **timestamptz em UTC** — pra agrupar por DIA, converter `AT TIME ZONE 'America/Sao_Paulo'` antes (senão a virada de meia-noite joga pro dia errado). ⚠ doc antiga dizia `text`. |
 | `encaminhado_de` | text | YES | | Name of origin galpão when manually forwarded to another galpão |
 | `vendedor_id` | uuid | YES | FK | Sales rep (vendedor cargo) responsible for the order — NULL for marketplaces unless manually assigned |
 | `vendedor_nome` | text | YES | | Denormalized vendedor name. Auto-set to `"{nome_ecommerce} {empresa_nome}"` for ML/Shopee (e.g., "Mercado Livre EasyPeasy") |

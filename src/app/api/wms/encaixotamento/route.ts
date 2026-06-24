@@ -48,7 +48,14 @@ export async function GET(request: NextRequest) {
 
     const diaPorPedido = new Map<string, string>();
     for (const p of lista) {
-      const dia = p.prazo_envio ? String(p.prazo_envio).slice(0, 10) : SEM_PRAZO;
+      // prazo_envio é timestamptz (UTC) — extrai a DATA no fuso de SP (mesma
+      // lógica da RPC wms_encaixotar_atomico), senão a virada de meia-noite
+      // joga o pedido pro dia errado.
+      const dia = p.prazo_envio
+        ? new Date(p.prazo_envio as string).toLocaleDateString("en-CA", {
+            timeZone: "America/Sao_Paulo",
+          })
+        : SEM_PRAZO;
       diaPorPedido.set(String(p.id), dia);
     }
 

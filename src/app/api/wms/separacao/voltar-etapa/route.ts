@@ -126,6 +126,12 @@ export async function POST(request: NextRequest) {
         pedidoUpdate.embalagem_concluida_em = null;
       }
 
+      // Pista futura: voltar pra antes de 'separado' desfaz o encaixotamento
+      // (senão re-picar ressuscitaria o pedido na aba "Encaixotados").
+      if (targetIdx < STATUS_ORDER.indexOf("separado")) {
+        pedidoUpdate.encaixotado_em = null;
+      }
+
       // Conferência de embalagem: voltar pra antes de 'conferido' invalida a
       // conferência (re-conferir depois); voltar pra antes de 'embalado'
       // invalida também o registro de quem embalou fisicamente.
@@ -245,6 +251,15 @@ export async function POST(request: NextRequest) {
             bipado_em: null,
             bipado_por: null,
           })
+          .in("pedido_id", validIds);
+      }
+
+      // Pista futura: zera o encaixotamento por item ao voltar pra antes de
+      // 'separado' (par do encaixotado_em limpo no pedido acima).
+      if (targetIdx < STATUS_ORDER.indexOf("separado")) {
+        await supabase
+          .from("siso_pedido_itens")
+          .update({ quantidade_encaixotada: 0 })
           .in("pedido_id", validIds);
       }
     }

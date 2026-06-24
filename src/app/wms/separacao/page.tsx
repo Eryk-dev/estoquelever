@@ -242,6 +242,16 @@ const MOVE_TARGETS: Partial<
     ],
     forward: [{ value: "embalado", label: "Embalado" }],
   },
+  // Aba virtual da pista futura (separado + encaixotado_em). "Voltar etapa"
+  // desfaz pick + encaixotamento; sem forward (a promoção é automática pela
+  // etiqueta, não manual).
+  encaixotado: {
+    back: [
+      { value: "em_separacao", label: "Em separação" },
+      { value: "aguardando_separacao", label: "Pra separar" },
+    ],
+    forward: [],
+  },
   embalado: {
     back: [
       { value: "separado", label: "Separado" },

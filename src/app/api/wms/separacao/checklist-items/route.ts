@@ -414,6 +414,77 @@ export async function GET(request: NextRequest) {
       realocacoesPorItem.set(String(r.pedido_item_id), arr);
     }
 
+    // 3d. Loc da RESERVA viva por item — fonte de verdade de ONDE o pick sai.
+    //     marcar-item/parcial baixam da loc da R (origem_tipo='reserva_pedido'),
+    //     não da heurística de maior-saldo. Sem espelhar isso aqui, a "Troca de
+    //     localização" (move a R pra outra loc) não refletia no endereço exibido
+    //     — a heurística recomputava e ignorava a R (pior: mover a R baixa o
+    //     disponível do destino, então a heurística mostrava o destino MENOS).
+    //     Chave `${pedido}:${sku}` (a R guarda o produto WMS; casamos por SKU,
+    //     igual ao mapa de saldo). Cascade pode deixar +1 R viva → fica a de
+    //     maior quantidade (espelha buscarReservaPendentePorProduto).
+    const reservaLocPorPedidoSku = new Map<string, string>();
+    {
+      const { data: reservasR } = await supabase
+        .from("siso_movimentacoes")
+        .select("id, origem_id, produto_id, localizacao_id, quantidade")
+        .in("origem_id", pedido_ids)
+        .eq("origem_tipo", "reserva_pedido")
+        .eq("tipo", "R");
+      const rIds = (reservasR ?? []).map((r) => r.id as string);
+      const liberadasSet = new Set<string>();
+      if (rIds.length > 0) {
+        const { data: libs } = await supabase
+          .from("siso_movimentacoes")
+          .select("estorno_de")
+          .in("estorno_de", rIds)
+          .eq("tipo", "L");
+        for (const l of libs ?? []) {
+          if (l.estorno_de) liberadasSet.add(l.estorno_de as string);
+        }
+      }
+      const pendentesR = (reservasR ?? []).filter(
+        (r) => !liberadasSet.has(r.id as string),
+      );
+      const prodIdsR = Array.from(
+        new Set(pendentesR.map((r) => r.produto_id as string)),
+      );
+      const skuPorProdutoR = new Map<string, string>();
+      if (prodIdsR.length > 0) {
+        const { data: prodsR } = await supabase
+          .from("siso_produtos")
+          .select("id, sku")
+          .in("id", prodIdsR);
+        for (const p of prodsR ?? []) {
+          skuPorProdutoR.set(p.id as string, p.sku as string);
+        }
+      }
+      const melhorQtyR = new Map<string, number>();
+      for (const r of pendentesR) {
+        const skuR = skuPorProdutoR.get(r.produto_id as string);
+        if (!skuR) continue;
+        const key = `${r.origem_id}:${skuR}`;
+        const qty = Number(r.quantidade ?? 0);
+        if (qty >= (melhorQtyR.get(key) ?? -1)) {
+          melhorQtyR.set(key, qty);
+          reservaLocPorPedidoSku.set(key, r.localizacao_id as string);
+        }
+      }
+      // Resolve códigos das locs de reserva (reusa o mapa das realocações).
+      const locIdsReserva = Array.from(
+        new Set(reservaLocPorPedidoSku.values()),
+      ).filter((id) => !localizacaoCodigoMap.has(id));
+      if (locIdsReserva.length > 0) {
+        const { data: locsR } = await supabase
+          .from("siso_localizacoes")
+          .select("id, codigo")
+          .in("id", locIdsReserva);
+        for (const loc of locsR ?? []) {
+          localizacaoCodigoMap.set(loc.id, loc.codigo);
+        }
+      }
+    }
+
     // 4. Shape response (empresa_origem_id = separating empresa for location updates)
     // In pick-oc mode, show ALL items (including OC items) so the operator can pick them.
     // In normal mode, hide OC items for aguardando_compra pedidos.
@@ -460,6 +531,20 @@ export async function GET(request: NextRequest) {
       const galeriaImagens = item.produto_wms_substituto_id
         ? (sub?.imagens ?? [])
         : (imagensPorSku.get(item.sku ?? "") ?? []);
+      // Loc exibida: prefere a loc da R viva (onde o pick vai realmente sair),
+      // caindo na heurística de saldo só quando não há reserva (OC, já picado).
+      const locHeuristica = liveKey
+        ? escolherLocExibida(
+            locCandidatesMap.get(liveKey) ?? [],
+            Number(item.quantidade_pedida ?? 0),
+          )
+        : null;
+      const reservaLocId = efetivo
+        ? reservaLocPorPedidoSku.get(`${item.pedido_id}:${efetivo}`)
+        : undefined;
+      const locReserva = reservaLocId
+        ? (localizacaoCodigoMap.get(reservaLocId) ?? null)
+        : null;
       return {
         id: item.id,
         pedido_id: item.pedido_id,
@@ -481,12 +566,7 @@ export async function GET(request: NextRequest) {
               ? [capaImagem]
               : [],
         compra_status: item.compra_status ?? null,
-        localizacao: liveKey
-          ? escolherLocExibida(
-              locCandidatesMap.get(liveKey) ?? [],
-              Number(item.quantidade_pedida ?? 0),
-            )
-          : null,
+        localizacao: locReserva ?? locHeuristica,
         saldo: live?.saldo ?? 0,
         disponivel: live?.disponivel ?? 0,
         // Nº de locs pegáveis (disponivel>0, não-travadas) no galpão. Gate da

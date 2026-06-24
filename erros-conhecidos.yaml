@@ -6921,3 +6921,63 @@ erros:
       - src/app/api/wms/produtos/route.ts
       - src/app/wms/inventario/[id]/contar/page.tsx
     tags: [inventario, bip, contagem, sku, gtin, localizacao, fuzzy, produtos, double-bip]
+
+  - id: separacao-trocar-loc-nao-reflete-e-reordena
+    date: "2026-06-23"
+    source: api.wms.separacao.checklist-items
+    category: business_logic
+    message: >
+      No checklist da separação, "pegar daqui" em outra localização (flechinha
+      do endereço) movia a reserva no back mas o endereço exibido NÃO mudava — e
+      quando mudava, a linha pulava de lugar na lista ordenada por localização,
+      fazendo o operador perder o item numa lista de centenas.
+    cause: >
+      (1) checklist-items derivava a loc exibida de escolherLocCobrindo (heurística
+      de maior-saldo sobre siso_estoque), desacoplada da reserva R. O pick real
+      (marcar-item/parcial) baixa da loc da R (origem_tipo='reserva_pedido'). A
+      Troca de Localização move a R (wms_trocar_reserva_localizacao_atomico: L na
+      antiga + R no destino), mas o display recomputava a heurística e ignorava a
+      R — pior, mover a R baixa o disponível do destino, então a heurística
+      mostrava o destino MENOS. (2) ordenar() ordenava pela loc exibida; ao trocar,
+      a linha re-sortava pra posição da nova loc.
+    fix: >
+      (1) checklist-items agora resolve a loc da R viva por (pedido, sku) — R
+      'reserva_pedido' sem L pareado, maior qty no cascade — e exibe ela,
+      caindo na heurística só sem reserva (OC/já picado). Display passa a bater
+      com onde o pick sai. (2) pinSortLocRef no page: handleTrocarLoc congela a
+      loc PRÉ-troca como sort key do produto (por produto.key), então a linha
+      mantém a posição; ordenar() usa o pin quando presente. Display vira o novo
+      endereço, a posição na lista não.
+    files:
+      - src/app/api/wms/separacao/checklist-items/route.ts
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/checklist/__tests__/parcial-redirecionado.test.tsx
+    tags: [separacao, checklist, localizacao, reserva, troca-localizacao, ordenacao, pin, picking]
+
+  - id: separacao-parcial-loc-zerou-qty-zero-marca-completo
+    date: "2026-06-23"
+    source: app.wms.separacao.checklist
+    category: business_logic
+    message: >
+      No parcial, clicar "não peguei nada" (qty=0) + "a localização zerou" buscava
+      outra loc (cria realocação) mas deixava o item da lista principal marcado
+      como COMPLETO/✓ — mentindo que foi separado quando nada foi pego.
+    cause: >
+      Em /separacao/parcial, com loc_zerou=true o claim atômico (Pass A) marca
+      separacao_marcado=true em TODOS os itens (itemsParaMarcar = qty_residual===0
+      OU loc_zerou), mesmo qty_pega=0. A UI deriva done=all_marcado → renderiza a
+      linha como completa. concluir JÁ bloqueia o pedido via realocação pendente
+      (não confia só no separacao_marcado), então o marcar serve só de proteção
+      anti-re-pick na loc morta — mas visualmente vira "feito".
+    fix: >
+      Conserto de exibição (não mexe no back — concluir já trava): novo
+      itemRedirecionadoSemPick (separacao_parcial && quantidade_pega===0 &&
+      realocação aguardando_picking) filtra o item da lista principal antes do
+      consolidar. A linha da Realocação (seção própria) já indica onde pegar. O
+      item reaparece — agora de fato done — quando a realocação é picada
+      (quantidade_pega passa a >0). Parcial-em-progresso (qty_pega>0) intocado
+      (segue como split PEGO/PEGAR).
+    files:
+      - src/app/wms/separacao/checklist/page.tsx
+      - src/app/wms/separacao/checklist/__tests__/parcial-redirecionado.test.tsx
+    tags: [separacao, parcial, loc-zerou, realocacao, checklist, marcado, picking, ui]

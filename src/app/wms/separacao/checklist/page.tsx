@@ -184,7 +184,7 @@ function toastErroApi(msg: string) {
   );
 }
 
-function consolidar(items: ChecklistItem[]): {
+export function consolidar(items: ChecklistItem[]): {
   itensNormais: ConsolidatedProduct[];
   itensOC: ConsolidatedProduct[];
 } {
@@ -257,14 +257,37 @@ function expandirLinhas(produtos: ConsolidatedProduct[]): LinhaRender[] {
   return out;
 }
 
-function ordenar(rows: ConsolidatedProduct[], sort: SortMode) {
+export function ordenar(
+  rows: ConsolidatedProduct[],
+  sort: SortMode,
+  pinSortLoc?: Map<string, string | null>,
+) {
   const copy = [...rows];
+  // Loc usada SÓ na ordenação: se o produto teve a loc trocada manualmente
+  // (handleTrocarLoc), usa a loc CONGELADA (pré-troca) — a linha não pula de
+  // lugar numa lista longa. O endereço EXIBIDO vira o novo normalmente (server).
+  const locOrdenacao = (p: ConsolidatedProduct) =>
+    pinSortLoc?.has(p.key) ? pinSortLoc.get(p.key)! : p.localizacao;
   copy.sort((a, b) => {
     if (sort === "sku") return a.sku.localeCompare(b.sku);
     if (sort === "descricao") return a.descricao.localeCompare(b.descricao);
-    return naturalLocCompare(a.localizacao, b.localizacao);
+    return naturalLocCompare(locOrdenacao(a), locOrdenacao(b));
   });
   return copy;
+}
+
+// Item cujo saldo INTEIRO foi redirecionado pra uma realocação (parcial via
+// loc_zerou com NADA pego: separacao_parcial + quantidade_pega=0 + realoc ativa).
+// A linha da Realocação já indica onde pegar, então o item some da lista
+// principal — senão renderizava como "completo"/✓, mentindo que foi separado
+// quando nada foi pego. Volta assim que a realoc é picada (quantidade_pega>0, aí
+// de fato done). NÃO esconde parcial-em-progresso (qty_pega>0, vira split PEGO/PEGAR).
+export function itemRedirecionadoSemPick(it: ChecklistItem): boolean {
+  return (
+    it.separacao_parcial &&
+    Number(it.quantidade_pega ?? 0) === 0 &&
+    (it.realocacoes ?? []).some((r) => r.status === "aguardando_picking")
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -286,6 +309,10 @@ export default function WmsChecklistPage() {
   useTrackPresencaWms("separacao");
 
   const [sort, setSort] = useState<SortMode>("localizacao");
+  // Congela a posição na ordenação por localização quando o operador troca a loc
+  // de um item manualmente (ver handleTrocarLoc) — pra a linha não "pular" numa
+  // lista de centenas de itens. Keyed por produto.key; vale pela sessão da página.
+  const pinSortLocRef = useRef<Map<string, string | null>>(new Map());
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>(null);
   const [esgotadoModal, setEsgotadoModal] = useState<{
     sku: string;
@@ -375,9 +402,17 @@ export default function WmsChecklistPage() {
     [data?.items],
   );
 
-  const { itensNormais, itensOC } = useMemo(
-    () => consolidar(items),
+  // Itens redirecionados pra realocação (parcial loc_zerou, nada pego) saem da
+  // lista principal — só a linha da Realocação (seção própria, abaixo) indica
+  // onde pegar. A seção de Realocações itera `items` cru, então a realoc segue
+  // aparecendo.
+  const itensParaLista = useMemo(
+    () => items.filter((it) => !itemRedirecionadoSemPick(it)),
     [items],
+  );
+  const { itensNormais, itensOC } = useMemo(
+    () => consolidar(itensParaLista),
+    [itensParaLista],
   );
   // Galpão da separação do wave (todos os pedidos compartilham). Alimenta o
   // painel de equivalentes (troca de equivalência).
@@ -386,11 +421,11 @@ export default function WmsChecklistPage() {
     [items],
   );
   const itensNormaisOrdenados = useMemo(
-    () => ordenar(itensNormais, sort),
+    () => ordenar(itensNormais, sort, pinSortLocRef.current),
     [itensNormais, sort],
   );
   const itensOCOrdenados = useMemo(
-    () => ordenar(itensOC, sort),
+    () => ordenar(itensOC, sort, pinSortLocRef.current),
     [itensOC, sort],
   );
 
@@ -1084,6 +1119,12 @@ export default function WmsChecklistPage() {
   // exibida (derivada server-side) — sem optimistic.
   async function handleTrocarLoc(produto: ConsolidatedProduct, destinoLocId: string) {
     if (submittingActionRef.current) return;
+    // Congela a ordenação deste item ANTES da troca: guarda a loc ATUAL (pré-troca)
+    // como sort key, pra a linha não pular quando o endereço exibido virar o novo
+    // (refetch). 1ª troca define o pin; trocas seguintes mantêm a posição original.
+    if (!pinSortLocRef.current.has(produto.key)) {
+      pinSortLocRef.current.set(produto.key, produto.localizacao);
+    }
     submittingActionRef.current = true;
     try {
       const results = await Promise.all(

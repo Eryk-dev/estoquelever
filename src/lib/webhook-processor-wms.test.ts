@@ -132,9 +132,12 @@ vi.mock("./wms/reservas", () => ({
 vi.mock("./tiny-api", () => ({
   criarMarcadoresPedido: vi.fn(async () => undefined),
 }));
+const mlConnMock = vi.fn(async (): Promise<string | null> => null);
+const mlStatusMock = vi.fn(async (): Promise<{ shipmentId: number; status: string | null; substatus: string | null } | null> => null);
 vi.mock("./ml-api", () => ({
-  getActiveMlConnectionForEmpresa: vi.fn(async () => null),
+  getActiveMlConnectionForEmpresa: (...a: unknown[]) => mlConnMock(...(a as [])),
   getMlShipmentSla: vi.fn(async () => null),
+  getMlShipmentStatus: (...a: unknown[]) => mlStatusMock(...(a as [])),
 }));
 vi.mock("./tiny-oauth", () => ({
   getValidTokenByEmpresa: vi.fn(async () => ({ token: "tok-1" })),
@@ -296,6 +299,41 @@ describe("processWebhookWms — separação futura (Fase 2)", () => {
     expect(rec.jobInserts).toHaveLength(0);
   });
 
+  it("webhook de pedido ML buffered (sem flag no input) → classifica FUTURA via substatus", async () => {
+    // O webhook normal chega com separacaoFutura=false; a classificação por
+    // substatus no intake detecta buffered e roteia pra pista futura.
+    state.existente = null;
+    state.job = null;
+    mlConnMock.mockResolvedValue("conn-1");
+    mlStatusMock.mockResolvedValue({ shipmentId: 999, status: "ready_to_ship", substatus: "buffered" });
+
+    const res = await processWebhookWms(input()); // SEM separacaoFutura
+
+    expect(res.status).toBe("executando");
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: true,
+      status_separacao: "aguardando_separacao",
+      separacao_tags: ["FUTURA"],
+    });
+    expect(rec.jobInserts).toHaveLength(0); // futura propria não enfileira
+  });
+
+  it("webhook de pedido ML ready_to_print → NÃO vira futura (fluxo normal)", async () => {
+    state.existente = null;
+    state.job = null;
+    mlConnMock.mockResolvedValue("conn-1");
+    mlStatusMock.mockResolvedValue({ shipmentId: 999, status: "ready_to_ship", substatus: "ready_to_print" });
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("executando");
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: false,
+      status_separacao: "aguardando_nf",
+    });
+    expect(rec.jobInserts).toHaveLength(1);
+  });
+
   it("re-detecção de buffered já carregado (poll re-vê) → no-op, não regride pick", async () => {
     // Futura já picada (separado), poll re-detecta como buffered.
     state.existente = { estoque_lancado: false, separacao_futura: true, status_separacao: "separado" };
@@ -347,6 +385,30 @@ describe("processWebhookWms — separação futura (Fase 2)", () => {
     );
     expect(rec.jobInserts).toHaveLength(1);
     expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "oc" });
+  });
+
+  it("futura TRANSFERÊNCIA: separa direto no galpão de cobertura (auto), não vai pra pendente", async () => {
+    state.existente = null;
+    state.job = null;
+    // cobertura 100% num galpão não-casa → transferencia. Futura NÃO deve cair em
+    // pendente (painel humano) — separa cedo nesse galpão.
+    rotearMock.mockResolvedValueOnce(
+      {
+        decisao: "transferencia",
+        galpao_id: "galpao-2",
+        rotas: [{ produto_id: "uuid-1", galpao_id: "galpao-2", localizacao_id: "loc-2", qty: 1 }],
+      } as unknown as Awaited<ReturnType<typeof rotearMock>>,
+    );
+
+    const res = await processWebhookWms({ ...input(), separacaoFutura: true });
+
+    expect(res.status).toBe("executando"); // auto, não pendente
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      separacao_futura: true,
+      status_separacao: "aguardando_separacao",
+      decisao_final: "transferencia",
+    });
+    expect(rec.jobInserts).toHaveLength(0); // separa direto, sem NF
   });
 });
 

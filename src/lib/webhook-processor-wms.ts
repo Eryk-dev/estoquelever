@@ -28,6 +28,7 @@ import { criarMarcadoresPedido } from "./tiny-api";
 import {
   getActiveMlConnectionForEmpresa,
   getMlShipmentSla,
+  getMlShipmentStatus,
 } from "./ml-api";
 import { isMercadoLivre } from "./domain-helpers";
 import { getValidTokenByEmpresa } from "./tiny-oauth";
@@ -36,6 +37,7 @@ import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import {
   MARCADOR_FUTURA,
   TAG_FUTURA,
+  SUBSTATUS_FUTURA,
   ttlHorasReservaFutura,
 } from "./wms/separacao-futura";
 import { preemptarFuturasParaCobertura } from "./wms/preempcao-futura";
@@ -519,7 +521,36 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
 }> {
   const sb = createServiceClient();
   const { webhookLogId, pedido, empresaOrigemId, galpaoOrigemId, galpaoOrigemNome } = input;
-  const separacaoFutura = input.separacaoFutura === true;
+  let separacaoFutura = input.separacaoFutura === true;
+
+  // 0. Classificação de SEPARAÇÃO FUTURA no intake. O webhook do Tiny chega com
+  //    separacaoFutura=false (o poll-futura já passa true). Pra um pedido ML cuja
+  //    etiqueta o ML segura pra data futura (shipment.substatus='buffered'),
+  //    classificamos AQUI — senão o webhook de um pedido "em aberto" cairia no
+  //    fluxo normal e geraria NF cedo. Vale pra webhook E poll (idempotente: o
+  //    poll já manda true → pula a chamada ML). Falha na consulta degrada pro
+  //    fluxo normal (não bloqueia o intake).
+  if (!separacaoFutura && isMercadoLivre(pedido.nomeEcommerce) && pedido.idPedidoEcommerce) {
+    try {
+      const connId = await getActiveMlConnectionForEmpresa(empresaOrigemId);
+      if (connId) {
+        const st = await getMlShipmentStatus(connId, pedido.idPedidoEcommerce);
+        if (st?.substatus === SUBSTATUS_FUTURA) {
+          separacaoFutura = true;
+          logger.info("processor.wms", "pedido classificado como FUTURA via ML substatus", {
+            pedidoId: pedido.id,
+            substatus: st.substatus,
+            shipmentId: st.shipmentId,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn("processor.wms", "falha classificando substatus ML (segue fluxo normal)", {
+        pedidoId: pedido.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   // 1. Resolver itens (mapping Tiny → WMS produto)
   const itensResolvidos = await resolverItensWms(pedido, empresaOrigemId);
@@ -674,7 +705,16 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   }
   const isAuto = sugestao === "propria" && !requerSku;
   const autoEnfileiraOc = sugestao === "oc" && !requerSku;
-  const autoAprova = isAuto || autoEnfileiraOc;
+  // FUTURA separa direto também na TRANSFERÊNCIA: a venda buffered cuja cobertura
+  // está num galpão não-casa é pré-separada NESSE galpão (peça na caixa do dia
+  // de lá; expede de lá na promoção) — auto, sem painel humano. Sem isso, toda
+  // futura transferência caía em `pendente`/status nulo → sumia da pista futura.
+  // Troca de equivalência (curadoria) segue pro painel /wms/trocas, mesmo futura.
+  const futuraTransferencia =
+    separacaoFutura && sugestao === "transferencia" && !requerSku;
+  // Futura que separa cedo no galpão de cobertura (propria OU transferência).
+  const futuraSeparaDireto = (isAuto && separacaoFutura) || futuraTransferencia;
+  const autoAprova = isAuto || autoEnfileiraOc || futuraTransferencia;
   const status = autoAprova ? "executando" : "pendente";
   const tipoResolucao = autoAprova ? "auto" : null;
 
@@ -879,18 +919,22 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       sugestao_motivo: motivo,
       status,
       tipo_resolucao: tipoResolucao,
-      decisao_final: isAuto ? "propria" : (autoEnfileiraOc ? "oc" : null),
+      decisao_final: isAuto
+        ? "propria"
+        : futuraTransferencia
+          ? "transferencia"
+          : (autoEnfileiraOc ? "oc" : null),
       separacao_galpao_id: separacaoGalpaoId,
       separacao_futura: separacaoFutura,
       // status_separacao no intake:
-      //  - futura propria → aguardando_separacao (não há etapa de NF; a R segura
-      //    o estoque, o pick na pista futura faz R→L+S).
+      //  - futura propria/transferência → aguardando_separacao (sem etapa de NF;
+      //    a R segura o estoque no galpão de cobertura, o pick faz R→L+S).
       //  - normal propria → aguardando_nf.
       //  - OC (futura ou normal) → NULL: o worker (executarMarcadoresOnly) seta
       //    validacao_oc; setar aguardando_nf dispararia enriquecerDadosNf cedo.
-      status_separacao: isAuto
-        ? (separacaoFutura ? "aguardando_separacao" : "aguardando_nf")
-        : null,
+      status_separacao: futuraSeparaDireto
+        ? "aguardando_separacao"
+        : (isAuto ? "aguardando_nf" : null),
       prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
       processado_em: null,
       marcadores: requerSku
@@ -1083,16 +1127,16 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     registrarEvento({
       pedidoId: pedido.id,
       evento: "auto_aprovado",
-      detalhes: { decisao: isAuto ? "propria" : "oc", motivo, futura: separacaoFutura, via: "wms" },
+      detalhes: { decisao: isAuto ? "propria" : (futuraTransferencia ? "transferencia" : "oc"), motivo, futura: separacaoFutura, via: "wms" },
     }).catch(() => {});
 
-    // Futura PROPRIA NÃO enfileira lancar_estoque: não gera NF nem baixa estoque
-    // agora (a R segura o estoque; o pick na pista futura faz R→L+S; a NF nasce
-    // só na promoção). Crucial p/ a re-processabilidade da promoção: enfileirar
-    // o job ligaria o early-return de idempotência (jobComprometido) e travaria
-    // a promoção. Futura OC ENFILEIRA (decisao='oc') — o worker resolve a compra
-    // SEM gerar NF (gate em executarMarcadoresOnly, §Fase 3).
-    const enfileiraJob = !(separacaoFutura && isAuto);
+    // Futura que separa direto (propria/transferência) NÃO enfileira lancar_estoque:
+    // não gera NF nem baixa estoque agora (a R segura o estoque; o pick na pista
+    // futura faz R→L+S; a NF nasce só na promoção). Crucial p/ a re-processabilidade
+    // da promoção: enfileirar o job ligaria o early-return de idempotência
+    // (jobComprometido) e travaria a promoção. Futura OC ENFILEIRA (decisao='oc') —
+    // o worker resolve a compra SEM gerar NF (gate em executarMarcadoresOnly, §Fase 3).
+    const enfileiraJob = !futuraSeparaDireto;
 
     if (enfileiraJob) {
       // Idempotência de re-entrega: OC não seta estoque_lancado=true, então o

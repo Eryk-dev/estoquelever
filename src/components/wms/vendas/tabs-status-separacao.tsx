@@ -10,6 +10,7 @@ type TabId =
   | "aguardando_separacao"
   | "em_separacao"
   | "separado"
+  | "encaixotado"
   | "embalado"
   | "conferido"
   | "pendente_realocacao";
@@ -27,6 +28,8 @@ interface TabsStatusSeparacaoProps {
     aguardando_separacao: number;
     em_separacao: number;
     separado: number;
+    /** Só usado na pista futura: pedidos já 100% encaixotados. */
+    encaixotado: number;
     embalado: number;
     conferido: number;
     pendente_realocacao: number;
@@ -39,6 +42,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "aguardando_separacao", label: "Pra separar" },
   { id: "em_separacao", label: "Em separação" },
   { id: "separado", label: "Separados" },
+  { id: "encaixotado", label: "Encaixotados" },
   { id: "embalado", label: "Embalados" },
   { id: "conferido", label: "Conferidos" },
   { id: "pendente_realocacao", label: "Realocação" },
@@ -50,9 +54,11 @@ function TabsStatusSeparacao({
   counts,
   visibleTabs,
 }: TabsStatusSeparacaoProps) {
+  // `encaixotado` é exclusivo da pista futura (entra via visibleTabs/FUTURA_TABS).
+  // O caminho default (separação normal) NÃO mostra essa aba.
   const tabs = visibleTabs
     ? TABS.filter((t) => visibleTabs.includes(t.id))
-    : TABS;
+    : TABS.filter((t) => t.id !== "encaixotado");
   return (
     <div className="wms-stab" role="tablist">
       {tabs.map((t) => {

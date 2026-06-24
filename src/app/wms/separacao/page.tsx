@@ -115,7 +115,8 @@ interface SeparacaoPedido {
 }
 
 interface SeparacaoResponse {
-  counts: Record<StatusServer, number>;
+  // `encaixotado` é chave extra (não é status) — só preenchida na pista futura.
+  counts: Record<StatusServer, number> & { encaixotado?: number };
   pedidos: SeparacaoPedido[];
   empresas: { id: string; nome: string }[]; // usado no filtro de empresa
   galpoes: { id: string; nome: string }[];
@@ -129,6 +130,9 @@ const TAB_TO_STATUS: Record<Tab, StatusServer[]> = {
   aguardando_separacao: ["aguardando_separacao", "validacao_oc"],
   em_separacao: ["em_separacao"],
   separado: ["separado"],
+  // Aba virtual da pista futura: mesmo status 'separado', diferenciado por
+  // encaixotado_em (a rota filtra via ?encaixotado=1).
+  encaixotado: ["separado"],
   embalado: ["embalado"],
   conferido: ["conferido"],
   pendente_realocacao: ["pendente_realocacao"],
@@ -154,6 +158,10 @@ const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
   separado: {
     title: "Nenhum pedido separado",
     body: "Pedidos prontos pra embalagem aparecem aqui.",
+  },
+  encaixotado: {
+    title: "Nenhum pedido encaixotado",
+    body: "Pedidos da separação futura já distribuídos nas caixas do dia aparecem aqui.",
   },
   embalado: {
     title: "Nenhum pedido embalado",
@@ -257,6 +265,7 @@ function parseTab(value: string | null | undefined): Tab {
     "aguardando_separacao",
     "em_separacao",
     "separado",
+    "encaixotado",
     "embalado",
     "conferido",
     "pendente_realocacao",
@@ -670,6 +679,7 @@ export default function WmsSeparacaoPage() {
     "aguardando_separacao",
     "em_separacao",
     "separado",
+    "encaixotado",
   ];
   const rawTab = parseTab(searchParams?.get("tab"));
   // Em futura, tab fora do conjunto visível cai pra "pra separar".
@@ -766,6 +776,10 @@ export default function WmsSeparacaoPage() {
     if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
     if (sort && sort !== "data_pedido") params.set("sort", sort);
     if (futura) params.set("futura", "1");
+    // Pista futura: a aba "Separados" mostra só o que FALTA encaixotar
+    // (encaixotado_em IS NULL); a aba "Encaixotados" mostra os já feitos.
+    if (tab === "encaixotado") params.set("encaixotado", "1");
+    else if (futura && tab === "separado") params.set("encaixotado", "0");
     return params.toString();
   }, [tab, busca, marketplace, tagFilter, empresaFilter, sort, futura]);
 
@@ -827,6 +841,7 @@ export default function WmsSeparacaoPage() {
         (data?.counts.validacao_oc ?? 0),
       em_separacao: data?.counts.em_separacao ?? 0,
       separado: data?.counts.separado ?? 0,
+      encaixotado: data?.counts.encaixotado ?? 0,
       embalado: data?.counts.embalado ?? 0,
       conferido: data?.counts.conferido ?? 0,
       pendente_realocacao: data?.counts.pendente_realocacao ?? 0,

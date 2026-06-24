@@ -82,6 +82,9 @@ export async function GET(request: NextRequest) {
   // Ausente → fila NORMAL, que EXCLUI futura (senão um pedido futura cairia na
   // embalagem normal e geraria NF cedo).
   const futura = searchParams.get("futura") === "1";
+  // Encaixotamento (pista futura): "0" = ainda não encaixotado (fila do que falta),
+  // "1" = já encaixotado (encaixotado_em preenchido). Ausente = sem filtro.
+  const encaixotado = searchParams.get("encaixotado");
 
   if (statusFilters.length > 0 && statusFilters.some((s) => !VALID_STATUSES.includes(s))) {
     return NextResponse.json(
@@ -264,6 +267,11 @@ export async function GET(request: NextRequest) {
     if (tagList.length) {
       pedidosQuery = pedidosQuery.overlaps("separacao_tags", tagList);
     }
+    if (encaixotado === "1") {
+      pedidosQuery = pedidosQuery.not("encaixotado_em", "is", null);
+    } else if (encaixotado === "0") {
+      pedidosQuery = pedidosQuery.is("encaixotado_em", null);
+    }
     if (statusFilters.includes("embalado") || statusFilters.includes("conferido")) {
       pedidosQuery = pedidosQuery
         .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
@@ -393,6 +401,30 @@ export async function GET(request: NextRequest) {
       ...rawCounts,
       aguardando_compra: aguardandoCompraCount,
     };
+
+    // Pista futura: separa o count de "separado" em ainda-a-encaixotar (fila real)
+    // vs já-encaixotado (aba Encaixotados). encaixotado_em não é status, então a
+    // RPC de counts não distingue — 1 HEAD-count extra (só na futura) resolve.
+    let encaixotadoCount = 0;
+    if (futura) {
+      let eq = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true })
+        .eq("separacao_futura", true)
+        .eq("status_separacao", "separado")
+        .not("encaixotado_em", "is", null);
+      if (activeGalpaoId) eq = eq.eq("separacao_galpao_id", activeGalpaoId);
+      if (empresaIds.length === 1) eq = eq.eq("empresa_origem_id", empresaIds[0]);
+      else if (empresaIds.length > 1) eq = eq.in("empresa_origem_id", empresaIds);
+      if (marketplaceFilter) eq = eq.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      eq = applyBuscaFilter(eq);
+      eq = applyPrazoFilter(eq);
+      if (tagList.length) eq = eq.overlaps("separacao_tags", tagList);
+      const { count } = await eq;
+      encaixotadoCount = count ?? 0;
+      // "Separados" passa a contar só o que falta encaixotar.
+      counts.separado = Math.max(0, counts.separado - encaixotadoCount);
+    }
 
     // 3. Fetch item stats for progress display (separation + packing counts)
     const pedidoIds = (pedidos ?? []).map((p) => p.id);
@@ -550,7 +582,12 @@ export async function GET(request: NextRequest) {
       .map(([id, nome]) => ({ id, nome }))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
-    return NextResponse.json({ counts, pedidos: filteredResult, empresas, galpoes: galpoesList ?? [] });
+    return NextResponse.json({
+      counts: { ...counts, encaixotado: encaixotadoCount },
+      pedidos: filteredResult,
+      empresas,
+      galpoes: galpoesList ?? [],
+    });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {
       error: err instanceof Error ? err.message : String(err),

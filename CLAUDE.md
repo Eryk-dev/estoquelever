@@ -94,7 +94,9 @@ Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) →
            [pista FUTURA para em `separado` → botão "Encaixotar" na aba Separados (não é item de sidebar;
             mesmo padrão do "Conferir") abre /wms/separacao/encaixotamento: bipa SKU/EAN+qty, distribui o
             carrinho nas caixas = DIA de prazo_envio (FIFO), grava quantidade_encaixotada/encaixotado_em,
-            NÃO muda status; a promoção da etiqueta é que segue p/ embalagem]
+            NÃO muda status; a promoção da etiqueta é que segue p/ embalagem.
+            Aba "Encaixotados" (só futura, aba virtual = separado + encaixotado_em IS NOT NULL) tira o
+            pedido pronto da fila "Separados" (= encaixotado_em IS NULL) pra não poluir o que falta]
 ```
 
 **`webhook-processor.ts` e `execution-worker.ts` são shells finos** — sempre delegam pros `-wms`. **Não existe mais flag `WMS_AS_SOURCE` / `flags.ts`**: o caminho WMS-as-source é permanente. A lógica legada de tier/multi-empresa nos arquivos base está dormante.

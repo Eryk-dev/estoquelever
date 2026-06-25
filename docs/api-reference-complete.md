@@ -2247,7 +2247,7 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 
 **File:** `src/app/api/wms/separacao/encaminhar/route.ts`
 
-**Purpose:** Forward one or more orders to another galpão. Reverses any stock execution that already occurred, resets the pedido to `pendente` with `sugestao = "transferencia"` so the destination galpão sees it in their SISO dashboard.
+**Purpose:** Forward one or more orders to another galpão. Reverses any live stock reservation, resets separation state, then **re-routes the order PINNED to the destination galpão** (plano 2026-06-25-encaminhar-rota-pinada). The re-route evaluates coverage ONLY at the chosen destination — never geo-priority across the network — so the only possible decisions are `propria` (destination covers), `troca` (equivalent in destination) or `oc` (no coverage). **Never `transferencia`** (that would mean picking another galpão = breaking the pin). NF fields are preserved.
 
 **Auth:** X-Session-Id (required), any authenticated user
 
@@ -2288,23 +2288,19 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 - Cannot forward to the same galpão (`separacao_galpao_id !== galpao_destino_id`)
 - Reset de estado via helper compartilhado `resetarEstadoSeparacaoItens` (fix-pack I8)
 
-**Stock Reversal Logic:**
-- `decisao_final = "propria"`: calls `estornarEstoque()` on origin empresa via Tiny API
-- `decisao_final = "transferencia"`: reverses `movimentarEstoque()` (entry instead of exit) for each item where `estoque_saida_lancada = true`, using `empresa_deducao_id` and `produto_id_na_empresa`
-- `decisao_final = "oc"` or null: no stock to reverse
+**Reversal (before re-route, order matters — D5 "falha não move"):**
+1. `reverseStockExecution`: libera todas as R `reserva_pedido` vivas via `estornarReservaIndividual` (idempotente; `logError` LOUD em R não-liberada = reservado fantasma) + `cancelarTrocasPendentesDoPedido` (libera R `reserva_troca`). Estoque vive 100% no ledger WMS — NÃO há mais estorno via Tiny (removido 2026-05-28).
+2. `resetarEstadoSeparacaoItens` (`motivo:'encaminhar'`, `recriarReservas=false`): estorna as S do pick, cancela realocs, reseta campos do item. **Erro aqui é FATAL** (re-lança → pedido intacto).
 
-**WMS Plano 3 — Reservas (quando `WMS_AS_SOURCE=true`):**
-- Se `estoque_lancado=true`: chama `estornarSaidasPedido` (E com origem=cancelamento_nf, estorno_de=S.id) — gera entradas compensatórias no galpão antigo
-- Sempre chama `liberarReserva` (motivo=encaminhamento) — libera R movs no galpão antigo
-- Chama `recriarReservasNoGalpao` — varre `siso_estoque` no galpão destino, prefere a empresa origem, e cria novas R via `reservarAtomico` (TTL 30 dias)
-- Falhas individuais (sem estoque no destino) são logadas mas não bloqueiam o encaminhar — operador pode resolver via re-aprovação manual
+**Re-rota PINADA no destino (substitui o reset legado que zerava `separacao_galpao_id`):**
+- `rotearPedidoPinado(galpaoDestinoId, itens)` (`roteamento.ts`): `galpoes=[destino]` + `preferenciais=[destino]` ⇒ `geoPriority=0` ⇒ decisão só `propria` | `oc`. Itens resolvidos via `resolverProdutoEfetivoDoItem` (substituto > tiny > SKU).
+- **propria** (destino cobre): `criarReservasRotaAtomico` (R `reserva_pedido` na loc, rollback atômico) + `wms_aprovar_e_enfileirar` (`decisao='propria'`, `status_separacao = NF? 'aguardando_separacao' : 'aguardando_nf'`, `separacao_galpao_id=destino`, `marcadores=[destino,'LVR']`) + job `lancar_estoque`.
+- **troca** (não cobre mas equivalente no destino, sem remota — D2): `planejarTrocaRoteamento` + `aplicarTrocasRoteamento(forcarPendente:false)`. `todosAuto` → vira **propria**; senão → `pendente` + `sugestao='troca_equivalente'`, **`separacao_galpao_id` JÁ pinado no destino** + R `reserva_troca`.
+- **oc** (sem cobertura nem cross): `decisao_final='oc'`, `separacao_galpao_id=destino`, `status='executando'`, `status_separacao=null` (worker → `validacao_oc` ancorado no destino), `marcadores=['OC',destino,'LVR']`, job `lancar_estoque decisao='oc'` (dedup) + `kickWorker`.
 
-**Reset Fields on `siso_pedidos`:**
-- `status` → `"pendente"`, `sugestao` → `"transferencia"`, `encaminhado_de` → origin galpão name
-- Clears: `decisao_final`, `operador_id`, `operador_nome`, `tipo_resolucao`, `processado_em`, `estoque_lancado`, `status_separacao`, `separacao_galpao_id`, `separacao_operador_id`, `separacao_iniciada_em`, `separacao_concluida_em`, `embalagem_concluida_em`, `etiqueta_url`, `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_zpl`, `etiqueta_status`
-- Preserves (NF fields — omission-based): `empresa_origem_id`, `filial_origem`, `numero`, `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`
+**Campos preservados:** `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`, `agrupamento_expedicao_id`, `expedicao_id`, `etiqueta_zpl`, `etiqueta_url` (presos à NF, não ao galpão). `etiqueta_status` → null (reimprimir no destino). `encaminhado_de` → origin galpão name.
 
-> **Reroute contract for early agrupamento:** NF fields are preserved because the NF remains valid across galpao reroute. Shipping artifacts (agrupamento, etiqueta) are explicitly cleared because they must be recreated for the new galpao's shipping context. The re-approved pedido goes through the full worker flow, which detects the existing NF via `gerarNotaFiscalPedido` idempotency and creates a new agrupamento via `criarAgrupamentoFase1`.
+> **Falha não move:** a re-rota só escreve status/galpão APÓS roteamento (read-only) + reservas (rollback atômico). Se qualquer passo lança, nenhuma escrita de decisão aconteceu e o caller registra em `falhas[]`.
 
 **Reset Fields on `siso_pedido_itens`:**
 - `separacao_marcado` → false, `separacao_marcado_em` → null, `quantidade_bipada` → 0, `bipado_completo` → false, `estoque_saida_lancada` → false, `empresa_deducao_id` → null
@@ -2312,7 +2308,8 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 **Error Strategy:** If any Tiny API call fails for a pedido, that pedido is skipped (added to `falhas`), leaving it in its current state. The operator can retry.
 
 **Side Effects:**
-- Reverses stock in Tiny ERP (estorno or entry movements)
+- Libera reservas R no ledger WMS (`siso_movimentacoes`) e cria novas R no galpão destino (propria/troca)
+- Enfileira `lancar_estoque` (`siso_fila_execucao`) + `kickWorker` (propria/oc)
 - Updates `siso_pedidos` and `siso_pedido_itens`
 - Inserts "encaminhado" event to `siso_pedido_historico`
 - Logs to `siso_logs`

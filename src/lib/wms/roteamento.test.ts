@@ -182,3 +182,62 @@ describe("rotearPedido — pool fungível 3D", () => {
     if (r.decisao === "oc") expect(r.motivo).toBe("split_galpoes");
   });
 });
+
+// FASE 1 (plano 2026-06-25-encaminhar-rota-pinada): re-rota PINADA no galpão
+// destino do encaminhar. O pino se materializa passando `galpoes=[destino]` +
+// `preferenciais=[destino.id]` ⇒ geoPriority(destino)=0 ⇒ rotearPedido só pode
+// devolver `propria` (cobre) ou `oc` (não cobre). NUNCA `transferencia`. Aqui
+// testamos o NÚCLEO puro (rotearPedido) com o contexto pinado + buscarLinha
+// mock — rotearPedidoPinado é só o wrapper que monta esse contexto do banco.
+describe("rotearPedido — contexto PINADO (re-rota encaminhar)", () => {
+  // Pino em CWB: lista de 1 galpão, CWB também é o preferencial.
+  const empresaPinadaCwb: EmpresaLite = { id: "pin", galpoes_preferenciais: ["g-cwb"] };
+
+  it("destino cobre → propria no destino (loc da linha)", async () => {
+    const buscar: BuscarLinha = async ({ galpao_id }) =>
+      galpao_id === "g-cwb"
+        ? { id: "loc-cwb", localizacao_id: "A-02-3", disponivel: 5 }
+        : null;
+    const r = await rotearPedido({
+      vendedora: empresaPinadaCwb,
+      galpoes: [galpaoCwb], // PINADO: só o destino
+      itens: [{ produto_id: "022820", qty: 2 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("propria");
+    if (r.decisao !== "oc") {
+      expect(r.galpao_id).toBe("g-cwb");
+      expect(r.rotas[0].localizacao_id).toBe("A-02-3");
+      expect(r.rotas[0].tipo).toBe("propria");
+    }
+  });
+
+  it("destino não cobre → oc(sem_cobertura), nunca transferencia", async () => {
+    const r = await rotearPedido({
+      vendedora: empresaPinadaCwb,
+      galpoes: [galpaoCwb],
+      itens: [{ produto_id: "007237", qty: 1 }],
+      buscarLinha: async () => null,
+    });
+    expect(r.decisao).toBe("oc");
+    if (r.decisao === "oc") expect(r.motivo).toBe("sem_cobertura");
+  });
+
+  it("anti-vazamento geo: estoque existe em g-sp mas o pino só inclui g-cwb → oc (NÃO transferencia)", async () => {
+    // A linha SÓ existe em g-sp; como o pino restringe ctx.galpoes=[g-cwb],
+    // buscarLinha nunca é chamada pra g-sp → o roteamento não enxerga o saldo
+    // remoto → oc. Prova que a re-rota não re-roteia pro galpão errado.
+    const buscar: BuscarLinha = async ({ galpao_id }) =>
+      galpao_id === "g-sp"
+        ? { id: "loc-sp", localizacao_id: "lsp", disponivel: 99 }
+        : null;
+    const r = await rotearPedido({
+      vendedora: empresaPinadaCwb,
+      galpoes: [galpaoCwb], // g-sp ausente de propósito
+      itens: [{ produto_id: "022820", qty: 1 }],
+      buscarLinha: buscar,
+    });
+    expect(r.decisao).toBe("oc");
+    expect(r.decisao).not.toBe("transferencia");
+  });
+});

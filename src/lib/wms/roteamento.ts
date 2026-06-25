@@ -199,6 +199,64 @@ interface EstoqueRow {
 }
 
 /**
+ * Closure de query do roteamento de produção (extraída de `rotearPedidoDoBanco`
+ * pra reuso pela variante PINADA): busca a melhor linha vendável de
+ * (produto, galpão) com `disponivel >= qty`, exclui locs bloqueadas, prioriza
+ * `tipo='picking'`, desempata por maior saldo. CST-01: só locs VENDÁVEIS contam.
+ */
+export function criarBuscarLinhaDoBanco(
+  sb: ReturnType<typeof createServiceClient>,
+): RotearContext["buscarLinha"] {
+  return async (q) => {
+    // 3D: pool fungível por galpão. Sem filtro por dona. Busca todas as
+    // linhas com disponivel >= qty, filtra locs bloqueadas, prioriza
+    // picking, depois maior saldo.
+    // CST-01: só locs VENDÁVEIS (picking/overstock) contam pra cobertura —
+    // recebimento/quarentena/packing/expedicao ficam fora (join !inner).
+    const { data } = await sb
+      .from("siso_estoque")
+      .select(
+        "id, localizacao_id, disponivel, localizacao:siso_localizacoes!inner(tipo)",
+      )
+      .match({
+        produto_id: q.produto_id,
+        galpao_id: q.galpao_id,
+      })
+      .in("localizacao.tipo", [...TIPOS_LOC_VENDAVEIS])
+      .gte("disponivel", q.qty)
+      .order("disponivel", { ascending: false })
+      .limit(20);
+    if (!data || data.length === 0) return null;
+
+    const locsBloqueadas = await sb
+      .from("siso_localizacao_locks")
+      .select("localizacao_id")
+      .is("finalizado_em", null);
+    const blocked = new Set(
+      (locsBloqueadas.data ?? []).map(
+        (l) => (l as { localizacao_id: string }).localizacao_id,
+      ),
+    );
+    const livres = (data as unknown as EstoqueRow[]).filter(
+      (d) => !blocked.has(d.localizacao_id),
+    );
+    const sorted = livres.sort((a, b) => {
+      const ap = a.localizacao?.tipo === "picking" ? 0 : 1;
+      const bp = b.localizacao?.tipo === "picking" ? 0 : 1;
+      if (ap !== bp) return ap - bp;
+      return Number(b.disponivel) - Number(a.disponivel);
+    });
+    return sorted[0]
+      ? {
+          id: sorted[0].id,
+          localizacao_id: sorted[0].localizacao_id,
+          disponivel: Number(sorted[0].disponivel),
+        }
+      : null;
+  };
+}
+
+/**
  * Wrapper de produção: monta contexto a partir do banco e chama rotearPedido.
  * Filtra localizações com lock ativo, prefere tipo='picking', desempata por
  * maior saldo disponível.
@@ -237,52 +295,38 @@ export async function rotearPedidoDoBanco(
     },
     galpoes: (galpoes ?? []) as GalpaoLite[],
     itens,
-    buscarLinha: async (q) => {
-      // 3D: pool fungível por galpão. Sem filtro por dona. Busca todas as
-      // linhas com disponivel >= qty, filtra locs bloqueadas, prioriza
-      // picking, depois maior saldo.
-      // CST-01: só locs VENDÁVEIS (picking/overstock) contam pra cobertura —
-      // recebimento/quarentena/packing/expedicao ficam fora (join !inner).
-      const { data } = await sb
-        .from("siso_estoque")
-        .select(
-          "id, localizacao_id, disponivel, localizacao:siso_localizacoes!inner(tipo)",
-        )
-        .match({
-          produto_id: q.produto_id,
-          galpao_id: q.galpao_id,
-        })
-        .in("localizacao.tipo", [...TIPOS_LOC_VENDAVEIS])
-        .gte("disponivel", q.qty)
-        .order("disponivel", { ascending: false })
-        .limit(20);
-      if (!data || data.length === 0) return null;
+    buscarLinha: criarBuscarLinhaDoBanco(sb),
+  });
+}
 
-      const locsBloqueadas = await sb
-        .from("siso_localizacao_locks")
-        .select("localizacao_id")
-        .is("finalizado_em", null);
-      const blocked = new Set(
-        (locsBloqueadas.data ?? []).map(
-          (l) => (l as { localizacao_id: string }).localizacao_id,
-        ),
-      );
-      const livres = (data as unknown as EstoqueRow[]).filter(
-        (d) => !blocked.has(d.localizacao_id),
-      );
-      const sorted = livres.sort((a, b) => {
-        const ap = a.localizacao?.tipo === "picking" ? 0 : 1;
-        const bp = b.localizacao?.tipo === "picking" ? 0 : 1;
-        if (ap !== bp) return ap - bp;
-        return Number(b.disponivel) - Number(a.disponivel);
-      });
-      return sorted[0]
-        ? {
-            id: sorted[0].id,
-            localizacao_id: sorted[0].localizacao_id,
-            disponivel: Number(sorted[0].disponivel),
-          }
-        : null;
-    },
+/**
+ * Variante PINADA do roteamento (re-rota de "encaminhar"): avalia cobertura
+ * EXCLUSIVAMENTE no galpão destino escolhido pelo operador — nunca a rede toda.
+ *
+ * `galpoes=[destino]` + `preferenciais=[destino.id]` ⇒ geoPriority(destino)=0,
+ * então `rotearPedido` só pode devolver `propria` (destino cobre tudo) ou `oc`
+ * (não cobre). NUNCA `transferencia` — transferência implicaria escolher outro
+ * galpão = quebra do pino. (É o bug que isto mata: encaminhar re-roteava por
+ * geo-priority LIVRE via `rotearPedidoDoBanco` e podia mandar o pedido de volta
+ * pro galpão errado.)
+ */
+export async function rotearPedidoPinado(
+  galpaoPinadoId: string,
+  itens: ItemPedido[],
+): Promise<RotaResult> {
+  const sb = createServiceClient();
+
+  const { data: galpao } = await sb
+    .from("siso_galpoes")
+    .select("id, cidade, estado")
+    .eq("id", galpaoPinadoId)
+    .single();
+  if (!galpao) return { decisao: "oc", motivo: "sem_cobertura" };
+
+  return rotearPedido({
+    vendedora: { id: galpaoPinadoId, galpoes_preferenciais: [galpaoPinadoId] },
+    galpoes: [galpao as GalpaoLite],
+    itens,
+    buscarLinha: criarBuscarLinhaDoBanco(sb),
   });
 }

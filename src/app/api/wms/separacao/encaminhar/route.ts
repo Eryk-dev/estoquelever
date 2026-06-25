@@ -5,6 +5,15 @@ import { registrarEvento } from "@/lib/historico-service";
 import { resetarEstadoSeparacaoItens } from "@/lib/separacao/reset-state";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { cancelarTrocasPendentesDoPedido } from "@/lib/wms/trocas-equivalencia";
+import { rotearPedidoPinado, type ItemPedido } from "@/lib/wms/roteamento";
+import { criarReservasRotaAtomico } from "@/lib/webhook-processor-wms";
+import {
+  planejarTrocaRoteamento,
+  aplicarTrocasRoteamento,
+  type ItemRotearTroca,
+} from "@/lib/wms/trocas-roteamento";
+import { resolverProdutoEfetivoDoItem } from "@/lib/separacao/wms-mapping";
+import { kickWorker } from "@/lib/execution-worker";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "encaminhar";
@@ -109,7 +118,7 @@ export async function POST(request: NextRequest) {
 
 // ─── Core logic per pedido ──────────────────────────────────────────────────
 
-async function encaminharPedido(
+export async function encaminharPedido(
   supabase: ReturnType<typeof createServiceClient>,
   pedidoId: string,
   galpaoDestino: { id: string; nome: string },
@@ -119,7 +128,7 @@ async function encaminharPedido(
   const { data: pedido, error: pedidoErr } = await supabase
     .from("siso_pedidos")
     .select(
-      "id, status, status_separacao, decisao_final, empresa_origem_id, filial_origem, estoque_lancado, nota_fiscal_id, numero, separacao_galpao_id",
+      "id, status, status_separacao, decisao_final, empresa_origem_id, filial_origem, estoque_lancado, nota_fiscal_id, chave_acesso_nf, numero, separacao_galpao_id",
     )
     .eq("id", pedidoId)
     .single();
@@ -157,7 +166,7 @@ async function encaminharPedido(
   //
   // (estorna mov_saida_id, cancela realocs, reseta 10 campos do item, registra evento).
   // Mantém o reset de campos legados (estoque_saida_lancada, empresa_deducao_id, quantidade_bipada)
-  // que o helper não cobre (aplicado após o UPDATE).
+  // que o helper não cobre (aplicado após a re-rota).
   const { data: pedidoItens } = await supabase
     .from("siso_pedido_itens")
     .select("id")
@@ -171,43 +180,20 @@ async function encaminharPedido(
     motivo: "encaminhar",
   });
 
-  // B3. Reset pedido to pendente — só depois das S estornadas.
-  // NF fields (nota_fiscal_id, chave_acesso_nf, url_danfe) are intentionally
-  // NOT cleared — the NF belongs to the pedido regardless of destination.
-  // Shipping artifacts (agrupamento, expedicao, etiqueta ZPL/URL) are PRESERVED —
-  // they are tied to the NF, not the galpão. Only etiqueta_status is reset
-  // so the label can be reprinted at the new destination.
-  //
-  // sugestao is set dynamically so the galpão filter shows the order in the
-  // correct destination: "propria" if dest == filial_origem, else "transferencia".
-  const sugestao = galpaoDestino.nome === pedido.filial_origem ? "propria" : "transferencia";
-
-  const { error: updateErr } = await supabase
-    .from("siso_pedidos")
-    .update({
-      status: "pendente",
-      sugestao,
-      encaminhado_de: galpaoAtual.nome,
-      decisao_final: null,
-      operador_id: null,
-      operador_nome: null,
-      tipo_resolucao: null,
-      processado_em: null,
-      estoque_lancado: false,
-      status_separacao: null,
-      separacao_galpao_id: null,
-      separacao_operador_id: null,
-      separacao_iniciada_em: null,
-      separacao_concluida_em: null,
-      embalagem_concluida_em: null,
-      // etiqueta_status reset so label can be reprinted at new galpão
-      etiqueta_status: null,
-    })
-    .eq("id", pedidoId);
-
-  if (updateErr) {
-    throw new Error(`Falha ao resetar pedido: ${updateErr.message}`);
-  }
+  // B3. Re-rota PINADA no galpão destino — substitui o reset legado que zerava
+  // separacao_galpao_id e virava pendente/transferência (re-roteável depois por
+  // geo-priority LIVRE, o bug que isto mata: o pedido voltava pro galpão errado).
+  // A re-rota avalia cobertura SÓ no destino e decide propria | troca | oc
+  // ANCORADA nele, escrevendo status/galpão/decisão. NF preservada. Falha aqui
+  // re-lança → o catch do caller registra em falhas[] e o pedido NÃO migra
+  // (nenhuma escrita de status/galpão acontece antes da decisão da re-rota).
+  const resultadoRota = await reRotearPinadoNoDestino({
+    supabase,
+    pedido,
+    galpaoAtual,
+    galpaoDestino,
+    session,
+  });
 
   // Reset campos legados não cobertos pelo helper
   await supabase
@@ -230,6 +216,7 @@ async function encaminharPedido(
       origem: galpaoAtual.nome,
       destino: galpaoDestino.nome,
       decisao_anterior: pedido.decisao_final,
+      decisao_nova: resultadoRota.decisao,
     },
   });
 
@@ -238,9 +225,289 @@ async function encaminharPedido(
     origem: galpaoAtual.nome,
     destino: galpaoDestino.nome,
     decisaoAnterior: pedido.decisao_final,
+    decisaoNova: resultadoRota.decisao,
     operador: session.nome,
     nfPreservada: !!pedido.nota_fiscal_id,
-    sugestao,
+  });
+}
+
+// ─── Re-rota PINADA no galpão destino ───────────────────────────────────────
+
+interface PedidoReRota {
+  id: string;
+  empresa_origem_id: string | null;
+  nota_fiscal_id: string | null;
+  chave_acesso_nf: string | null;
+  decisao_final: string | null;
+  numero: string;
+}
+
+/**
+ * INVARIANTE CENTRAL: a re-rota é PINADA no galpão destino — avalia cobertura
+ * SÓ nele (via `rotearPedidoPinado`), nunca por geo-priority livre. As únicas
+ * decisões possíveis pro destino: `propria` (cobre), `troca` (equivalente no
+ * destino) ou `oc` (não cobre). Jamais `transferencia` (escolher outro galpão
+ * quebraria o pino).
+ *
+ * Espelha o intake do webhook (webhook-processor-wms §3b/7b/8) e a aprovação
+ * pós-troca (trocas-roteamento `aprovarPedidoPosTroca`), mas SEM troca remota
+ * (D2: o pino é só o destino) e ancorando todo status/galpão no destino:
+ *  - propria              → R reserva_pedido na loc + wms_aprovar_e_enfileirar.
+ *  - troca todos-auto     → vira propria (substituto reservado) + enfileira.
+ *  - troca c/ aprovação   → pendente + sugestao='troca_equivalente', galpão JÁ
+ *                           pinado no destino (R reserva_troca via aplicar...).
+ *  - sem cobertura/cross  → OC ancorada (decisao_final='oc', job lancar_estoque).
+ *
+ * Ordem (D5, "falha não move"): resolve itens → roteia (read-only) → cria
+ * reservas (atômico, rollback no erro) → SÓ ENTÃO escreve status/galpão. Se
+ * qualquer passo lança, nenhuma escrita de decisão aconteceu e o caller registra
+ * a falha (o pedido fica no estado pós-reset, sem migrar pro destino).
+ */
+async function reRotearPinadoNoDestino(args: {
+  supabase: ReturnType<typeof createServiceClient>;
+  pedido: PedidoReRota;
+  galpaoAtual: { id: string; nome: string };
+  galpaoDestino: { id: string; nome: string };
+  session: { id: string; nome: string };
+}): Promise<{ decisao: "propria" | "pendente_troca" | "oc" }> {
+  const { supabase, pedido, galpaoAtual, galpaoDestino, session } = args;
+  const empresaId = pedido.empresa_origem_id ?? "";
+
+  // Campos de artefato (operador de separação, etiqueta, timestamps) que NÃO são
+  // decisão de rota — limpos em todo branch. NF/agrupamento ficam (presos à NF).
+  // etiqueta_status=null força reimpressão no novo galpão. operador_id/nome NÃO
+  // entram aqui: o RPC os define no branch propria; os branches pendente/oc os
+  // zeram explicitamente.
+  const artefatos = {
+    processado_em: null,
+    estoque_lancado: false,
+    separacao_operador_id: null,
+    separacao_iniciada_em: null,
+    separacao_concluida_em: null,
+    embalagem_concluida_em: null,
+    etiqueta_status: null,
+    encaminhado_de: galpaoAtual.nome,
+  };
+
+  const statusSeparacaoComNf =
+    pedido.nota_fiscal_id && pedido.chave_acesso_nf
+      ? "aguardando_separacao"
+      : "aguardando_nf";
+
+  // 1. Itens → produto FÍSICO efetivo (substituto > tiny > SKU). Throw em item
+  //    não-resolvível ⇒ falha não move (consistente com intake do webhook).
+  const { data: itensRaw } = await supabase
+    .from("siso_pedido_itens")
+    .select("produto_id, sku, quantidade_pedida, produto_wms_substituto_id")
+    .eq("pedido_id", pedido.id);
+
+  const itensRotear: ItemPedido[] = [];
+  const itensTroca: ItemRotearTroca[] = [];
+  for (const it of itensRaw ?? []) {
+    const uuid = await resolverProdutoEfetivoDoItem(empresaId, it);
+    const qty = Number(it.quantidade_pedida ?? 0);
+    itensRotear.push({ produto_id: uuid, qty });
+    itensTroca.push({
+      tiny_id: String(it.produto_id),
+      sku: it.sku ?? "",
+      produto_uuid: uuid,
+      qty,
+    });
+  }
+
+  // 2. Roteia PINADO no destino (read-only): propria (cobre) ou oc (não cobre).
+  const rota = await rotearPedidoPinado(galpaoDestino.id, itensRotear);
+
+  // 3a. PRÓPRIA — destino cobre com o produto efetivo.
+  if (rota.decisao === "propria") {
+    await criarReservasRotaAtomico({
+      pedidoId: pedido.id,
+      rotas: rota.rotas.map((r) => ({
+        produto_id: r.produto_id,
+        galpao_id: r.galpao_id,
+        localizacao_id: r.localizacao_id,
+        qty: r.qty,
+      })),
+    });
+    await aprovarPropriaNoDestino({
+      supabase,
+      pedidoId: pedido.id,
+      empresaId: pedido.empresa_origem_id,
+      galpaoDestino,
+      session,
+      statusSeparacao: statusSeparacaoComNf,
+      artefatos,
+    });
+    return { decisao: "propria" };
+  }
+
+  // 3b. Destino não cobre com o original → tenta TROCA local no destino (sem
+  //     remota: D2). Plano fecha quando todo item descoberto tem equivalente que
+  //     cobre no destino.
+  const plano = await planejarTrocaRoteamento({
+    galpaoId: galpaoDestino.id,
+    itens: itensTroca,
+  });
+
+  if (plano) {
+    await aplicarTrocasRoteamento({
+      pedidoId: pedido.id,
+      galpaoId: galpaoDestino.id,
+      swaps: plano.swaps,
+      forcarPendente: false,
+    });
+    const autoSwaps = plano.swaps.filter((s) => s.auto);
+    const rotasTroca = [
+      ...plano.cobertosOriginal.map((c) => ({
+        produto_id: c.produto_uuid,
+        galpao_id: galpaoDestino.id,
+        localizacao_id: c.localizacao_id,
+        qty: c.qty,
+      })),
+      ...autoSwaps.map((s) => ({
+        produto_id: s.produto_substituto_id,
+        galpao_id: galpaoDestino.id,
+        localizacao_id: s.localizacao_id,
+        qty: s.qty,
+      })),
+    ];
+    if (rotasTroca.length > 0) {
+      await criarReservasRotaAtomico({ pedidoId: pedido.id, rotas: rotasTroca });
+    }
+
+    if (plano.todosAuto) {
+      // Todas as trocas são livres (par verificado, mesmo tier) → vira propria.
+      await aprovarPropriaNoDestino({
+        supabase,
+        pedidoId: pedido.id,
+        empresaId: pedido.empresa_origem_id,
+        galpaoDestino,
+        session,
+        statusSeparacao: statusSeparacaoComNf,
+        artefatos,
+      });
+      return { decisao: "propria" };
+    }
+
+    // Alguma troca exige aprovação humana → pendente, MAS já pinado no destino.
+    // aprovarPedidoPosTroca (rota /trocas) lê separacao_galpao_id → finaliza no
+    // destino sem re-rotear.
+    const { error } = await supabase
+      .from("siso_pedidos")
+      .update({
+        ...artefatos,
+        status: "pendente",
+        sugestao: "troca_equivalente",
+        sugestao_motivo:
+          "Equivalente em estoque no galpão destino — aguardando aprovação de troca",
+        decisao_final: null,
+        tipo_resolucao: null,
+        operador_id: null,
+        operador_nome: null,
+        separacao_galpao_id: galpaoDestino.id,
+        status_separacao: null,
+      })
+      .eq("id", pedido.id);
+    if (error) throw new Error(`re-rota troca pendente falhou: ${error.message}`);
+    return { decisao: "pendente_troca" };
+  }
+
+  // 3c. Sem cobertura nem equivalente no destino → OC ANCORADA no destino
+  //     (D2: nunca troca remota). Espelha autoEnfileiraOc do webhook.
+  const { error: ocErr } = await supabase
+    .from("siso_pedidos")
+    .update({
+      ...artefatos,
+      status: "executando",
+      sugestao: "oc",
+      sugestao_motivo: "Re-rota encaminhar — sem cobertura no destino, vai pra OC",
+      decisao_final: "oc",
+      tipo_resolucao: "auto",
+      operador_id: null,
+      operador_nome: null,
+      separacao_galpao_id: galpaoDestino.id,
+      // status_separacao=null: o worker (executarMarcadoresOnly) seta validacao_oc
+      // ancorado no separacao_galpao_id que acabamos de pinar no destino.
+      status_separacao: null,
+      marcadores: ["OC", galpaoDestino.nome, "LVR"],
+    })
+    .eq("id", pedido.id);
+  if (ocErr) throw new Error(`re-rota oc falhou: ${ocErr.message}`);
+
+  // Job lancar_estoque (decisao=oc) — dedup por (pedido, tipo, status vivo).
+  const { data: jobExistente } = await supabase
+    .from("siso_fila_execucao")
+    .select("id")
+    .eq("pedido_id", pedido.id)
+    .eq("tipo", "lancar_estoque")
+    .in("status", ["pendente", "executando"])
+    .maybeSingle();
+  if (!jobExistente) {
+    await supabase.from("siso_fila_execucao").insert({
+      pedido_id: pedido.id,
+      tipo: "lancar_estoque",
+      filial_execucao: galpaoDestino.nome,
+      empresa_id: pedido.empresa_origem_id,
+      decisao: "oc",
+    });
+  }
+  kickWorker().catch((err) => {
+    logger.error(LOG_SOURCE, "kickWorker falhou na re-rota OC", {
+      pedidoId: pedido.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  });
+  return { decisao: "oc" };
+}
+
+/**
+ * Aprova o pedido como PROPRIA no destino: transição de status + job
+ * lancar_estoque na MESMA tx (wms_aprovar_e_enfileirar, espelha
+ * aprovarPedidoPosTroca) + limpeza dos artefatos de separação (que o RPC não
+ * cobre) + kickWorker. As reservas R já devem ter sido criadas pelo caller.
+ */
+async function aprovarPropriaNoDestino(args: {
+  supabase: ReturnType<typeof createServiceClient>;
+  pedidoId: string;
+  empresaId: string | null;
+  galpaoDestino: { id: string; nome: string };
+  session: { id: string; nome: string };
+  statusSeparacao: "aguardando_separacao" | "aguardando_nf";
+  artefatos: Record<string, unknown>;
+}): Promise<void> {
+  const { supabase, pedidoId, empresaId, galpaoDestino, session, statusSeparacao, artefatos } =
+    args;
+
+  const { error } = await supabase.rpc("wms_aprovar_e_enfileirar", {
+    p_pedido_id: pedidoId,
+    p_decisao: "propria",
+    p_status_separacao: statusSeparacao,
+    p_empresa_id: empresaId,
+    p_filial_execucao: galpaoDestino.nome,
+    p_operador_id: session.id,
+    p_operador_nome: session.nome,
+    p_marcadores: [galpaoDestino.nome, "LVR"],
+    p_separacao_galpao_id: galpaoDestino.id,
+  });
+  if (error) throw new Error(`re-rota propria (aprovar/enfileirar) falhou: ${error.message}`);
+
+  // Limpa os artefatos de separação que o RPC não toca + sugestao/tipo_resolucao.
+  // Não mexe em status/galpão/decisão/operador/marcadores (o RPC já os definiu).
+  await supabase
+    .from("siso_pedidos")
+    .update({
+      ...artefatos,
+      sugestao: "propria",
+      sugestao_motivo: "Re-rota encaminhar — cobertura própria no destino",
+      tipo_resolucao: "auto",
+    })
+    .eq("id", pedidoId);
+
+  kickWorker().catch((err) => {
+    logger.error(LOG_SOURCE, "kickWorker falhou na re-rota propria", {
+      pedidoId,
+      err: err instanceof Error ? err.message : String(err),
+    });
   });
 }
 

@@ -7242,4 +7242,34 @@ erros:
       encaminhado pra CWB com empresa origem SP só aparece sob "Todos os galpões" ou SP,
       nunca no filtro CWB — a ação de OC acontece na tela Separação (galpão-scoped por
       separacao_galpao_id), que mostra certo. encaminhar perde o galpão de destino
-      (separacao_galpao_id=null) — candidato a fix futuro: ancorar no destino.
+      (separacao_galpao_id=null) — CORRIGIDO em ENCAMINHAR-ROTA-PINADA-01 (re-rota
+      pinada ancora o pedido no galpão destino).
+
+  - id: ENCAMINHAR-ROTA-PINADA-01
+    date: "2026-06-25"
+    source: src/app/api/wms/separacao/encaminhar/route.ts
+    category: business_logic
+    message: >
+      Encaminhar (forward) de pedido entre galpões descartava o destino escolhido
+      pelo operador: zerava separacao_galpao_id, virava pendente+sugestao=transferencia
+      e delegava re-aprovação humana que re-roteava por geo-priority LIVRE — podendo
+      re-rotear pro galpão errado (o mesmo de onde o operador quis tirar). Repro:
+      953008167 (nº 85043) encaminhado SP→CWB ficou órfão (item coberto em CWB sem
+      reserva/loc → não-bipável → forçado).
+    cause: >
+      O reset reusava o caminho de re-aprovação que chama rotearPedidoDoBanco
+      (carrega TODOS os galpões ativos + ordena por geoPriority). Sem pino no
+      destino, a cobertura era avaliada na rede inteira.
+    fix: >
+      Re-rota PINADA no destino: rotearPedidoPinado(galpaoDestinoId, itens) avalia
+      cobertura SÓ no galpão destino (ctx.galpoes=[destino], preferenciais=[destino]
+      -> geoPriority=0 -> decisão propria|oc, nunca transferencia). Cobre->propria+R na
+      loc (criarReservasRotaAtomico) + wms_aprovar_e_enfileirar(separacao_galpao_id=
+      destino). Não cobre mas cross no destino->planejar/aplicarTrocasRoteamento
+      (galpaoId=destino, forcarPendente=false). Sem cobertura nem cross->OC ancorada
+      no destino. NF preservada -> aguardando_separacao quando a reserva fecha.
+    files:
+      - src/lib/wms/roteamento.ts
+      - src/app/api/wms/separacao/encaminhar/route.ts
+      - test/integration/encaminhar-rota-pinada.test.ts
+    tags: [encaminhar, forward, roteamento, pino, geo-priority, troca-equivalencia, oc, reservas]

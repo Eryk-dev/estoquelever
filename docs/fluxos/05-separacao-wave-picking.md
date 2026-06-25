@@ -112,7 +112,7 @@ embalado             → embalagem concluída, pronto pra expedir
 | `validacao_oc` | `aguardando_separacao` | `POST /api/wms/separacao/validar-oc-item` (acao=encontrei) | todos OC resolvidos como "encontrei" |
 | `validacao_oc` | `aguardando_compra` | `POST /api/wms/separacao/validar-oc-item` (acao=esgotado) | todos confirmados esgotado, 100% OC |
 | qualquer | qualquer | `POST /api/wms/separacao/voltar-etapa` | admin only |
-| `aguardando_separacao`/`em_separacao` | `pendente` (volta no painel `/siso`) | `POST /api/wms/separacao/encaminhar` | reverte estoque, reseta itens |
+| `aguardando_separacao`/`em_separacao`/`pendente_realocacao` | re-rota PINADA no destino (`propria`/`oc` auto, ou `pendente` troca) | `POST /api/wms/separacao/encaminhar` | libera R, reseta itens, ancora no destino |
 | `separado` | `embalado` | `POST /api/wms/separacao/embalar` (módulo embalagem) | fluxo coberto em `06-embalagem-expedicao-etiquetas.md` |
 
 > O type interno do dashboard (`VisibleSeparacaoTab`, `page.tsx:23`) consolida `aguardando_separacao + validacao_oc` em uma única tab. A coluna `validacao_oc` existe pra distinguir, no card, "OC pendente validação física" (cor âmbar) vs "Pronto para separar".
@@ -821,36 +821,25 @@ POST /api/wms/separacao/desfazer-parcial { pedido_item_id }
    - Tenta `pedido.separacao_galpao_id` → busca em `siso_galpoes`
    - Fallback: última entrada em `siso_fila_execucao` → empresa → galpão
    - Último: `siso_galpoes WHERE nome = pedido.filial_origem`
-2. **Reverte estoque executado** (`reverseStockExecution`):
-   - Se `estoque_lancado = false`: nada a fazer
-   - Se `decisao_final = 'propria'`: `tinyApi.estornarEstoque(token, pedido.id)` na empresa de origem
-   - Se `decisao_final = 'transferencia'`: para cada item com `estoque_saida_lancada = true`, chama `movimentarEstoque(tipo='E', quantidade)` na empresa de dedução
-3. **Reset do pedido**:
-   ```ts
-   {
-     status: 'pendente',
-     sugestao: galpaoDestinoNome === filial_origem ? 'propria' : 'transferencia',
-     encaminhado_de: galpaoAtual.nome,
-     decisao_final: null,
-     operador_id: null, operador_nome: null,
-     tipo_resolucao: null, processado_em: null,
-     estoque_lancado: false,
-     status_separacao: null,
-     separacao_galpao_id: null,
-     separacao_operador_id: null,
-     separacao_iniciada_em: null,
-     separacao_concluida_em: null,
-     embalagem_concluida_em: null,
-     etiqueta_status: null,
-   }
-   ```
-   > **Preserva**: `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`, `agrupamento_expedicao_id`, `etiqueta_zpl`, `etiqueta_url` — esses pertencem ao pedido (NF), não ao galpão.
-4. **Reset de itens**: `separacao_marcado = false`, `quantidade_bipada = 0`, `bipado_completo = false`, `estoque_saida_lancada = false`, `empresa_deducao_id = null`
-5. **Histórico**: `evento = 'encaminhado'`, `detalhes: { origem, destino, decisao_anterior }`
+2. **Reverte reservas** (`reverseStockExecution`):
+   - Libera todas as R `reserva_pedido` vivas via `estornarReservaIndividual` (idempotente; `logError` LOUD em R não-liberada = reservado fantasma no galpão origem).
+   - `cancelarTrocasPendentesDoPedido` (libera R `reserva_troca`).
+   - **Sem Tiny**: estoque vive 100% no ledger WMS (estorno via Tiny removido 2026-05-28).
+3. **Reset de estado de separação** (`resetarEstadoSeparacaoItens`, `motivo:'encaminhar'`): estorna as S do pick, cancela realocs, reseta campos do item. **Erro aqui é FATAL** (re-lança → pedido intacto, não migra).
+4. **Re-rota PINADA no destino** (`reRotearPinadoNoDestino`, plano 2026-06-25 — substitui o reset legado que zerava `separacao_galpao_id` e virava `pendente`/`transferencia` re-roteável por geo-priority LIVRE, o bug que isto mata):
+   - `rotearPedidoPinado(galpaoDestinoId, itens)`: `galpoes=[destino]` + `preferenciais=[destino]` ⇒ `geoPriority=0` ⇒ decisão só `propria` | `oc`. **Nunca `transferencia`.** Itens via `resolverProdutoEfetivoDoItem` (substituto > tiny > SKU).
+   - **propria** (destino cobre): `criarReservasRotaAtomico` (R na loc) + `wms_aprovar_e_enfileirar` (`decisao='propria'`, `separacao_galpao_id=destino`, `status_separacao = NF? 'aguardando_separacao' : 'aguardando_nf'`, `marcadores=[destino,'LVR']`) + job `lancar_estoque`.
+   - **troca** (equivalente no destino, sem remota): `planejarTrocaRoteamento` + `aplicarTrocasRoteamento(forcarPendente:false)`. `todosAuto` → vira propria; senão → `pendente` + `sugestao='troca_equivalente'`, **`separacao_galpao_id` JÁ pinado no destino** + R `reserva_troca`.
+   - **oc** (sem cobertura nem cross): `decisao_final='oc'`, `separacao_galpao_id=destino`, `status='executando'`, `status_separacao=null` (worker → `validacao_oc` ancorado no destino), `marcadores=['OC',destino,'LVR']`, job `lancar_estoque decisao='oc'`.
+   - **Falha não move**: roteia (read-only) → reservas (rollback atômico) → SÓ ENTÃO escreve status/galpão. Lança em qualquer passo → `catch` registra em `falhas[]`, pedido não migra.
+   > **Campos limpos**: `etiqueta_status` (reimprimir), operador/timestamps de separação, `encaminhado_de=galpaoAtual.nome`.
+   > **Preserva**: `nota_fiscal_id`, `chave_acesso_nf`, `url_danfe`, `agrupamento_expedicao_id`, `etiqueta_zpl`, `etiqueta_url` — pertencem ao pedido (NF), não ao galpão.
+5. **Reset de itens**: `separacao_marcado = false`, `quantidade_bipada = 0`, `bipado_completo = false`, `estoque_saida_lancada = false`, `empresa_deducao_id = null`
+6. **Histórico**: `evento = 'encaminhado'`, `detalhes: { origem, destino, decisao_anterior, decisao_nova }`
 
-### Efeito no painel `/siso`
+### Efeito no painel
 
-O pedido aparece de volta na fila pendente do galpão destino com `sugestao = 'transferencia'` (ou `propria`). O badge "Enc. de {galpaoAtual}" é exibido no card.
+O pedido já fica **ancorado no galpão destino** (`separacao_galpao_id=destino`), não mais "pendente sem galpão". Caminho normal: `propria`/`oc` auto-aprovam (`status=executando`) e entram direto na fila do destino (Separação galpão-scoped); só `troca_equivalente` cai no painel `/wms/trocas` (já pinado). O badge "Enc. de {galpaoAtual}" é exibido no card.
 
 ---
 
@@ -1172,7 +1161,7 @@ stateDiagram-v2
     state Encaminhar <<choice>>
     aguardando_separacao --> Encaminhar: encaminhar
     em_separacao --> Encaminhar: encaminhar
-    Encaminhar --> [*]: pedido volta para painel /siso\ncomo pendente no novo galpão
+    Encaminhar --> [*]: re-rota PINADA no destino\n(propria/oc auto, ou pendente troca)
 
     state ProdutoEsgotado <<choice>>
     em_separacao --> ProdutoEsgotado: produto-esgotado
@@ -1259,17 +1248,19 @@ flowchart TD
 
     ResolveAtual --> SameDest{atual == destino?}
     SameDest -->|Sim| Falha
-    SameDest -->|Não| ReverseStock{estoque_lancado?}
+    SameDest -->|Não| Reverse[reverseStockExecution:<br/>libera R reserva_pedido<br/>cancela trocas pendentes]
 
-    ReverseStock -->|Não| ResetPedido
-    ReverseStock -->|Sim, propria| EstornarTiny[tinyApi.estornarEstoque]
-    ReverseStock -->|Sim, transferencia| MovimentarE[movimentarEstoque tipo=E<br/>por empresa_deducao]
+    Reverse --> ResetEstado[resetarEstadoSeparacaoItens:<br/>estorna S do pick — FATAL]
+    ResetEstado --> ReRota[reRotearPinadoNoDestino:<br/>rotearPedidoPinado destino]
+    ReRota -->|propria| Propria[criarReservasRotaAtomico +<br/>wms_aprovar_e_enfileirar<br/>separacao_galpao_id = destino]
+    ReRota -->|troca| Troca[planejar/aplicarTrocasRoteamento<br/>auto: propria · senão: pendente<br/>separacao_galpao_id = destino]
+    ReRota -->|oc| Oc[decisao_final = oc ancorada<br/>job lancar_estoque<br/>separacao_galpao_id = destino]
+    ReRota -->|erro| Falha
 
-    EstornarTiny --> ResetPedido
-    MovimentarE --> ResetPedido
-
-    ResetPedido[UPDATE siso_pedidos:<br/>status = pendente<br/>sugestao = propria/transferencia<br/>encaminhado_de = atual.nome<br/>nullify decisao + operador + status_separacao<br/>preserve NF + agrupamento + ZPL]
-    ResetPedido --> ResetItens[UPDATE siso_pedido_itens:<br/>separacao_marcado = false<br/>quantidade_bipada = 0<br/>estoque_saida_lancada = false<br/>empresa_deducao_id = null]
+    Propria --> ResetItens
+    Troca --> ResetItens
+    Oc --> ResetItens
+    ResetItens[UPDATE siso_pedido_itens:<br/>separacao_marcado = false<br/>quantidade_bipada = 0<br/>estoque_saida_lancada = false<br/>empresa_deducao_id = null]
     ResetItens --> Historico[registrarEvento encaminhado]
     Historico --> NextLoop{próximo pedido}
     Falha --> NextLoop
@@ -1326,8 +1317,8 @@ flowchart TD
 | Coluna | Escrita por |
 |---|---|
 | `status_separacao` | iniciar, concluir, concluir-oc, cancelar, encaminhar, voltar-etapa, validar-oc-item, produto-esgotado, forcar-pendente |
-| `decisao_final` | concluir-oc, encaminhar (null), validar-oc-item |
-| `separacao_galpao_id` | concluir-oc, encaminhar (null), produto-esgotado |
+| `decisao_final` | concluir-oc, encaminhar (propria/oc/null-troca), validar-oc-item |
+| `separacao_galpao_id` | concluir-oc, encaminhar (=destino), produto-esgotado |
 | `separacao_operador_id` | iniciar, voltar-etapa, *cancelar/produto-esgotado/encaminhar (null)* |
 | `separacao_iniciada_em` | iniciar, voltar-etapa |
 | `separacao_concluida_em` | concluir, concluir-oc, voltar-etapa |
@@ -1336,7 +1327,7 @@ flowchart TD
 | `etiqueta_status` | desfazer-bip (null via RPC), encaminhar (null), voltar-etapa (null via RPC) |
 | `chave_acesso_nf` | forcar-pendente (single + batch) |
 | `encaminhado_de` | encaminhar |
-| `status` | concluir-oc (`'executando'`), encaminhar (`'pendente'`) |
+| `status` | concluir-oc (`'executando'`), encaminhar (`'executando'` propria/oc · `'pendente'` troca) |
 | `sugestao` | encaminhar |
 | `estoque_lancado` | encaminhar (false) |
 
@@ -1403,7 +1394,6 @@ Eventos disparados via `registrarEvento`/`registrarEventos`:
 
 - Tiny `atualizarLocalizacaoProduto` — `localizacao` endpoint
 - Tiny `obterNotaFiscal` — `forcar-pendente`
-- Tiny `estornarEstoque` / `movimentarEstoque` — `encaminhar`
 
 ### 24.3 Por canal Realtime
 
@@ -1452,7 +1442,7 @@ Essas existem mas não são montadas. Cuidado ao "limpar" pra não quebrar teste
 
 ### 25.7 `encaminhar` preserva NF e ZPL
 
-Após encaminhamento, o pedido volta pro painel `/siso` com NF + agrupamento + ZPL preservados. Operador no novo galpão NÃO precisa esperar nova NF. **Mas** `etiqueta_status` é zerado, então a etiqueta precisa ser reimpressa no destino.
+Após encaminhamento, o pedido é re-roteado PINADO no destino (propria/oc auto-aprovam; só troca exige painel) com NF + agrupamento + ZPL preservados. Operador no novo galpão NÃO precisa esperar nova NF. **Mas** `etiqueta_status` é zerado, então a etiqueta precisa ser reimpressa no destino.
 
 ### 25.8 Auto-criação de OC
 

@@ -92,8 +92,13 @@ Essas vendas são invisíveis pro app hoje.
 3. **Pick físico já (A2).** O operador separa a peça de verdade na pista futura (estoque
    baixa). Peça vai pra uma **caixa ao lado da bancada de etiqueta/fechamento, organizada
    por dia**. Cancelou → estorna e volta pra prateleira (re-trabalho, aceito).
-4. **OC automático já (B2).** Buffered sem estoque → dispara a compra na hora (lead time
-   máximo). Comprou e a venda cancelou → peça fica em estoque pra próxima venda (aceito).
+4. **OC já (B2) — sem NF.** Buffered sem estoque → roteia OC e o worker
+   (`executarMarcadoresOnly`, ramo `futura`) marca os itens faltantes pra compra
+   (`compra_status='oc_pendente'`, pedido em `validacao_oc`) **sem gerar NF** — a
+   compra segue pelo módulo de compras (esgotado → `aguardando_compra`), igual ao
+   OC normal, só que a NF é segurada até a promoção. Quem cobre 100% sem falta vira
+   futura propria (`aguardando_separacao`, sem NF). Comprou e a venda cancelou →
+   peça fica em estoque pra próxima venda (aceito).
 5. **Marcador no Tiny.** Marca o pedido no Tiny com marcador específico (ex.: `SEP FUTURA`)
    pra visibilidade — **marcador ≠ NF**.
 8. **Identificação pro operador** (como saber futura×normal e separada×não):

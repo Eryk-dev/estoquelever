@@ -7164,3 +7164,41 @@ erros:
       gated em label-released + decisao!=null (correto por design). pg_cron do
       /api/wms/tiny/polling-futura segue pendente de agendar (roda só por dispatch) — é o
       que destrava a promoção automática.
+
+  - id: sep-futura-nf-cedo-propria-transferencia
+    date: "2026-06-25"
+    source: lib.execution-worker
+    category: business_logic
+    message: >
+      Pedido de separação futura (separacao_futura=true, etiqueta ML buffered) gerava
+      NF cedo nos caminhos propria e transferência do worker, violando a regra dura
+      "sem NF enquanto buffered" (NF que cancela = imposto sobre dinheiro não recebido,
+      irreversível). Disparado quando uma futura com troca-equivalente pendente é
+      aprovada: aprovarPedidoPosTroca/reRotearPedidoPosTroca seta decisao_final e
+      enfileira lancar_estoque (propria/transferência) com separacao_futura AINDA true.
+    cause: >
+      O gate de futura só existia em executarMarcadoresOnly (decisao=oc) — lia
+      separacao_futura e pulava a geração de NF. executarSaidaPropria e
+      executarSaidaTransferencia NÃO liam a flag: chamavam gerarNotaFiscalPedido +
+      cutover incondicionalmente. Complementar ao sep-futura-promo-nunca-dispara (aquele
+      era a futura presa SEM promover; este é a futura emitindo NF cedo).
+    fix: >
+      Gate no worker (choke point único de lancar_estoque, espelhando o OC): incluir
+      separacao_futura no select de ambas as funções; se futura===true, inserir
+      marcadores, setar status_separacao='aguardando_separacao' e RETORNAR sem NF/cutover
+      (mantém separacao_futura=true; a R segura o estoque; a peça é picada na pista
+      futura e a NF nasce na promoção via promoverPedidoFutura, que flipa a flag pra
+      false ANTES de re-enfileirar → aí o mesmo gate deixa a NF passar). Decisão: NÃO
+      remover o enqueue na origem (trocas-roteamento) — o job não é órfão (ainda insere
+      marcadores + transiciona status) e o gate no worker cobre TODOS os callers de uma
+      vez (troca, re-rota, painel, promoção). TDD: src/lib/execution-worker.test.ts.
+    files:
+      - src/lib/execution-worker.ts
+      - src/lib/execution-worker.test.ts
+    tags: [separacao-futura, nf, worker, propria, transferencia, troca-equivalencia, gate, buffered, oversold]
+    notes: >
+      O gate roda DEPOIS do early-return de estoque_lancado (idempotência preservada) e
+      ANTES do sleep(500)+NF. Relacionado: sep-futura-promo-nunca-dispara (a outra
+      metade do encadeamento). Doc decisão "B2" em docs/plano-separacao-futura.md
+      corrigida no mesmo commit (worker marca esgotado/validacao_oc, não "dispara compra
+      na hora").

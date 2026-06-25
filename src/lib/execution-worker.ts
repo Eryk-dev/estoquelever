@@ -469,12 +469,12 @@ async function gerarNotaFiscalPedido(
 
 // ─── propria: marcadores → gerar NF → lançar estoque da NF ──────────────────
 
-async function executarSaidaPropria(job: FilaJob): Promise<void> {
+export async function executarSaidaPropria(job: FilaJob): Promise<void> {
   const supabase = createServiceClient();
 
   const { data: pedido } = await supabase
     .from("siso_pedidos")
-    .select("estoque_lancado, marcadores, nota_fiscal_id")
+    .select("estoque_lancado, marcadores, nota_fiscal_id, separacao_futura")
     .eq("id", job.pedido_id)
     .single();
 
@@ -485,11 +485,30 @@ async function executarSaidaPropria(job: FilaJob): Promise<void> {
     return;
   }
 
+  const futura = pedido?.separacao_futura === true;
+
   const { token } = await getValidTokenByEmpresa(job.empresa_id);
   const marcadores: string[] = pedido?.marcadores ?? [];
 
   // 1. Insert marcadores on Tiny order
   await inserirMarcadoresTiny(job.empresa_id, token, job.pedido_id, marcadores);
+
+  // SEPARAÇÃO FUTURA: NÃO gera NF nem dispara cutover/baixa (etiqueta buffered;
+  // NF cedo + alto cancelamento = imposto sobre dinheiro não recebido). A peça é
+  // picada na pista futura (R→L+S no pick) e a NF nasce só na promoção, quando a
+  // etiqueta libera (promoverPedidoFutura flipa separacao_futura=false e
+  // re-enfileira). Mantém separacao_futura=true; só entra na fila de separação.
+  if (futura) {
+    await supabase
+      .from("siso_pedidos")
+      .update({ status_separacao: "aguardando_separacao" })
+      .eq("id", job.pedido_id);
+    logger.info("worker", "Pedido FUTURA propria — sem NF (etiqueta buffered); aguardando promoção", {
+      pedidoId: job.pedido_id,
+    });
+    return;
+  }
+
   await sleep(500);
 
   // 2. Generate NF
@@ -812,12 +831,12 @@ async function executarMarcadoresOnly(job: FilaJob): Promise<void> {
  * Gets the deduction order from grupo-resolver. For each item,
  * traverses empresas in tier order until the full quantity is covered.
  */
-async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
+export async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   const supabase = createServiceClient();
 
   const { data: pedido, error: pedidoErr } = await supabase
     .from("siso_pedidos")
-    .select("numero, empresa_origem_id, marcadores, nota_fiscal_id")
+    .select("numero, empresa_origem_id, marcadores, nota_fiscal_id, separacao_futura")
     .eq("id", job.pedido_id)
     .single();
 
@@ -830,11 +849,27 @@ async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
     throw new Error(`Empresa origem ${pedido.empresa_origem_id} não encontrada`);
   }
 
+  const futura = pedido.separacao_futura === true;
+
   // ── Marcadores + NF on origin empresa ──────────────────────────────────────
   const { token: origemToken } = await getValidTokenByEmpresa(pedido.empresa_origem_id);
   const marcadores: string[] = pedido.marcadores ?? [];
 
   await inserirMarcadoresTiny(pedido.empresa_origem_id, origemToken, job.pedido_id, marcadores);
+
+  // SEPARAÇÃO FUTURA: idêntico à propria — sem NF/cutover enquanto buffered. A NF
+  // nasce na promoção (separacao_futura=false + re-enfileira). Mantém a flag.
+  if (futura) {
+    await supabase
+      .from("siso_pedidos")
+      .update({ status_separacao: "aguardando_separacao" })
+      .eq("id", job.pedido_id);
+    logger.info("worker", "Pedido FUTURA transferência — sem NF (etiqueta buffered); aguardando promoção", {
+      pedidoId: job.pedido_id,
+    });
+    return;
+  }
+
   await sleep(500);
 
   const notaIdOrigem = await gerarNotaFiscalPedido(

@@ -478,14 +478,22 @@ export async function executarSaidaPropria(job: FilaJob): Promise<void> {
     .eq("id", job.pedido_id)
     .single();
 
-  if (pedido?.estoque_lancado) {
+  const futura = pedido?.separacao_futura === true;
+  const estoqueJaLancado = pedido?.estoque_lancado === true;
+
+  // Idempotência do LANÇAMENTO de estoque (R→L+S). ⚠ Separação futura INVERTE a
+  // ordem normal: o pick baixa o estoque (cutover, S sem NF) ANTES da NF existir
+  // — a NF só nasce na promoção. Logo `estoque_lancado=true` NÃO implica "NF já
+  // emitida". Só é retry idempotente de verdade se já houver NF, OU se o pedido
+  // ainda for futura (NF só na promoção). O caso futura PROMOVIDA (futura=false +
+  // estoque lançado + sem NF) cai adiante e emite só a camada fiscal — antes o
+  // guard curto-circuitava aqui e a NF/agrupamento nunca saíam (bug 2026-06-25).
+  if (estoqueJaLancado && (futura || pedido?.nota_fiscal_id)) {
     logger.info("worker", "Estoque já lançado (retry idempotente)", {
       pedidoId: job.pedido_id,
     });
     return;
   }
-
-  const futura = pedido?.separacao_futura === true;
 
   const { token } = await getValidTokenByEmpresa(job.empresa_id);
   const marcadores: string[] = pedido?.marcadores ?? [];
@@ -530,6 +538,17 @@ export async function executarSaidaPropria(job: FilaJob): Promise<void> {
   // Save chave_acesso_nf if available, but do NOT transition status here.
   // A baixa no ledger WMS é disparada pelo cutover abaixo.
   await enriquecerDadosNf(supabase, job.pedido_id, job.empresa_id, notaId);
+
+  // Futura PROMOVIDA cujo estoque já saiu no pick: o cutover abaixo seria no-op
+  // ("ja_lancado") e o job pos_nf — que normalmente cria o agrupamento — não
+  // rodaria de novo. Cria o agrupamento direto; a camada fiscal está completa.
+  if (estoqueJaLancado) {
+    await criarAgrupamentoFase1(job.pedido_id);
+    logger.info("worker", "NF + agrupamento emitidos p/ futura promovida (estoque já no pick)", {
+      pedidoId: job.pedido_id,
+    });
+    return;
+  }
 
   // Cutover R→L+S acontece quando o pedido atinge status forward
   // (separado/embalado/expedido) COM NF emitida. Aqui a NF acabou de ser
@@ -836,7 +855,7 @@ export async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
 
   const { data: pedido, error: pedidoErr } = await supabase
     .from("siso_pedidos")
-    .select("numero, empresa_origem_id, marcadores, nota_fiscal_id, separacao_futura")
+    .select("numero, empresa_origem_id, marcadores, nota_fiscal_id, separacao_futura, estoque_lancado")
     .eq("id", job.pedido_id)
     .single();
 
@@ -885,6 +904,16 @@ export async function executarSaidaTransferencia(job: FilaJob): Promise<void> {
   // job lancar_estoque_pos_nf → executarEstoquePosNfWms (cutover R→L+S).
   if (notaIdOrigem) {
     await enriquecerDadosNf(supabase, job.pedido_id, pedido.empresa_origem_id, notaIdOrigem);
+  }
+
+  // Futura PROMOVIDA (estoque já saiu no pick): o cutover seria no-op
+  // ("ja_lancado") e o pos_nf não recriaria o agrupamento — cria direto.
+  if (pedido.estoque_lancado) {
+    await criarAgrupamentoFase1(job.pedido_id);
+    logger.info("worker", "NF + agrupamento emitidos p/ futura promovida (transferência, estoque já no pick)", {
+      pedidoId: job.pedido_id,
+    });
+    return;
   }
 
   // Check if NF is already authorized (re-approval after encaminhar, or fast SEFAZ).

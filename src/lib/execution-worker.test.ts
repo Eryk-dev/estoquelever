@@ -85,8 +85,9 @@ vi.mock("./tiny-queue", () => ({
 vi.mock("./empresa-lookup", () => ({
   getEmpresaById: vi.fn(async () => state.empresa),
 }));
+const criarAgrupamentoMock = vi.fn(async () => undefined);
 vi.mock("./agrupamento-service", () => ({
-  criarAgrupamentoFase1: vi.fn(async () => undefined),
+  criarAgrupamentoFase1: (...a: unknown[]) => criarAgrupamentoMock(...(a as [])),
 }));
 vi.mock("./sku-fornecedor", () => ({
   getFornecedorBySku: vi.fn(() => ({ fornecedor: "F" })),
@@ -167,7 +168,7 @@ describe("executarSaidaPropria — gate separação futura", () => {
     expect(dispararCutoverMock).toHaveBeenCalledTimes(1);
   });
 
-  it("idempotente: estoque já lançado → early-return (não gera NF nem mexe na futura)", async () => {
+  it("idempotente: estoque lançado + AINDA futura → early-return (NF só na promoção)", async () => {
     state.pedido = { estoque_lancado: true, marcadores: [], nota_fiscal_id: null, separacao_futura: true };
 
     await executarSaidaPropria(jobPropria);
@@ -175,6 +176,36 @@ describe("executarSaidaPropria — gate separação futura", () => {
     expect(gerarNotaFiscalMock).not.toHaveBeenCalled();
     expect(criarMarcadoresMock).not.toHaveBeenCalled();
     expect(rec.pedidoUpdates).toHaveLength(0);
+  });
+
+  it("idempotente: estoque lançado + NF já emitida → early-return", async () => {
+    state.pedido = { estoque_lancado: true, marcadores: [], nota_fiscal_id: 12345, separacao_futura: false };
+
+    await executarSaidaPropria(jobPropria);
+
+    expect(gerarNotaFiscalMock).not.toHaveBeenCalled();
+    expect(criarAgrupamentoMock).not.toHaveBeenCalled();
+    expect(rec.pedidoUpdates).toHaveLength(0);
+  });
+
+  it("futura PROMOVIDA: estoque já no pick + futura=false + sem NF → gera NF + agrupamento, SEM cutover", async () => {
+    // Bug 2026-06-25: a futura picada baixou o estoque no pick (S sem NF,
+    // estoque_lancado=true). A promoção flipou futura=false e re-enfileirou
+    // lancar_estoque. O guard antigo `if (estoque_lancado) return` matava a NF →
+    // sem NF, sem agrupamento. Agora emite só a camada fiscal (cutover é no-op).
+    state.pedido = {
+      estoque_lancado: true,
+      marcadores: ["CWB", "LVR"],
+      nota_fiscal_id: null,
+      separacao_futura: false,
+    };
+
+    await executarSaidaPropria(jobPropria);
+
+    expect(gerarNotaFiscalMock).toHaveBeenCalledTimes(1);
+    expect(criarAgrupamentoMock).toHaveBeenCalledTimes(1);
+    // estoque já saiu no pick → NÃO re-dispara cutover (seria no-op "ja_lancado")
+    expect(dispararCutoverMock).not.toHaveBeenCalled();
   });
 });
 
@@ -213,6 +244,22 @@ describe("executarSaidaTransferencia — gate separação futura", () => {
     await executarSaidaTransferencia(jobTransf);
 
     expect(gerarNotaFiscalMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("futura PROMOVIDA: estoque já no pick + futura=false + sem NF → gera NF + agrupamento", async () => {
+    state.pedido = {
+      numero: "51500",
+      empresa_origem_id: "emp-1",
+      marcadores: ["SP", "LVR"],
+      nota_fiscal_id: null,
+      separacao_futura: false,
+      estoque_lancado: true,
+    };
+
+    await executarSaidaTransferencia(jobTransf);
+
+    expect(gerarNotaFiscalMock).toHaveBeenCalledTimes(1);
+    expect(criarAgrupamentoMock).toHaveBeenCalledTimes(1);
   });
 });
 

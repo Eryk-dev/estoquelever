@@ -4188,3 +4188,105 @@
 @media (max-width: 860px) {
   .wms-encaix-grid { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   MOBILE (≤720px) — Separação, Separação Futura e Inventário
+   ------------------------------------------------------------
+   Bloco no FIM do arquivo de propósito: empata em especificidade
+   com os outros @media (max-width:720px) e vence na cascata.
+   Só afeta CELULAR (≤720px). Tablet/desktop (>720px) ficam intactos.
+   Onde há estilo inline no JSX (que vence classe), usamos !important
+   restrito a este bloco mobile.
+   ============================================================ */
+@media (max-width: 720px) {
+  /* ── Toolbar de filtros (fila de separação / futura / listas) ──
+     Vira coluna; busca, selects e multiselects ocupam a largura toda. */
+  .wms-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .wms-toolbar > * { width: 100%; max-width: 100%; }
+  .wms-toolbar .wms-select {
+    width: 100% !important;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  /* ── Tabelas densas: compacta padding/fonte. O scroll-x horizontal
+     já existe em .wms-tbl, então colunas extras viram pan, não corte. ── */
+  .wms-tbl thead th { padding: 6px 8px; font-size: 10.5px; }
+  .wms-tbl tbody td { padding: 6px 8px; font-size: 12px; }
+
+  /* ── KPIs: 2 por linha cabem confortável em 360px ── */
+  .wms-kpis { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .wms-kpi { padding: 10px 12px; }
+  .wms-kpi-val { font-size: 19px; }
+
+  /* ── Formulário grid 3-col → 1-col ── */
+  .wms-row-3 { grid-template-columns: 1fr; gap: 10px; align-items: stretch; }
+
+  /* ── Modais: largura total sem estourar a tela; rodapé empilha ──
+     (.wms-md recebe width inline em alguns modais, ex. width={720}) ── */
+  .wms-md-overlay { padding: 12px; }
+  .wms-md { width: 100% !important; max-width: 100%; }
+  .wms-md-ft { flex-wrap: wrap; }
+  .wms-md-ft .wms-btn { flex: 1 1 auto; }
+
+  /* ── Checklist / Embalagem — linha do item.
+     O JSX define gridTemplateColumns inline (5 col) que vence o @media
+     anterior → !important. Esconde a foto, mantém check + conteúdo + qty
+     na 1ª linha e joga o bloco de ação pra 2ª linha (toque maior). ── */
+  .wms-hand-item {
+    grid-template-columns: 24px minmax(0, 1fr) auto !important;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .wms-hand-item .wms-thumb { display: none; }
+  .wms-hand-item > *:last-child { grid-column: 1 / -1; justify-content: flex-start; }
+  .wms-hand-item-loc { font-size: 13px; padding: 1px 8px; }
+
+  /* ── Conferência (kiosk em tela cheia) ── */
+  .wms-conf-kiosk { padding: 12px 14px 16px; gap: 10px; }
+  .wms-conf-kiosk-top { flex-direction: column; align-items: stretch; gap: 8px; }
+  .wms-conf-kiosk-modos { width: 100%; }
+  .wms-conf-kiosk-modos .wms-btn { flex: 1; }
+  .wms-conf-kiosk-hd { gap: 8px; }
+  .wms-conf-kiosk-wait-d { max-width: 100%; font-size: 13px; }
+  .wms-emb-grid { gap: 10px; }
+  .wms-conf-banner { padding: 12px 14px; font-size: 15px; }
+  .wms-conf-launch-btn { padding: 16px; }
+  .wms-conf-launch-t { font-size: 20px; }
+
+  /* ── Lightbox de produto ── */
+  .wms-lb-overlay { padding: 48px 12px 12px; }
+  .wms-lb-nav { width: 40px; height: 40px; font-size: 18px; }
+
+  /* ── Keypad numérico (modal "Encontrei" no pick de OC) ── */
+  .wms-keypad button { height: 50px; font-size: 18px; }
+
+  /* ── Encaixotamento (o grid já é 1-col via @media 860px; refina o resto) ── */
+  .wms-encaix-result-hd { flex-wrap: wrap; gap: 8px; }
+  .wms-encaix-undo { margin-left: 0; }
+  .wms-encaix-boxes { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .wms-encaix-box-qty { font-size: 38px; }
+  .wms-encaix-painel-hd { flex-wrap: wrap; }
+  .wms-encaix-painel-tot { margin-left: 0; }
+  .wms-encaix-hist-cod { min-width: 64px; }
+
+  /* ── Inventário · contagem (tela usada no celular pelo operador) ── */
+  .wms-inv-bigbtn {
+    min-width: 0 !important;
+    width: 100%;
+    padding: 18px 12px !important;
+  }
+  .wms-inv-addsku { flex-wrap: wrap; gap: 8px !important; }
+  .wms-inv-addsku > input[type="text"] { flex: 1 1 100%; }
+  .wms-inv-resumo-kpis { gap: 8px; }
+  .wms-thumb-md { width: 40px; height: 40px; }
+
+  /* ── Inventário · modais de criação de sessão (grids inline → !important) ── */
+  .wms-inv-tipo-grid { grid-template-columns: 1fr !important; }
+  .wms-inv-loc-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)) !important;
+  }
+
+  /* ── Inventário · divergências — descrição do produto não estoura ── */
+  .wms-td-desc { max-width: 140px; }
+}

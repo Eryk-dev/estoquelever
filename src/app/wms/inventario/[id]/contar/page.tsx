@@ -637,7 +637,7 @@ function StandbyView({
       </div>
       <button
         type="button"
-        className="wms-btn wms-btn-primary"
+        className="wms-btn wms-btn-primary wms-inv-bigbtn"
         disabled={pending}
         onClick={onPegarProxima}
         style={{
@@ -918,6 +918,7 @@ function ResumoFinal({
         O pool de localizações foi esvaziado. Obrigado pela contagem.
       </div>
       <div
+        className="wms-inv-resumo-kpis"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
@@ -1041,6 +1042,7 @@ function AddSkuManual({
 
   return (
     <div
+      className="wms-inv-addsku"
       style={{
         display: "flex",
         gap: 6,

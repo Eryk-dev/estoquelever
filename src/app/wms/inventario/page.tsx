@@ -348,6 +348,7 @@ function NovaSessaoModal({
     >
       {/* Seleção do tipo de criação */}
       <div
+        className="wms-inv-tipo-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
@@ -701,6 +702,7 @@ function NovaSessaoModal({
                   </div>
                 </div>
                 <div
+                  className="wms-inv-loc-grid"
                   style={{
                     border: "1px solid var(--wms-c-border)",
                     borderRadius: "var(--wms-r-3)",

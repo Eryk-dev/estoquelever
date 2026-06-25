@@ -400,6 +400,34 @@ export async function handleNfWebhook(
     empresaId,
   });
 
+  // Step 5a.0 — Promoção da pista FUTURA. A NF autorizada chegando = a etiqueta
+  // liberou (o ML só ACEITA a NF em invoice_pending, que é a liberação). Um
+  // pedido futura fica em `aguardando_separacao` (não `aguardando_nf`), então a
+  // transição do Step 5b é no-op pra ele e a flag `separacao_futura` nunca cairia
+  // → ficaria invisível na fila normal pra sempre (bug SEP-FUTURA-PROMO). Aqui
+  // flipamos a flag e enfileiramos lancar_estoque (igual o fluxo normal — gera
+  // agrupamento; pra OC, segue a compra). A NF já existe → o worker a reusa
+  // (gerarNotaFiscalPedido é idempotente), não re-emite.
+  const { data: pedidoFutura } = await supabase
+    .from("siso_pedidos")
+    .select("separacao_futura, decisao_final, empresa_origem_id")
+    .eq("id", pedidoId)
+    .maybeSingle();
+  if (pedidoFutura?.separacao_futura === true) {
+    const { promoverPedidoFutura } = await import("./webhook-processor-wms");
+    await promoverPedidoFutura(supabase, {
+      pedidoId,
+      decisaoFinal: (pedidoFutura.decisao_final as string | null) ?? null,
+      galpaoNome: null,
+      empresaId: (pedidoFutura.empresa_origem_id as string | null) ?? empresaId,
+    });
+    logger.info("nf-webhook", "pedido futura PROMOVIDO ao receber NF (etiqueta liberou)", {
+      pedidoId,
+      idNotaFiscalTiny: String(idNotaFiscalTiny),
+      empresaId,
+    });
+  }
+
   // Step 5a.1 — Attempt fase-1 agrupamento when both NF fields are now persisted.
   // Webhook real: fire-and-forget (não bloquear a resposta pro Tiny).
   // Polling (aguardarFase1): AWAIT — fire-and-forget dentro da rota do cron

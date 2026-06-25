@@ -7049,3 +7049,118 @@ erros:
       - src/app/wms/separacao/checklist/page.tsx
       - src/app/wms/separacao/checklist/__tests__/parcial-redirecionado.test.tsx
     tags: [separacao, parcial, loc-zerou, realocacao, checklist, marcado, picking, ui]
+
+  - id: cancelar-venda-direta-nao-sai-da-separacao
+    date: "2026-06-24"
+    source: app.wms.vendas.cancelar
+    category: business_logic
+    message: >
+      Cancelar uma venda direta (venda manual) que estava em separação não tirava
+      o pedido da fila de separação — ele continuava aparecendo lá mesmo com
+      status='cancelado'.
+    cause: >
+      A RPC wms_cancelar_venda_atomico marcava só status='cancelado' e deixava
+      status_separacao intacto (ex. 'aguardando_separacao'). A fila de separação
+      (/api/wms/separacao) filtra por status_separacao IS NOT NULL, então o pedido
+      cancelado seguia listado. O caminho separacao_parcial do wrapper
+      cancelarVendaManual já zerava status_separacao no JS; os caminhos
+      aguardando_separacao/aguardando_compra + baixa_direta passam pela RPC, que
+      não zerava.
+    fix: >
+      RPC passa a fazer UPDATE ... SET status='cancelado', status_separacao=NULL.
+      Espelha o que o caminho JS já fazia; no-op pra baixa_direta (já era NULL).
+    files:
+      - supabase/migrations/20260624e_fix_cancelar_venda_status_separacao.sql
+      - test/integration/cancelar-venda-rpc.test.ts
+    tags: [vendas, cancelamento, venda-direta, separacao, status-separacao, rpc]
+
+  - id: encaixotamento-left-timestamptz-e-cache-postgrest
+    date: "2026-06-24"
+    source: app.wms.encaixotamento
+    category: database
+    message: >
+      Bipar SKU na tela de encaixotamento retornava internal_error (500). Dois bugs
+      sobrepostos: (1) supabase.rpc falhava com PGRST202 logo após criar a RPC via SQL
+      cru; (2) ao casar um item real, a RPC estourava 'function left(timestamp with time
+      zone, integer) does not exist'.
+    cause: >
+      (1) PostgREST cacheia o schema — função criada via Management API (SQL cru) não
+      entra no cache até reload, então o supabase-js não a achava. (2) siso_pedidos.prazo_envio
+      é timestamptz (UTC), não text (a doc database-schema.md dizia text). A RPC usava
+      left(prazo_envio, 10) pra extrair o dia; só estourava quando o loop rodava (havia
+      item casando), por isso o smoke test com código inexistente passou. Bônus: o overview
+      usava String(prazo).slice(0,10) sobre o UTC → dia errado na virada de meia-noite
+      (mostrava 01/07 em vez de 30/06).
+    fix: >
+      (1) NOTIFY pgrst, 'reload schema' após aplicar a migration. (2) Trocar left(...) por
+      to_char((prazo_envio AT TIME ZONE 'America/Sao_Paulo')::date,'YYYY-MM-DD') na RPC e
+      new Date(prazo).toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}) no overview.
+      Corrigida a doc do schema (timestamptz).
+    files:
+      - supabase/migrations/20260624d_encaixotamento.sql
+      - src/app/api/wms/encaixotamento/route.ts
+      - docs/database-schema.md
+    tags: [encaixotamento, separacao-futura, postgrest, pgrst202, schema-cache, timestamptz, prazo_envio, timezone, rpc]
+    notes: >
+      Aprendizado: ao criar RPC nova via Management API, sempre reload do cache PostgREST.
+      E conferir tipo real da coluna no banco (information_schema), não confiar na doc.
+
+  - id: sep-futura-promo-nunca-dispara
+    date: "2026-06-25"
+    source: lib.separacao-futura
+    category: business_logic
+    message: >
+      Pedidos de separação futura de envio-hoje (25/06) ficaram presos na pista
+      futura (separacao_futura=true, aguardando_separacao) mesmo com a etiqueta já
+      liberada no ML (substatus invoice_pending/ready_to_ship) e, em 5 deles, NF já
+      emitida — invisíveis na fila de separação NORMAL. 13 pedidos: 5 prontos
+      (propria/transf, com reserva+NF) + 8 OC sem estoque.
+    cause: >
+      A promoção (futura → fluxo normal) só rodava dentro de processWebhookWms quando
+      o pedido REAPARECIA pelo webhook NORMAL (separacaoFutura=false). Nada fazia isso
+      de forma confiável: (1) o webhook de PEDIDO do Tiny não dispara no flip
+      buffered→ready; (2) o nf-webhook-handler gravava chave_acesso_nf mas NÃO flipava
+      separacao_futura (Step 5b só transiciona aguardando_nf, e futura está em
+      aguardando_separacao → no-op); (3) o poll normal (tiny-polling.ts) não conhece
+      futura; (4) o poll de intake (tiny-polling-futura.ts) faz dedup e PULA quem já
+      está em siso_pedidos → nunca re-checa o substatus de uma futura já carregada;
+      (5) e mesmo se um gatilho disparasse, OC futura era bloqueada pela guarda
+      jobComprometido (early-return em QUALQUER lancar_estoque, sem filtro de status):
+      OC futura enfileira esse job no intake → nunca alcançava o ramo de promoção.
+      Net: pedido entrava na pista futura e nunca saía.
+    fix: >
+      Princípio (Eryk): promover = COPIAR o fluxo NORMAL pra cada decisao. Ao liberar
+      a etiqueta, propria/transferência geram NF→embalagem e OC gera NF + segue a
+      compra (validacao_oc) — IGUAL ao fluxo normal, inclusive OC sem estoque (NF
+      normal; estoque é fulfillment, não trava). Sem caso especial por estoque.
+      (Remediação) promover-futura-2026-06-25.ts flipou separacao_futura=false nos 13;
+      remediar-oc-futura-nf-2026-06-25.ts enfileirou lancar_estoque(oc) nos 8 OC → NF +
+      agrupamento + validacao_oc.
+      (Lógica) helper único promoverPedidoFutura(sb,{...}) — flip flag + SEMPRE enfileira
+      lancar_estoque (worker idempotente: gerarNotaFiscalPedido reusa NF existente, não
+      dobra). Classificador puro classificarPromocaoFutura(substatus,status):
+      buffered/cancelado→manter, null→ignorar, liberado→promover. 3 gatilhos no helper:
+      (A) nf-webhook-handler Step 5a.0 promove ao receber NF; (B) sweep
+      promoverFuturasLiberadas (route polling-futura) re-checa ML substatus e promove
+      liberadas; (C) guarda jobComprometido relaxada p/ futura.
+      GUARDAS (review adversarial): só promove com decisao_final != null (troca pendente
+      NUNCA promove — geraria NF de venda não-aprovada); webhook só promove com
+      confirmação POSITIVA do substatus lido no intake (falha ML não promove buffered);
+      classificador barra shipment cancelled/not_delivered; sweep ordena por prazo_envio
+      (anti-starvation do cap por run).
+    files:
+      - src/lib/wms/separacao-futura.ts
+      - src/lib/webhook-processor-wms.ts
+      - src/lib/nf-webhook-handler.ts
+      - src/lib/tiny-polling-futura.ts
+      - src/app/api/wms/tiny/polling-futura/route.ts
+      - scripts/wms/promover-futura-2026-06-25.ts
+      - scripts/wms/remediar-oc-futura-nf-2026-06-25.ts
+    tags: [separacao-futura, promocao, ml-substatus, nf-webhook, polling, oversold, jobcomprometido, oc, troca-equivalencia]
+    notes: >
+      Pré-condição da promoção = etiqueta liberou (substatus != buffered, shipment ativo)
+      E pedido comprometido (decisao_final != null). OC sem estoque promove e gera NF
+      normal (vai pra validacao_oc, segue a compra). O sweep gera NFs reais via cron —
+      gated em label-released + decisao!=null (correto por design). pg_cron do
+      /api/wms/tiny/polling-futura segue pendente de agendar (roda só por dispatch) — é o
+      que destrava a promoção automática.

@@ -25,7 +25,11 @@ import { getEmpresaByCnpj, type EmpresaInfo } from "./empresa-lookup";
 import { processWebhook } from "./webhook-processor";
 import { getActiveMlConnectionForEmpresa, getMlShipmentStatus } from "./ml-api";
 import { isMercadoLivre } from "./domain-helpers";
-import { SUBSTATUS_FUTURA } from "./wms/separacao-futura";
+import {
+  SUBSTATUS_FUTURA,
+  classificarPromocaoFutura,
+} from "./wms/separacao-futura";
+import { promoverPedidoFutura } from "./webhook-processor-wms";
 import { chunk, listarTodasPaginas } from "./tiny-polling";
 import { logger } from "./logger";
 
@@ -263,5 +267,164 @@ export async function pollTinyFutura(): Promise<FuturaPollResult> {
     empresas: result.empresas.length,
     futura_processados: result.empresas.reduce((s, e) => s + e.futura_processados, 0),
   });
+  return result;
+}
+
+// ─── Promoção: re-checa o substatus das futura JÁ carregadas ────────────────
+//
+// O intake (acima) só CARREGA buffered novos e faz dedup de quem já está em
+// siso_pedidos — ou seja, NUNCA re-olha uma futura que já existe. A promoção
+// (futura → fluxo normal) dependia 100% do webhook do Tiny disparar no flip
+// buffered→ready, o que não acontece de forma confiável → a futura ficava presa
+// pra sempre (bug SEP-FUTURA-PROMO: 25/06, 13 pedidos de envio-hoje invisíveis).
+//
+// Este sweep fecha o buraco: varre as futura vivas, lê o substatus ATUAL no ML
+// e promove TODAS as que a etiqueta liberou (substatus != buffered) — IGUAL ao
+// fluxo normal: gera NF + agrupamento, inclusive OC. Pro OC, a promoção enfileira
+// lancar_estoque (decisao=oc) → o worker emite a NF + agrupamento e segue a
+// compra; estoque é problema de fulfillment, não trava a promoção.
+
+const PROMO_ML_CHECK_MAX = 120; // por run; o resto drena nos runs seguintes
+
+export interface FuturaPromoResumo {
+  candidatos: number;
+  ml_consultados: number;
+  promovidos: number;
+  mantidos_buffered: number;
+  ignorados: number;
+  truncado: boolean;
+  erros: string[];
+}
+
+export interface FuturaPromoResult {
+  total: FuturaPromoResumo;
+  executado_em: string;
+}
+
+export async function promoverFuturasLiberadas(): Promise<FuturaPromoResult> {
+  const sb = createServiceClient();
+  const resumo: FuturaPromoResumo = {
+    candidatos: 0,
+    ml_consultados: 0,
+    promovidos: 0,
+    mantidos_buffered: 0,
+    ignorados: 0,
+    truncado: false,
+    erros: [],
+  };
+  const result: FuturaPromoResult = {
+    total: resumo,
+    executado_em: new Date().toISOString(),
+  };
+
+  // 1. Pedidos ainda na pista futura (exclui cancelados), só ML com order id.
+  // decisao_final IS NOT NULL: pula futura aguardando aprovação humana (troca
+  //   pendente) — promover geraria NF de venda não-aprovada.
+  // order by prazo_envio: ship-soonest 1º — com o cap por run, evita starvar os
+  //   urgentes atrás de buffered de data distante.
+  const { data: futuras, error } = await sb
+    .from("siso_pedidos")
+    .select(
+      "id, decisao_final, empresa_origem_id, separacao_galpao_id, id_pedido_ecommerce, nome_ecommerce, prazo_envio",
+    )
+    .eq("separacao_futura", true)
+    .neq("status", "cancelado")
+    .not("decisao_final", "is", null)
+    .order("prazo_envio", { ascending: true, nullsFirst: false });
+  if (error) throw new Error(`Falha listando futuras: ${error.message}`);
+
+  type FuturaRow = {
+    id: string;
+    decisao_final: string | null;
+    empresa_origem_id: string | null;
+    separacao_galpao_id: string | null;
+    id_pedido_ecommerce: string | null;
+    nome_ecommerce: string | null;
+    prazo_envio: string | null;
+  };
+  const candidatos = ((futuras ?? []) as FuturaRow[]).filter(
+    (p) => isMercadoLivre(p.nome_ecommerce) && p.id_pedido_ecommerce && p.empresa_origem_id,
+  );
+  resumo.candidatos = candidatos.length;
+  if (candidatos.length === 0) return result;
+
+  // 2. Nome do galpão (filial_execucao do job de lancar_estoque quando promove).
+  const { data: galpoes } = await sb.from("siso_galpoes").select("id, nome");
+  const nomeGalpao = new Map(
+    ((galpoes ?? []) as Array<{ id: string; nome: string }>).map((g) => [g.id, g.nome]),
+  );
+
+  // 3. Agrupa por empresa (1 connId ML por empresa) e re-checa o substatus.
+  const porEmpresa = new Map<string, FuturaRow[]>();
+  for (const p of candidatos) {
+    const arr = porEmpresa.get(p.empresa_origem_id!) ?? [];
+    arr.push(p);
+    porEmpresa.set(p.empresa_origem_id!, arr);
+  }
+
+  let consultados = 0;
+  for (const [empresaId, peds] of porEmpresa) {
+    if (resumo.truncado) break;
+    let connId: string | null = null;
+    try {
+      connId = await getActiveMlConnectionForEmpresa(empresaId);
+    } catch (e) {
+      resumo.erros.push(`empresa ${empresaId}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (!connId) continue; // empresa sem ML → não dá pra classificar
+    const conn = connId;
+
+    await runWithEmpresa(empresaId, async () => {
+      for (const p of peds) {
+        if (consultados >= PROMO_ML_CHECK_MAX) {
+          resumo.truncado = true;
+          break;
+        }
+        consultados++;
+        let substatus: string | null = null;
+        let mlStatus: string | null = null;
+        try {
+          const st = await getMlShipmentStatus(conn, String(p.id_pedido_ecommerce));
+          substatus = st?.substatus ?? null;
+          mlStatus = st?.status ?? null;
+        } catch (e) {
+          resumo.erros.push(`pedido ${p.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+
+        // Etiqueta liberou (substatus != buffered, shipment ativo) → PROMOVE,
+        // igual fluxo normal (gera NF + agrupamento, inclusive OC — estoque é
+        // fulfillment, não trava). Shipment cancelado/buffered/sem leitura → não.
+        const acao = classificarPromocaoFutura(substatus, mlStatus);
+
+        if (acao === "promover") {
+          try {
+            await promoverPedidoFutura(sb, {
+              pedidoId: p.id,
+              decisaoFinal: p.decisao_final,
+              galpaoNome: p.separacao_galpao_id ? nomeGalpao.get(p.separacao_galpao_id) ?? null : null,
+              empresaId,
+            });
+            resumo.promovidos++;
+          } catch (e) {
+            resumo.erros.push(`promover ${p.id}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        } else if (acao === "manter") {
+          resumo.mantidos_buffered++;
+        } else {
+          resumo.ignorados++;
+        }
+      }
+    });
+  }
+
+  resumo.ml_consultados = consultados;
+  if (resumo.truncado) {
+    logger.warn(LOG_SOURCE, "cap de promoção ML atingido — restante drena no próximo run", {
+      consultados,
+      candidatos: resumo.candidatos,
+    });
+  }
+  logger.info(LOG_SOURCE, "Promoção de futuras concluída", { ...resumo });
   return result;
 }

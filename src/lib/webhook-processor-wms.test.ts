@@ -25,6 +25,7 @@ const state = {
         status_separacao?: string | null;
         decisao_final?: string | null;
         empresa_origem_id?: string | null;
+        chave_acesso_nf?: string | null;
       }
     | null,
   vendedorPrev: null as { vendedor_id: string | null; vendedor_nome: string | null } | null,
@@ -156,7 +157,7 @@ vi.mock("./sku-fornecedor", () => ({
 }));
 const ensureProdutoFromTinyMock = vi.fn(async () => "uuid-new");
 vi.mock("./wms/sync-tiny", () => ({
-  ensureProdutoFromTiny: (...args: unknown[]) => ensureProdutoFromTinyMock(...args),
+  ensureProdutoFromTiny: (...args: unknown[]) => ensureProdutoFromTinyMock(...(args as [])),
 }));
 
 import { processWebhookWms } from "./webhook-processor-wms";
@@ -200,7 +201,17 @@ beforeEach(() => {
   state.sysUser = null;
   state.job = null;
   state.jobExistentePendente = null;
+  // clearAllMocks não reseta mockResolvedValue — re-arma os defaults do ML.
+  mlConnMock.mockResolvedValue(null);
+  mlStatusMock.mockResolvedValue(null);
 });
+
+// Etiqueta liberou no ML (substatus != buffered, shipment ativo): arma a
+// confirmação POSITIVA que a 4b-promoção exige pra promover via webhook.
+function mockEtiquetaLiberada() {
+  mlConnMock.mockResolvedValue("conn-1");
+  mlStatusMock.mockResolvedValue({ shipmentId: 1, status: "ready_to_ship", substatus: "ready_to_print" });
+}
 
 describe("processWebhookWms — idempotência de re-entrega (regressão #51426)", () => {
   it("pula reprocesso quando já existe job lancar_estoque (não regride status nem duplica job)", async () => {
@@ -425,6 +436,7 @@ describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", (
     };
     state.job = null;
     state.jobExistentePendente = null;
+    mockEtiquetaLiberada();
 
     const res = await processWebhookWms(input()); // sem separacaoFutura
 
@@ -452,5 +464,118 @@ describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", (
 
     expect(res.status).toBe("duplicado");
     expect(rec.jobInserts).toHaveLength(0);
+  });
+
+  it("OC futura com job 'concluido' (do intake) + webhook normal → PROMOVE (guard jobComprometido relaxada p/ futura)", async () => {
+    // BUG SEP-FUTURA-PROMO: OC futura ENFILEIRA lancar_estoque no intake (fica
+    // 'concluido'). A guarda jobComprometido (sem filtro de status) fazia
+    // early-return "duplicado" ANTES do ramo de promoção → OC futura NUNCA
+    // promovia. A guarda agora ignora futura (a flag = "ainda não comprometido").
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: "aguardando_separacao",
+      decisao_final: "oc",
+      empresa_origem_id: "emp-1",
+      chave_acesso_nf: null, // sem NF ainda → promoção gera a NF
+    };
+    state.job = { id: "job-oc-concluido" }; // jobComprometido seria truthy
+    state.jobExistentePendente = null; // nenhum pendente/executando agora
+    mockEtiquetaLiberada();
+
+    const res = await processWebhookWms(input()); // webhook normal (promoção)
+
+    expect(res.status).toBe("promovido"); // NÃO "duplicado"
+    expect(rec.jobInserts).toHaveLength(1); // gera NF (gerarNf=true)
+    expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "oc" });
+    expect(rec.webhookUpdates[0]).toMatchObject({ status: "concluido" });
+  });
+
+  it("futura COM NF já emitida → PROMOVE e ENFILEIRA lancar_estoque (worker reusa NF, não dobra)", async () => {
+    // Caso dos 5 de 25/06: a NF foi emitida fora do app; o webhook de NF gravou
+    // chave_acesso_nf mas não promoveu. A promoção SEMPRE enfileira lancar_estoque
+    // (igual fluxo normal — gera agrupamento); o worker gerarNotaFiscalPedido
+    // reusa a NF existente (idempotente), não re-emite.
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: "aguardando_separacao",
+      decisao_final: "propria",
+      empresa_origem_id: "emp-1",
+      chave_acesso_nf: "35260656959528000147550010000023391465171737",
+    };
+    state.job = null;
+    state.jobExistentePendente = null;
+    mockEtiquetaLiberada();
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("promovido");
+    expect(rec.jobInserts).toHaveLength(1); // enfileira; worker reusa a NF
+    expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "propria" });
+    expect(rec.webhookUpdates[0]).toMatchObject({ status: "concluido" });
+  });
+
+  it("OC futura PROMOVE → enfileira lancar_estoque decisao=oc (worker emite NF + agrupamento, igual normal)", async () => {
+    // Correção 25/06: OC futura NÃO é caso especial — ao liberar a etiqueta gera
+    // NF + agrupamento como qualquer pedido (executarMarcadoresOnly com !futura).
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: "aguardando_separacao",
+      decisao_final: "oc",
+      empresa_origem_id: "emp-1",
+    };
+    state.job = null;
+    state.jobExistentePendente = null;
+    mockEtiquetaLiberada();
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("promovido");
+    expect(rec.jobInserts).toHaveLength(1);
+    expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "oc" });
+  });
+
+  it("futura SEM confirmação ML (substatus null / falha transitória) → NÃO promove", async () => {
+    // Webhook normal chega mas o ML não confirma release (mlConn=null por default).
+    // Não promove (poderia estar buffered) — fica como está; o sweep promove depois.
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: "separado",
+      decisao_final: "propria",
+      empresa_origem_id: "emp-1",
+    };
+    state.job = null;
+    state.jobExistentePendente = null;
+    // SEM mockEtiquetaLiberada() → substatusIntake=null
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("duplicado"); // não promove sem confirmação
+    expect(rec.jobInserts).toHaveLength(0);
+    expect(rec.pedidoUpserts).toHaveLength(0); // não reprocessa/regride
+  });
+
+  it("futura TROCA PENDENTE (decisao_final=null) + etiqueta liberou → NÃO promove (não gera NF de venda não-aprovada)", async () => {
+    // Achado crítico do review: uma futura com troca equivalente pendente fica
+    // status='pendente', decisao_final=null. Mesmo com a etiqueta liberada, NÃO
+    // promove — a aprovação da troca é que seta a decisão + aprova o pedido.
+    state.existente = {
+      estoque_lancado: false,
+      separacao_futura: true,
+      status_separacao: null,
+      decisao_final: null, // troca pendente
+      empresa_origem_id: "emp-1",
+    };
+    state.job = null;
+    state.jobExistentePendente = null;
+    mockEtiquetaLiberada(); // etiqueta liberou, mas decisao_final=null bloqueia
+
+    const res = await processWebhookWms(input());
+
+    expect(res.status).toBe("duplicado"); // NÃO promovido
+    expect(rec.jobInserts).toHaveLength(0); // NÃO enfileira lancar_estoque (sem NF)
   });
 });

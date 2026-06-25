@@ -21,9 +21,28 @@
 **Correção da spec:** `substatus` NÃO vem do `/sla` (só status/expected_date) — vive no objeto shipment (`GET /shipments/{id}`). Fase 0 é fn nova, não extensão do SLA.
 
 **Pendente (operacional, não-código):**
-- Agendar pg_cron pro `/api/wms/tiny/polling-futura` (~30min) — ML-heavy; mirror do `wms-worker-kick`. Não auto-agendado.
-- Confirmar em campo: `situacao` exata do Tiny pra abertos (usei `0`); se o webhook do Tiny dispara no flip buffered→ready (senão promoção roda no poll).
+- Agendar pg_cron pro `/api/wms/tiny/polling-futura` (~30min) — ML-heavy; mirror do `wms-worker-kick`. Não auto-agendado. **Agora faz intake + PROMOÇÃO** (ver fix abaixo) — agendar é o que destrava a promoção automática.
+- ~~Confirmar em campo: se o webhook do Tiny dispara no flip buffered→ready (senão promoção roda no poll).~~ **Confirmado que NÃO dispara de forma confiável** (incidente 25/06) — a promoção NÃO depende mais do webhook (ver fix abaixo).
 - E2E (`scenarios`/`test:integration`) não rodados aqui (truncam staging + exigem `ALLOW_STAGING_WIPE`).
+
+### 🔧 Fix da promoção (2026-06-25) — `erros-conhecidos.yaml#sep-futura-promo-nunca-dispara`
+
+**Sintoma:** 13 pedidos de envio-hoje presos na pista futura (etiqueta já liberada no ML, 5 com NF emitida) — invisíveis na separação NORMAL. A promoção (futura→normal) só rodava se o pedido reaparecesse pelo webhook normal, o que nada fazia de forma confiável (webhook do Tiny não dispara no flip; o nf-handler gravava a NF mas não flipava a flag; o poll de intake faz dedup e nunca re-checa futura já carregada; e OC futura ainda era bloqueada pela guarda `jobComprometido`).
+
+**Princípio (Eryk):** promover = **copiar o fluxo NORMAL** pra cada `decisao_final`. Ao liberar a etiqueta, `propria`/`transferência` geram NF→embalagem e **`OC` gera NF + segue a compra** (`validacao_oc`) — igual ao fluxo normal, **inclusive OC sem estoque** (NF normal; estoque é problema de fulfillment, não trava a promoção). Sem caso especial por estoque.
+
+**Correção (3 gatilhos convergindo num helper único `promoverPedidoFutura`):**
+1. **NF webhook** (`nf-webhook-handler` Step 5a.0) — a NF autorizada chegando = etiqueta liberou (ML só aceita NF em `invoice_pending`). Promove (flip flag + enfileira `lancar_estoque`; o worker reusa a NF — `gerarNotaFiscalPedido` é idempotente).
+2. **Sweep** (`promoverFuturasLiberadas`, na route `polling-futura`) — re-checa o ML substatus das futura vivas e promove as liberadas. Decisão pura em `classificarPromocaoFutura(substatus, status)`: `buffered`/shipment cancelado→`manter` · sem leitura→`ignorar` · liberado→`promover`. O `promoverPedidoFutura` **sempre enfileira `lancar_estoque`** (decisao do pedido) → o worker faz o fluxo normal (NF + agrupamento; OC segue a compra).
+3. **Guarda `jobComprometido` relaxada p/ futura** (`webhook-processor-wms`) — a flag futura = "ainda não comprometido"; só `estoque_lancado` bloqueia. Sem isso, OC futura (que enfileira `lancar_estoque` no intake) nunca alcançava o ramo de promoção.
+
+**Guardas de segurança (review adversarial):**
+- **Troca pendente nunca promove** — só promove com `decisao_final != null`. Uma futura com troca equivalente pendente (`sugestao='troca_equivalente'`, `status='pendente'`, `decisao_final=null`) geraria NF de venda **não-aprovada**; a aprovação da troca é que seta a decisão + aprova o pedido. Guarda em `promoverPedidoFutura` + filtro no sweep (`.not("decisao_final","is",null)`) + ramo inline.
+- **Confirmação positiva no webhook** — o ramo inline só promove se o substatus lido no intake confirma release (`classificarPromocaoFutura(substatus,status)==='promover'`); falha transitória do ML (substatus null) NÃO promove um pedido ainda buffered (o sweep promove depois com leitura fresca).
+- **Shipment cancelado** — `status` cancelled/not_delivered → `manter` (não vira NF de venda cancelada).
+- **Anti-starvation** — o sweep ordena por `prazo_envio` (ship-soonest 1º), pra o cap por run não starvar os urgentes.
+
+**Remediação do incidente:** `promover-futura-2026-06-25.ts` flipou os 13; `remediar-oc-futura-nf-2026-06-25.ts` enfileirou `lancar_estoque(oc)` nos 8 OC → NF + agrupamento + `validacao_oc` (fluxo normal de OC).
 
 ---
 

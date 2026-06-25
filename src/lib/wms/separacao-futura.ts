@@ -21,6 +21,39 @@ export const TAG_FUTURA = "FUTURA";
 /** substatus do shipment ML que marca "etiqueta segurada p/ data futura". */
 export const SUBSTATUS_FUTURA = "buffered";
 
+/** status do shipment ML em que NÃO se promove (venda morta — não gera NF). */
+const STATUS_NAO_PROMOVE = new Set(["cancelled", "not_delivered"]);
+
+/**
+ * Ação a tomar sobre um pedido na pista futura, dado o `status`/`substatus`
+ * ATUAIS da etiqueta no ML. Pura (testável).
+ *
+ * - `manter`   — etiqueta ainda segurada (`buffered`) OU shipment cancelado/morto
+ *                (`status` cancelled/not_delivered): NÃO promove. Segura uma NF de
+ *                venda cancelada (o cancelamento é tratado pelo fluxo de cancel).
+ * - `ignorar`  — sem leitura de substatus (ML off / shipment não encontrado):
+ *                não decide nesse run.
+ * - `promover` — etiqueta LIBEROU (substatus != buffered, shipment ativo): vira
+ *                fluxo NORMAL e segue a decisao do pedido IGUAL ao fluxo normal
+ *                (propria/transferência geram NF→embalagem; OC gera NF + segue a
+ *                compra — validacao_oc). Sem casos especiais por estoque.
+ *
+ * ⚠ Só decide "se a etiqueta liberou". NÃO decide "se o pedido está comprometido"
+ *   (decisao_final != null) — isso é checado no chamador (uma troca pendente,
+ *   decisao_final=null, NUNCA promove, senão geraria NF de venda não-aprovada).
+ */
+export type AcaoFutura = "manter" | "ignorar" | "promover";
+
+export function classificarPromocaoFutura(
+  substatus: string | null | undefined,
+  status?: string | null | undefined,
+): AcaoFutura {
+  if (status != null && STATUS_NAO_PROMOVE.has(status)) return "manter";
+  if (substatus == null) return "ignorar";
+  if (substatus === SUBSTATUS_FUTURA) return "manter";
+  return "promover";
+}
+
 const BUFFER_DIAS = 14;
 const FALLBACK_HORAS = 90 * 24;
 

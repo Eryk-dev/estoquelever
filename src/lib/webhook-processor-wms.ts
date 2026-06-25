@@ -39,6 +39,7 @@ import {
   TAG_FUTURA,
   SUBSTATUS_FUTURA,
   ttlHorasReservaFutura,
+  classificarPromocaoFutura,
 } from "./wms/separacao-futura";
 import { preemptarFuturasParaCobertura } from "./wms/preempcao-futura";
 import { ensureProdutoFromTiny } from "./wms/sync-tiny";
@@ -511,6 +512,98 @@ export async function criarReservasRotaAtomico(args: {
   return { reservasCriadas: criadas.length };
 }
 
+// ─── Promoção de futura (etiqueta liberou) ─────────────────────────────────
+
+/**
+ * Promove um pedido da pista futura pro fluxo normal: flipa
+ * `separacao_futura=false` e enfileira `lancar_estoque` (decisao do pedido) —
+ * IGUAL ao fluxo normal. O worker então gera NF + agrupamento pra TODOS,
+ * inclusive OC (executarMarcadoresOnly emite a NF + agrupamento e segue a compra
+ * quando `!futura`). MANTÉM o `status_separacao` atual (separado cai em
+ * embalagem; aguardando_separacao cai na fila de separação).
+ *
+ * Sempre enfileira (não precisa de gate "já tem NF"): o worker é idempotente —
+ * `gerarNotaFiscalPedido` reusa a NF existente (não re-emite) e o cutover é
+ * idempotente (estorno_de). Pula só se já houver job `lancar_estoque`
+ * pendente/executando (evita corrida de duplo job).
+ *
+ * Único ponto de promoção: usado pelo ramo inline (webhook normal reentrante),
+ * pelo handler de NF e pelo sweep de polling-futura.
+ */
+export async function promoverPedidoFutura(
+  sb: ReturnType<typeof createServiceClient>,
+  params: {
+    pedidoId: string;
+    decisaoFinal: string | null;
+    galpaoNome: string | null;
+    empresaId: string | null;
+  },
+): Promise<{ enfileirouLancamento: boolean }> {
+  const { pedidoId, decisaoFinal, galpaoNome, empresaId } = params;
+
+  // GUARDA: pedido SEM decisão (decisao_final=null) NÃO é uma venda comprometida
+  // — é uma futura aguardando aprovação humana (troca equivalente, sugestao=
+  // 'troca_equivalente', status='pendente'). Promover geraria NF de venda não
+  // aprovada (a aprovação da troca é que seta decisao_final + aprova o pedido).
+  // Não flipa a flag, não enfileira nada.
+  if (decisaoFinal == null) {
+    logger.warn("processor.wms", "promoção de futura ignorada — pedido sem decisão (troca pendente?)", {
+      pedidoId,
+    });
+    return { enfileirouLancamento: false };
+  }
+
+  const decisao =
+    decisaoFinal === "transferencia"
+      ? "transferencia"
+      : decisaoFinal === "oc"
+        ? "oc"
+        : "propria";
+
+  await sb
+    .from("siso_pedidos")
+    .update({ separacao_futura: false })
+    .eq("id", pedidoId);
+
+  let enfileirou = false;
+  const { data: jobExistente } = await sb
+    .from("siso_fila_execucao")
+    .select("id")
+    .eq("pedido_id", pedidoId)
+    .eq("tipo", "lancar_estoque")
+    .in("status", ["pendente", "executando"])
+    .maybeSingle();
+  if (!jobExistente) {
+    await sb.from("siso_fila_execucao").insert({
+      pedido_id: pedidoId,
+      tipo: "lancar_estoque",
+      filial_execucao: galpaoNome,
+      empresa_id: empresaId,
+      decisao,
+    });
+    enfileirou = true;
+    kickWorker().catch((err) => {
+      logger.error("processor.wms", "kickWorker falhou (promoção futura)", {
+        pedidoId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
+  registrarEvento({
+    pedidoId,
+    evento: "auto_aprovado",
+    detalhes: { decisao, via: "wms", promocao_futura: true },
+  }).catch(() => {});
+
+  logger.info("processor.wms", "futura PROMOVIDA (etiqueta liberou)", {
+    pedidoId,
+    decisao,
+    enfileirouLancamento: enfileirou,
+  });
+  return { enfileirouLancamento: enfileirou };
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<{
@@ -530,11 +623,18 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //    fluxo normal e geraria NF cedo. Vale pra webhook E poll (idempotente: o
   //    poll já manda true → pula a chamada ML). Falha na consulta degrada pro
   //    fluxo normal (não bloqueia o intake).
+  // substatus/status ML lidos no intake — reusados na PROMOÇÃO (4b) pra exigir
+  // confirmação POSITIVA de que a etiqueta liberou (não promover por ausência de
+  // flag: uma falha transitória do ML promoveria um pedido ainda buffered).
+  let substatusIntake: string | null = null;
+  let statusIntakeMl: string | null = null;
   if (!separacaoFutura && isMercadoLivre(pedido.nomeEcommerce) && pedido.idPedidoEcommerce) {
     try {
       const connId = await getActiveMlConnectionForEmpresa(empresaOrigemId);
       if (connId) {
         const st = await getMlShipmentStatus(connId, pedido.idPedidoEcommerce);
+        substatusIntake = st?.substatus ?? null;
+        statusIntakeMl = st?.status ?? null;
         if (st?.substatus === SUBSTATUS_FUTURA) {
           separacaoFutura = true;
           logger.info("processor.wms", "pedido classificado como FUTURA via ML substatus", {
@@ -751,7 +851,16 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     .limit(1)
     .maybeSingle();
 
-  if (existente?.estoque_lancado === true || jobComprometido) {
+  // ⚠ Futura é exceção à guarda de `jobComprometido`: OC futura ENFILEIRA um
+  //   `lancar_estoque` (decisao='oc') no intake (validacao_oc, sem NF). Esse job
+  //   fica `concluido` e dispararia o early-return aqui ANTES do ramo de promoção
+  //   (4b-promoção) → OC futura nunca promoveria pelo webhook. A flag futura
+  //   sinaliza "ainda não comprometido de verdade" (NF só nasce na promoção), então
+  //   só a guarda de estoque_lancado vale pra ela.
+  const comprometidoBloqueia =
+    existente?.estoque_lancado === true ||
+    (!!jobComprometido && existente?.separacao_futura !== true);
+  if (comprometidoBloqueia) {
     logger.info("processor.wms", "pedido já comprometido — skip idempotente (re-entrega de webhook)", {
       pedidoId: pedido.id,
       motivo: existente?.estoque_lancado === true ? "estoque_lancado" : "job_lancar_estoque_existe",
@@ -794,64 +903,50 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   //   webhook NORMAL (separacaoFutura=false). PROMOVE — sem passar pelo upsert
   //   ingênuo abaixo (que regrediria status_separacao e zeraria o pick já feito).
   //   Flipa a flag, MANTÉM o status_separacao atual (separado/aguardando_separacao)
-  //   e enfileira lancar_estoque conforme a decisao_final → AGORA gera NF +
-  //   agrupamento (sai a etiqueta). A reserva já existe; o cutover/pos-NF é
-  //   idempotente (estorno_de) → não duplica S. Se já estava `separado`, o pedido
-  //   cai direto na fila de embalagem (não na de separação). A tag FUTURA fica no
-  //   card pro embalador saber que a peça está na caixa do dia.
+  //   e enfileira lancar_estoque conforme a decisao_final → segue o fluxo NORMAL
+  //   (gera NF + agrupamento; OC segue a compra). A reserva já existe; o
+  //   cutover/pos-NF é idempotente (estorno_de) → não duplica S.
+  //
+  //   GUARDAS (ver erros-conhecidos SEP-FUTURA-PROMO):
+  //   (a) só promove com CONFIRMAÇÃO POSITIVA de release lida do ML neste intake
+  //       (classificarPromocaoFutura(substatus,status)==='promover') — uma falha
+  //       transitória do ML (substatus null) NÃO promove um pedido ainda buffered,
+  //       e shipment cancelado não vira NF de venda cancelada. O sweep promove
+  //       depois com leitura fresca.
+  //   (b) decisao_final != null (a guarda em promoverPedidoFutura também barra):
+  //       troca pendente (decisao_final=null) nunca promove — a aprovação da troca
+  //       é que seta a decisão + aprova o pedido.
   if (existente?.separacao_futura === true && !separacaoFutura) {
-    const decisaoFinal = (existente.decisao_final as LegacyDecisao | null) ?? "propria";
-    const empresaJob = (existente.empresa_origem_id as string | null) ?? empresaOrigemId;
-
-    await sb
-      .from("siso_pedidos")
-      .update({ separacao_futura: false })
-      .eq("id", pedido.id);
-
-    const { data: jobExistente } = await sb
-      .from("siso_fila_execucao")
-      .select("id")
-      .eq("pedido_id", pedido.id)
-      .eq("tipo", "lancar_estoque")
-      .in("status", ["pendente", "executando"])
-      .maybeSingle();
-    if (!jobExistente) {
-      await sb.from("siso_fila_execucao").insert({
-        pedido_id: pedido.id,
-        tipo: "lancar_estoque",
-        filial_execucao: galpaoOrigemNome,
-        empresa_id: empresaJob,
-        decisao: decisaoFinal === "transferencia" ? "transferencia" : decisaoFinal === "oc" ? "oc" : "propria",
-      });
-    }
-    kickWorker().catch((err) => {
-      logger.error("processor.wms", "kickWorker falhou (promoção futura)", {
+    const liberou =
+      existente.decisao_final != null &&
+      classificarPromocaoFutura(substatusIntake, statusIntakeMl) === "promover";
+    if (liberou) {
+      await promoverPedidoFutura(sb, {
         pedidoId: pedido.id,
-        err: err instanceof Error ? err.message : String(err),
+        decisaoFinal: existente.decisao_final as string,
+        galpaoNome: galpaoOrigemNome,
+        empresaId: (existente.empresa_origem_id as string | null) ?? empresaOrigemId,
       });
-    });
-
-    registrarEvento({
+      await sb
+        .from("siso_webhook_logs")
+        .update({ status: "concluido", empresa_id: empresaOrigemId, processado_em: new Date().toISOString() })
+        .eq("id", webhookLogId);
+      return { ok: true, pedidoId: pedido.id, status: "promovido", sugestao };
+    }
+    // Ainda buffered / sem confirmação / troca pendente → NÃO promove e NÃO
+    // reprocessa (o upsert ingênuo abaixo regrediria o estado da futura). Fica
+    // como está; o sweep/nf-webhook promovem quando confirmar.
+    logger.info("processor.wms", "futura não promovida (sem confirmação de release ou sem decisão)", {
       pedidoId: pedido.id,
-      evento: "auto_aprovado",
-      detalhes: { decisao: decisaoFinal, via: "wms", promocao_futura: true },
-    }).catch(() => {});
-
-    logger.info("processor.wms", "futura PROMOVIDA (etiqueta liberou) — gera NF + agrupamento", {
-      pedidoId: pedido.id,
-      decisao: decisaoFinal,
-      statusSeparacao: existente.status_separacao,
+      substatus: substatusIntake,
+      mlStatus: statusIntakeMl,
+      decisaoFinal: existente.decisao_final ?? null,
     });
-
     await sb
       .from("siso_webhook_logs")
-      .update({
-        status: "concluido",
-        empresa_id: empresaOrigemId,
-        processado_em: new Date().toISOString(),
-      })
+      .update({ status: "duplicado", empresa_id: empresaOrigemId, processado_em: new Date().toISOString() })
       .eq("id", webhookLogId);
-    return { ok: true, pedidoId: pedido.id, status: "promovido", sugestao };
+    return { ok: true, pedidoId: pedido.id, status: "duplicado", sugestao };
   }
 
   // 4c. Auto-vendedor_nome para marketplaces rastreados (ML/Shopee).

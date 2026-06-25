@@ -3230,6 +3230,13 @@ Desfaz o último bip (estorna `quantidade_encaixotada`, reabre caixas que deixar
 
 **Body:** `{ alocacoes: [{ pedido_id, pedido_item_id, qty }] }`
 
+### POST /api/wms/encaixotamento/encaixotar-dia
+
+Atalho "encaixotar dia inteiro" — fecha um DIA todo de uma vez, sem bipar (onda de 1 dia só = 1 caixa). Deposita a qty restante de todos os itens dos pedidos futura `separado` do dia e fecha os 100% via RPC `wms_encaixotar_dia_atomico`. Botão aparece na aba Separado da pista futura só quando há exatamente 1 dia no filtro "Dias".
+
+**Body:** `{ dia: string }` — `"YYYY-MM-DD"` (SP) ou `"sem"` (sem prazo)
+**Resposta 200:** `{ ok, dia, pedidos, qty_alocada, alocacoes: [{ pedido_id, pedido_item_id, numero, prazo_envio, dia, qty }] }`
+
 ---
 
 ## Compras API

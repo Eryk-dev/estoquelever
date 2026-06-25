@@ -1299,12 +1299,42 @@ export default function WmsSeparacaoPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Encaixotar DIA INTEIRO — atalho da pista futura quando a onda é de UM dia só
+  // (filtro "Dias" com 1 dia). Fecha o dia todo sem bipar: a RPC deposita a qty
+  // restante de todos os itens daquele dia e fecha os 100% encaixotados.
+  const encaixotarDiaMut = useMutation({
+    mutationFn: async (dia: string) => {
+      const r = await sisoFetch("/api/wms/encaixotamento/encaixotar-dia", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dia }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body as { dia: string; pedidos: number; qty_alocada: number };
+    },
+    onSuccess: (b) => {
+      toast.success(
+        b.pedidos > 0
+          ? `${b.pedidos} pedido(s) encaixotado(s)`
+          : "Nada a encaixotar nesse dia",
+      );
+      clearSelection();
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // ── Lógica de IDs pra ações em lote ─────────────────────────────────────
   // Paridade com legado: quando NÃO há selection, ações operam em todos os pedidos da tab.
   const selectedArr = Array.from(selectedIds);
   const effectiveIds =
     selectedArr.length > 0 ? selectedArr : pedidos.map((p) => p.id);
   const effectiveCount = effectiveIds.length;
+  // Dia único filtrado (multi-select "Dias" com exatamente 1) → habilita o
+  // atalho "Encaixotar dia inteiro" na aba Separado da pista futura.
+  const diaUnico = selectedPrazoDias.length === 1 ? selectedPrazoDias[0] : null;
 
   function batchSepararChecklist(modo?: string) {
     if (effectiveIds.length === 0) return;
@@ -1520,8 +1550,10 @@ export default function WmsSeparacaoPage() {
               loading={
                 iniciarMut.isPending ||
                 retryEtiquetaMut.isPending ||
-                reimprimirMut.isPending
+                reimprimirMut.isPending ||
+                encaixotarDiaMut.isPending
               }
+              diaUnico={diaUnico}
               onSepararChecklist={batchSepararChecklist}
               onEmbalar={batchEmbalar}
               onRetryEtiqueta={(ids) =>
@@ -1529,6 +1561,7 @@ export default function WmsSeparacaoPage() {
               }
               onConferir={() => router.push("/wms/separacao/conferencia")}
               onEncaixotar={() => router.push("/wms/separacao/encaixotamento")}
+              onEncaixotarDia={(dia) => encaixotarDiaMut.mutate(dia)}
             />
           </div>
         )}
@@ -2146,6 +2179,8 @@ interface PrimaryTabActionsProps {
   onRetryEtiqueta: (ids?: string[]) => void;
   onConferir: () => void;
   onEncaixotar: () => void;
+  onEncaixotarDia: (dia: string) => void;
+  diaUnico: string | null;
 }
 
 function PrimaryTabActions({
@@ -2163,21 +2198,45 @@ function PrimaryTabActions({
   onRetryEtiqueta,
   onConferir,
   onEncaixotar,
+  onEncaixotarDia,
+  diaUnico,
 }: PrimaryTabActionsProps) {
   // Separação futura PARA em `separado` (peça na caixa do dia) — a etiqueta/NF
   // só na promoção. Sem ação de embalar; a ação desta aba é ENCAIXOTAR por dia
   // (botão → sub-tela, mesmo padrão do "Conferir" da aba Embalados).
   if (futura && tab === "separado") {
     return (
-      <button
-        className="wms-btn wms-btn-primary wms-btn-sm"
-        onClick={() => onEncaixotar()}
-        type="button"
-        title="Abrir o encaixotamento por dia — bipar SKU/EAN e distribuir o carrinho nas caixas"
-      >
-        <Icon name="box" size={11} />
-        Encaixotar
-      </button>
+      <>
+        {/* Atalho: onda de UM dia só (1 dia filtrado) → fecha o dia inteiro sem
+            bipar. Whole-day, ignora selection — usa o total da aba (= do dia). */}
+        {diaUnico && (
+          <button
+            className="wms-btn wms-btn-primary wms-btn-sm"
+            onClick={() => onEncaixotarDia(diaUnico)}
+            type="button"
+            disabled={loading}
+            title="Encaixota todos os pedidos deste dia de uma vez, sem bipar item a item"
+          >
+            <Icon name="box" size={11} />
+            {loading
+              ? "Encaixotando…"
+              : `Encaixotar dia ${fmtDiaLabel(diaUnico)} (${totalCount})`}
+          </button>
+        )}
+        <button
+          className={
+            diaUnico
+              ? "wms-btn wms-btn-ghost wms-btn-sm"
+              : "wms-btn wms-btn-primary wms-btn-sm"
+          }
+          onClick={() => onEncaixotar()}
+          type="button"
+          title="Abrir o encaixotamento por dia — bipar SKU/EAN e distribuir o carrinho nas caixas"
+        >
+          <Icon name="box" size={11} />
+          {diaUnico ? "Bipar p/ caixa" : "Encaixotar"}
+        </button>
+      </>
     );
   }
   // Indicador "operando em todos" vs "operando em selection" (texto consistente)

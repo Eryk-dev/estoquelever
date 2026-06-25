@@ -46,6 +46,7 @@ import {
   type TabIdStatusSeparacao,
 } from "@/components/wms/vendas/tabs-status-separacao";
 import { DecisaoLabel } from "@/components/wms/vendas/estoque-por-galpao-bar";
+import { PRAZO_DIA_SEM } from "@/lib/wms/prazo-dias";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,9 @@ interface SeparacaoResponse {
   pedidos: SeparacaoPedido[];
   empresas: { id: string; nome: string }[]; // usado no filtro de empresa
   galpoes: { id: string; nome: string }[];
+  // Dias de prazo disponíveis (facet do multi-select "Dias"). dia = "YYYY-MM-DD"
+  // (SP) ou PRAZO_DIA_SEM ("sem").
+  prazoDias?: { dia: string; count: number }[];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -323,6 +327,13 @@ function fmtPrazo(iso: string | null | undefined): string | null {
   return `${dd}/${mm} ${hh}:${mi}`;
 }
 
+/** Dia do facet ("YYYY-MM-DD" SP ou "sem") → label "dd/mm" ou "Sem prazo". */
+function fmtDiaLabel(dia: string): string {
+  if (dia === PRAZO_DIA_SEM) return "Sem prazo";
+  const [, m, d] = dia.split("-");
+  return m && d ? `${d}/${m}` : dia;
+}
+
 /**
  * Converte o preset de prazo num range [de, ate) — calculado no cliente p/
  * respeitar o fuso local. O server filtra lista E counts com esse range
@@ -472,6 +483,140 @@ function EmpresaMultiSelect({
                 }}
               >
                 {emp.nome}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Dropdown com checkboxes pra filtrar por DIAS específicos de prazo de envio. */
+function PrazoDiasMultiSelect({
+  dias,
+  selected,
+  onChange,
+}: {
+  dias: { dia: string; count: number }[];
+  selected: string[];
+  onChange: (dias: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const selectedSet = new Set(selected);
+  const label =
+    selected.length === 0
+      ? "Prazo: dias"
+      : selected.length === 1
+        ? fmtDiaLabel(selected[0])
+        : `${selected.length} dias`;
+
+  const toggle = (dia: string) => {
+    const next = new Set(selectedSet);
+    if (next.has(dia)) next.delete(dia);
+    else next.add(dia);
+    onChange([...next]);
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className="wms-select"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 150,
+          textAlign: "left",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+        }}
+      >
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontWeight: selected.length > 0 ? 600 : 400,
+          }}
+        >
+          {label}
+        </span>
+        <Icon name="chevron-r" size={11} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            zIndex: 30,
+            minWidth: 180,
+            maxHeight: 300,
+            overflowY: "auto",
+            background: "var(--wms-c-panel)",
+            border: "1px solid var(--wms-c-border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+            padding: 4,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            style={{
+              display: "flex",
+              width: "100%",
+              alignItems: "center",
+              padding: "6px 8px",
+              fontSize: 12,
+              color: selected.length === 0 ? "var(--wms-c-fg)" : "var(--wms-c-fg-2)",
+              fontWeight: selected.length === 0 ? 600 : 400,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            Todos os dias
+          </button>
+          {dias.length === 0 && (
+            <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--wms-c-fg-2)" }}>
+              Sem dias na aba
+            </div>
+          )}
+          {dias.map((d) => (
+            <label
+              key={d.dia}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 8px",
+                fontSize: 12,
+                cursor: "pointer",
+                borderRadius: 6,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selectedSet.has(d.dia)}
+                onChange={() => toggle(d.dia)}
+              />
+              <span style={{ flex: 1 }}>{fmtDiaLabel(d.dia)}</span>
+              <span className="wms-mono" style={{ color: "var(--wms-c-fg-2)" }}>
+                {d.count}
               </span>
             </label>
           ))}
@@ -701,6 +846,11 @@ export default function WmsSeparacaoPage() {
   const fornecedor = searchParams?.get("fornecedor") ?? "";
   const empresaFilter = searchParams?.get("empresa") ?? "";
   const prazoFilter = searchParams?.get("prazo") ?? "";
+  // Multi-select de dias de prazo: `prazo_dias` é lista de "YYYY-MM-DD" (+/- "sem").
+  const prazoDiasFilter = searchParams?.get("prazo_dias") ?? "";
+  const selectedPrazoDias = prazoDiasFilter
+    ? prazoDiasFilter.split(",").filter(Boolean)
+    : [];
   // Multi-select de empresa: `empresa` é lista separada por vírgula.
   const selectedEmpresaIds = empresaFilter
     ? empresaFilter.split(",").filter(Boolean)
@@ -805,6 +955,7 @@ export default function WmsSeparacaoPage() {
         tagFilter,
         empresaFilter,
         prazoFilter,
+        prazoDiasFilter,
         sort,
       ],
       queryFn: async () => {
@@ -815,6 +966,8 @@ export default function WmsSeparacaoPage() {
         if (pr.sem) params.set("prazo_sem", "1");
         if (pr.de) params.set("prazo_de", pr.de);
         if (pr.ate) params.set("prazo_ate", pr.ate);
+        // Dias específicos (multi-select) — refetch dirigido pela queryKey.
+        if (prazoDiasFilter) params.set("prazo_dias", prazoDiasFilter);
         const r = await sisoFetch(`/api/wms/separacao?${params.toString()}`);
         if (!r.ok) {
           const b = (await r.json().catch(() => ({}))) as { error?: string };
@@ -862,6 +1015,7 @@ export default function WmsSeparacaoPage() {
   const pedidosRaw = data?.pedidos ?? [];
   const galpoesAll = data?.galpoes ?? [];
   const empresasAll = data?.empresas ?? [];
+  const prazoDiasAll = data?.prazoDias ?? [];
 
   // Filtro client-side de fornecedor (só na tab aguardando_compra). Prazo,
   // empresa, busca etc. são server-side (afetam também os counts do cabeçalho).
@@ -1298,6 +1452,14 @@ export default function WmsSeparacaoPage() {
             </option>
           ))}
         </select>
+
+        {(prazoDiasAll.length > 0 || selectedPrazoDias.length > 0) && (
+          <PrazoDiasMultiSelect
+            dias={prazoDiasAll}
+            selected={selectedPrazoDias}
+            onChange={(d) => updateParam("prazo_dias", d.join(","))}
+          />
+        )}
 
         <TagMultiSelect
           contextualTags={contextualTags}

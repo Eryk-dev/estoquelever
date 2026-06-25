@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
 import { getFornecedorBySku } from "@/lib/sku-fornecedor";
+import { agruparPedidosPorDiaSp, construirOrPrazoDias } from "@/lib/wms/prazo-dias";
 import type { SeparacaoCounts, StatusSeparacao } from "@/types";
 
 const VALID_STATUSES: StatusSeparacao[] = [
@@ -77,7 +78,14 @@ export async function GET(request: NextRequest) {
   const prazoDe = searchParams.get("prazo_de");
   const prazoAte = searchParams.get("prazo_ate");
   const prazoSem = searchParams.get("prazo_sem") === "1";
-  const hasPrazoFilter = !!(prazoDe || prazoAte || prazoSem);
+  // Dias específicos (multi-select): lista de "YYYY-MM-DD" (dia em SP) +/- token
+  // "sem" (sem prazo). Vira um OR de ranges UTC [de,ate) no servidor.
+  const prazoDias = (searchParams.get("prazo_dias") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const orPrazoDias = construirOrPrazoDias(prazoDias);
+  const hasPrazoFilter = !!(prazoDe || prazoAte || prazoSem || orPrazoDias);
   // Pista futura (ML buffered): ?futura=1 → fila futura (separacao_futura=true).
   // Ausente → fila NORMAL, que EXCLUI futura (senão um pedido futura cairia na
   // embalagem normal e geraria NF cedo).
@@ -166,15 +174,21 @@ export async function GET(request: NextRequest) {
     }
 
     // Aplica o filtro de prazo de envio a qualquer query (lista + counts).
+    // Preset (de/ate/sem, range único calculado no cliente) E/OU dias
+    // específicos (orPrazoDias, OR de ranges) — empilham como os demais filtros.
     function applyPrazoFilter<T extends {
       gte: (col: string, v: string) => T;
       lt: (col: string, v: string) => T;
       is: (col: string, v: null) => T;
+      or: (filter: string) => T;
     }>(q: T): T {
-      if (prazoSem) return q.is("prazo_envio", null);
       let out = q;
-      if (prazoDe) out = out.gte("prazo_envio", prazoDe);
-      if (prazoAte) out = out.lt("prazo_envio", prazoAte);
+      if (prazoSem) out = out.is("prazo_envio", null);
+      else {
+        if (prazoDe) out = out.gte("prazo_envio", prazoDe);
+        if (prazoAte) out = out.lt("prazo_envio", prazoAte);
+      }
+      if (orPrazoDias) out = out.or(orPrazoDias);
       return out;
     }
 
@@ -285,6 +299,30 @@ export async function GET(request: NextRequest) {
         .order("data", { ascending: true });
     }
 
+    // 1b2. Facet de DIAS de prazo disponíveis (pro multi-select "Dias").
+    // Mesma base da lista (tab + galpão + empresa + marketplace + busca + tag +
+    // encaixotado), MAS sem o filtro de prazo — senão a lista de dias colapsaria
+    // nos já marcados e não daria pra adicionar/remover dia. Cap defensivo de
+    // 5000 linhas (1 coluna só); acima disso o facet subconta (raro nas tabs).
+    let diasQuery = supabase
+      .from("siso_pedidos")
+      .select("prazo_envio")
+      .not("status_separacao", "is", null)
+      .eq("separacao_futura", futura)
+      .limit(5000);
+    if (activeGalpaoId && !isAguardandoCompraOnly) {
+      diasQuery = diasQuery.eq("separacao_galpao_id", activeGalpaoId);
+    }
+    if (empresaIds.length === 1) diasQuery = diasQuery.eq("empresa_origem_id", empresaIds[0]);
+    else if (empresaIds.length > 1) diasQuery = diasQuery.in("empresa_origem_id", empresaIds);
+    if (marketplaceFilter) diasQuery = diasQuery.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+    if (statusFilters.length === 1) diasQuery = diasQuery.eq("status_separacao", statusFilters[0]);
+    else if (statusFilters.length > 1) diasQuery = diasQuery.in("status_separacao", statusFilters);
+    diasQuery = applyBuscaFilter(diasQuery);
+    if (tagList.length) diasQuery = diasQuery.overlaps("separacao_tags", tagList);
+    if (encaixotado === "1") diasQuery = diasQuery.not("encaixotado_em", "is", null);
+    else if (encaixotado === "0") diasQuery = diasQuery.is("encaixotado_em", null);
+
     // 1c. Fetch all active galpões (for encaminhar dropdown)
     const galpoesPromise = supabase
       .from("siso_galpoes")
@@ -322,13 +360,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Execute counts + pedidos + empresas + galpoes + ocItems in parallel
-    const [countsRpc, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }, ocItems] =
+    const [countsRpc, { data: pedidos, error: pedidosError }, { data: empresasList }, { data: galpoesList }, ocItems, { data: diasList }] =
       await Promise.all([
         countsRpcPromise,
         pedidosQuery,
         empresasPromise,
         galpoesPromise,
         activeGalpaoId ? fetchOcItems() : Promise.resolve([]),
+        diasQuery,
       ]);
 
     if (pedidosError) {
@@ -582,11 +621,17 @@ export async function GET(request: NextRequest) {
       .map(([id, nome]) => ({ id, nome }))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+    // Dias de prazo disponíveis (facet do multi-select), agrupados no fuso SP.
+    const prazoDiasDisponiveis = agruparPedidosPorDiaSp(
+      (diasList ?? []) as { prazo_envio: string | null }[],
+    );
+
     return NextResponse.json({
       counts: { ...counts, encaixotado: encaixotadoCount },
       pedidos: filteredResult,
       empresas,
       galpoes: galpoesList ?? [],
+      prazoDias: prazoDiasDisponiveis,
     });
   } catch (err) {
     logger.error("separacao-list", "Unexpected error", {

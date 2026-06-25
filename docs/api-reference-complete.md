@@ -1116,6 +1116,8 @@ Caminhos suportados:
 - `marketplace`: filter by e-commerce name (ilike)
 - `busca`: search numero, id_pedido_ecommerce, cliente_nome, item sku/gtin vendido **e** sku/gtin do substituto da troca de equivalência (ilike)
 - `tag`: filter by separacao_tags
+- `prazo_de` / `prazo_ate` / `prazo_sem`: filtro de prazo de envio por **preset** (range único `[prazo_de, prazo_ate)` calculado no cliente; `prazo_sem=1` → só pedidos sem prazo).
+- `prazo_dias`: filtro de prazo de envio por **dias específicos** (multi-select). Lista separada por vírgula de `YYYY-MM-DD` (dia no fuso **America/Sao_Paulo**) +/- token `sem` (sem prazo). Cada dia vira um range UTC `[de,ate)`, combinados por OR (`construirOrPrazoDias`, `src/lib/wms/prazo-dias.ts`). Empilha com o preset e com os demais filtros.
 - `futura`: `1` → fila de **separação futura** (`separacao_futura=true`); ausente → fila normal (exclui futura). Os counts (`wms_separacao_counts`, param `p_separacao_futura`) seguem o mesmo filtro.
 
 **Response (200):**
@@ -1181,9 +1183,17 @@ Caminhos suportados:
       "id": "uuid",
       "nome": "string"
     }
+  ],
+  "prazoDias": [
+    {
+      "dia": "YYYY-MM-DD (dia SP) | \"sem\"",
+      "count": "number"
+    }
   ]
 }
 ```
+
+`prazoDias` = facet de dias de prazo disponíveis na aba atual (mesma base da lista, **sem** o filtro de prazo), agrupado no fuso SP via `agruparPedidosPorDiaSp`. Alimenta o multi-select "Dias" do toolbar. Cap defensivo de 5000 linhas no facet.
 
 **Response (200 - No galpão selected):**
 ```json

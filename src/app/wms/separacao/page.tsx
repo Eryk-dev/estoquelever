@@ -46,7 +46,7 @@ import {
   type TabIdStatusSeparacao,
 } from "@/components/wms/vendas/tabs-status-separacao";
 import { DecisaoLabel } from "@/components/wms/vendas/estoque-por-galpao-bar";
-import { PRAZO_DIA_SEM } from "@/lib/wms/prazo-dias";
+import { PRAZO_DIA_SEM, diaSpDePrazo } from "@/lib/wms/prazo-dias";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -1332,9 +1332,16 @@ export default function WmsSeparacaoPage() {
   const effectiveIds =
     selectedArr.length > 0 ? selectedArr : pedidos.map((p) => p.id);
   const effectiveCount = effectiveIds.length;
-  // Dia único filtrado (multi-select "Dias" com exatamente 1) → habilita o
-  // atalho "Encaixotar dia inteiro" na aba Separado da pista futura.
-  const diaUnico = selectedPrazoDias.length === 1 ? selectedPrazoDias[0] : null;
+  // Dias distintos entre os pedidos visíveis da aba.
+  const diasNaAba = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of pedidos) set.add(diaSpDePrazo(p.prazo_envio));
+    return [...set];
+  }, [pedidos]);
+  // "Dia único" → habilita o atalho "Encaixotar dia inteiro" na aba Separado da
+  // pista futura: dispara sempre que a aba tem UM só dia — seja porque o operador
+  // filtrou 1 dia, seja porque todos os pedidos são do mesmo dia (sem filtrar).
+  const diaUnico = diasNaAba.length === 1 ? diasNaAba[0] : null;
 
   function batchSepararChecklist(modo?: string) {
     if (effectiveIds.length === 0) return;

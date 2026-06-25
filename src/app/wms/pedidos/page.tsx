@@ -262,20 +262,22 @@ export default function WmsPedidosPage() {
   const pendentes = useMemo(() => {
     return filteredByGalpao
       .filter(
-        // Transferência precisa de decisão humana. Própria/OC auto-aprovam
-        // (webhook). Pedido com troca de equivalência pendente também entra
-        // aqui (decisão: aprovar/rejeitar a troca). Realocação migrou pra aba
-        // na separação.
-        (p) =>
-          p.status === "pendente" &&
-          (p.sugestao === "transferencia" || trocaByPedido.has(p.id)),
+        // Todo pedido status==='pendente' aparece aqui — um pendente, por
+        // definição, espera decisão humana e NUNCA pode ficar invisível.
+        // O caso comum é transferência (própria/OC auto-aprovam no webhook),
+        // mas um pendente com sugestão 'oc'/'propria' SURGE de caminhos manuais
+        // (encaminhar entre galpões reseta pra pendente; o recompute live da
+        // sugestão pode classificar como 'oc') ou de auto-aprovação que falhou.
+        // Antes o filtro exigia sugestao==='transferencia' e esses sumiam de
+        // todas as abas. Troca de equivalência pendente também entra aqui.
+        (p) => p.status === "pendente",
       )
       .filter(buscaMatch)
       .sort(
         (a, b) =>
           new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime(),
       );
-  }, [filteredByGalpao, buscaMatch, trocaByPedido]);
+  }, [filteredByGalpao, buscaMatch]);
 
   const concluidos = useMemo(() => {
     // Decisão 6 (28/05): tab Concluídos inclui pedidos com decisão tomada

@@ -7202,3 +7202,44 @@ erros:
       metade do encadeamento). Doc decisão "B2" em docs/plano-separacao-futura.md
       corrigida no mesmo commit (worker marca esgotado/validacao_oc, não "dispara compra
       na hora").
+
+  - id: pedido-pendente-some-aba-pendentes
+    date: "2026-06-25"
+    source: app.wms.pedidos.page
+    category: business_logic
+    message: >
+      Pedido encaminhado entre galpões na tela Separação "sumiu" — invisível em TODAS
+      as abas de /wms/pedidos (Pendentes 0 mesmo com "Todos os galpões" e sem busca).
+      Repro: pedido OC em em_separacao em SP, operador clica "encaminhar para CWB".
+      Concretamente o 953008167 (nº 85043): item 007237 sem saldo em galpão nenhum.
+    cause: >
+      encaminhar reseta o pedido pra status=pendente + sugestao=transferencia +
+      separacao_galpao_id=null. MAS a lista de pedidos recomputa a sugestão AO VIVO
+      (route.ts:137, recomputarSugestaoBatch) contra siso_estoque — e como os itens
+      estão em galpões diferentes (um sem saldo em lugar nenhum), o recompute classifica
+      como 'oc'. A aba Pendentes (page.tsx) filtrava status==='pendente' &&
+      sugestao==='transferencia'. Pendente exibido como 'oc' não casa → cai fora de
+      Pendentes; e Concluídos/Auto/Expedidos exigem status concluido/executando → cai
+      fora também. Resultado: pendente invisível, a busca nem ajuda (o filtro de sugestão
+      corta antes do buscaMatch). Bug silencioso e acumulativo: 9 pendentes oc presos
+      invisíveis no staging na data.
+    fix: >
+      Aba Pendentes passa a mostrar TODO pedido status==='pendente' (removido o gate
+      sugestao==='transferencia'). Um pendente, por definição, espera decisão humana e
+      nunca pode ficar invisível — própria/OC normais auto-aprovam pra 'executando' e
+      não aparecem como pendente, então a aba não inunda; só surgem os genuinamente
+      presos (encaminhar manual, recompute divergente, auto-aprovação falha). Removido
+      trocaByPedido da dep array do useMemo (não mais referenciado no corpo). Recuperação
+      do 85043: UPDATE direto pro estado-final do worker (executando/oc/validacao_oc,
+      separacao_galpao_id=CWB) — itens já tinham compra_status correto (encaminhar reseta
+      só campos de separação, não os de compra).
+    files:
+      - src/app/wms/pedidos/page.tsx
+    tags: [pedidos, pendentes, encaminhar, sugestao-dinamica, oc, galpao, invisivel, ui-filter]
+    notes: >
+      Limitação remanescente (não corrigida aqui): o filtro de galpão da tela Pedidos é
+      por filialOrigem (origem da empresa), não por separacao_galpao_id. Um pedido
+      encaminhado pra CWB com empresa origem SP só aparece sob "Todos os galpões" ou SP,
+      nunca no filtro CWB — a ação de OC acontece na tela Separação (galpão-scoped por
+      separacao_galpao_id), que mostra certo. encaminhar perde o galpão de destino
+      (separacao_galpao_id=null) — candidato a fix futuro: ancorar no destino.

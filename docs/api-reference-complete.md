@@ -1119,6 +1119,7 @@ Caminhos suportados:
 - `prazo_de` / `prazo_ate` / `prazo_sem`: filtro de prazo de envio por **preset** (range único `[prazo_de, prazo_ate)` calculado no cliente; `prazo_sem=1` → só pedidos sem prazo).
 - `prazo_dias`: filtro de prazo de envio por **dias específicos** (multi-select). Lista separada por vírgula de `YYYY-MM-DD` (dia no fuso **America/Sao_Paulo**) +/- token `sem` (sem prazo). Cada dia vira um range UTC `[de,ate)`, combinados por OR (`construirOrPrazoDias`, `src/lib/wms/prazo-dias.ts`). Empilha com o preset e com os demais filtros.
 - `futura`: `1` → fila de **separação futura** (`separacao_futura=true`); ausente → fila normal (exclui futura). Os counts (`wms_separacao_counts`, param `p_separacao_futura`) seguem o mesmo filtro.
+- `cancelado`: `1` → aba **Cancelados** (`status='cancelado'`). Ignora `status_separacao` (sempre null nos cancelados) e `separacao_futura`; ordena por `cancelado_em` desc. Retorna `motivo_cancelamento`, `cancelado_origem` (`cliente`/`comprador`/`operador`/`sistema`) e `cancelado_em` em cada pedido. O count vem em `counts.cancelado` (chave extra, sempre presente). As abas normais excluem `status='cancelado'`.
 
 **Response (200):**
 ```json

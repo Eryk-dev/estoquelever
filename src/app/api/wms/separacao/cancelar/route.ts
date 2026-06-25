@@ -8,6 +8,7 @@ import { classificarItensParaCancelamento } from "@/lib/wms/cancelamento-parcial
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { estornarLiberacaoReserva } from "@/lib/wms/reservas-picking";
 import { registrarPicksCanceladosParaDevolucao } from "@/lib/wms/devolucoes";
+import { camposCancelamento } from "@/lib/wms/cancelamento-fields";
 
 const MAX_MOVS_LOG = 50;
 
@@ -113,7 +114,11 @@ export async function POST(request: NextRequest) {
 
       const { error: pedUpdErr } = await supabase
         .from("siso_pedidos")
-        .update({ status: "cancelado", status_separacao: null })
+        .update({
+          status: "cancelado",
+          status_separacao: null,
+          ...camposCancelamento("operador", "Cancelado na separação"),
+        })
         .in("id", pedido_ids);
       if (pedUpdErr) throw new Error(`falha ao cancelar pedidos (D1): ${pedUpdErr.message}`);
 

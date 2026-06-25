@@ -6,6 +6,7 @@ import { estornarMovimentacao } from "@/lib/wms/ledger";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 import { registrarEvento } from "@/lib/historico-service";
 import { logger } from "@/lib/logger";
+import { camposCancelamento } from "@/lib/wms/cancelamento-fields";
 
 /**
  * POST /api/wms/pedidos/[id]/estornar
@@ -93,7 +94,11 @@ export async function POST(
     // pra um pedido cuja separação nunca chegou a acontecer).
     const { error: eStatus } = await sb
       .from("siso_pedidos")
-      .update({ status: "cancelado", status_separacao: null })
+      .update({
+        status: "cancelado",
+        status_separacao: null,
+        ...camposCancelamento("operador", `Estorno manual: ${motivo}`),
+      })
       .eq("id", pedidoId);
     if (eStatus) throw new Error(`siso_pedidos cancel update failed: ${eStatus.message}`);
 

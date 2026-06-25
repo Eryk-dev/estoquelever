@@ -93,6 +93,9 @@ export async function GET(request: NextRequest) {
   // Encaixotamento (pista futura): "0" = ainda não encaixotado (fila do que falta),
   // "1" = já encaixotado (encaixotado_em preenchido). Ausente = sem filtro.
   const encaixotado = searchParams.get("encaixotado");
+  // Aba Cancelados: ?cancelado=1 → pedidos status='cancelado' (status_separacao é
+  // null, então NÃO usa o filtro de status_separacao nem o de separacao_futura).
+  const cancelado = searchParams.get("cancelado") === "1";
 
   if (statusFilters.length > 0 && statusFilters.some((s) => !VALID_STATUSES.includes(s))) {
     return NextResponse.json(
@@ -252,10 +255,19 @@ export async function GET(request: NextRequest) {
          nome_ecommerce, forma_envio_descricao, status_separacao, decisao_final, filial_origem, marcadores, separacao_tags,
          empresa_origem_id, separacao_galpao_id, etiqueta_status, etiqueta_zpl, embalagem_concluida_em,
          nota_fiscal_id, agrupamento_expedicao_id,
-         encaminhado_de, siso_empresas(nome)`,
-      )
-      .not("status_separacao", "is", null)
-      .eq("separacao_futura", futura);
+         encaminhado_de, motivo_cancelamento, cancelado_origem, cancelado_em, siso_empresas(nome)`,
+      );
+    if (cancelado) {
+      // Aba Cancelados: independe de status_separacao (sempre null) e de futura.
+      pedidosQuery = pedidosQuery.eq("status", "cancelado");
+    } else {
+      pedidosQuery = pedidosQuery
+        .not("status_separacao", "is", null)
+        // Defensivo: cancelados têm status_separacao=null, mas um pedido cancelado
+        // que ficasse com status_separacao preenchido (bug) vazaria aqui.
+        .neq("status", "cancelado")
+        .eq("separacao_futura", futura);
+    }
 
     // aguardando_compra: skip galpão filter — post-filtered by supplier destination
     const isAguardandoCompraOnly = statusFilters.length === 1 && statusFilters[0] === "aguardando_compra";
@@ -286,7 +298,12 @@ export async function GET(request: NextRequest) {
     } else if (encaixotado === "0") {
       pedidosQuery = pedidosQuery.is("encaixotado_em", null);
     }
-    if (statusFilters.includes("embalado") || statusFilters.includes("conferido")) {
+    if (cancelado) {
+      // Cancelados: mais recente primeiro.
+      pedidosQuery = pedidosQuery
+        .order("cancelado_em", { ascending: false, nullsFirst: false })
+        .order("data", { ascending: false });
+    } else if (statusFilters.includes("embalado") || statusFilters.includes("conferido")) {
       pedidosQuery = pedidosQuery
         .order("embalagem_concluida_em", { ascending: false, nullsFirst: false })
         .order("data", { ascending: true });
@@ -465,6 +482,24 @@ export async function GET(request: NextRequest) {
       counts.separado = Math.max(0, counts.separado - encaixotadoCount);
     }
 
+    // Count da aba Cancelados (status='cancelado', sem status_separacao/futura).
+    // Mesmos filtros do toolbar (galpão/empresa/marketplace/busca/tag).
+    let canceladoCount = 0;
+    {
+      let cq = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "cancelado");
+      if (activeGalpaoId) cq = cq.eq("separacao_galpao_id", activeGalpaoId);
+      if (empresaIds.length === 1) cq = cq.eq("empresa_origem_id", empresaIds[0]);
+      else if (empresaIds.length > 1) cq = cq.in("empresa_origem_id", empresaIds);
+      if (marketplaceFilter) cq = cq.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      cq = applyBuscaFilter(cq);
+      if (tagList.length) cq = cq.overlaps("separacao_tags", tagList);
+      const { count } = await cq;
+      canceladoCount = count ?? 0;
+    }
+
     // 3. Fetch item stats for progress display (separation + packing counts)
     const pedidoIds = (pedidos ?? []).map((p) => p.id);
     const itemStats: Record<
@@ -585,6 +620,9 @@ export async function GET(request: NextRequest) {
         nf_emitida: !!p.nota_fiscal_id,
         agrupamento_criado: !!p.agrupamento_expedicao_id && p.agrupamento_expedicao_id !== "pending",
         encaminhado_de: p.encaminhado_de ?? null,
+        motivo_cancelamento: p.motivo_cancelamento ?? null,
+        cancelado_origem: p.cancelado_origem ?? null,
+        cancelado_em: p.cancelado_em ?? null,
       };
     });
 
@@ -627,7 +665,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json({
-      counts: { ...counts, encaixotado: encaixotadoCount },
+      counts: { ...counts, encaixotado: encaixotadoCount, cancelado: canceladoCount },
       pedidos: filteredResult,
       empresas,
       galpoes: galpoesList ?? [],

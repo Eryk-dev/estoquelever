@@ -61,6 +61,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
+| `motivo_cancelamento` | text | YES | | Motivo do cancelamento exibido na aba Cancelados da separação (ex.: "ZERADO NA LEFS", "Cancelado pelo cliente (marketplace)"). (20260625) |
+| `cancelado_origem` | text | YES | | Origem do cancelamento: `cliente` \| `comprador` \| `operador` \| `sistema`. Gravado pelos ~7 caminhos de cancelamento via `camposCancelamento()`. (20260625) |
+| `cancelado_em` | timestamptz | YES | | Momento do cancelamento; ordena a aba Cancelados (mais recente primeiro). (20260625) |
 | `status_separacao` | text | YES | | Separation status: `aguardando_compra`, `aguardando_nf`, `aguardando_separacao`, `em_separacao`, `pendente_realocacao`, `separado`, `embalado`, `conferido` |
 | `separacao_galpao_id` | uuid | YES | FK | Galpão where separation happens |
 | `separacao_operador_id` | uuid | YES | FK | User performing separation |

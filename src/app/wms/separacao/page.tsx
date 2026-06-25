@@ -113,11 +113,15 @@ interface SeparacaoPedido {
   agrupamento_criado: boolean;
   separacao_tags: string[];
   encaminhado_de: string | null;
+  // Aba Cancelados (preenchidos só quando status='cancelado').
+  motivo_cancelamento: string | null;
+  cancelado_origem: string | null;
+  cancelado_em: string | null;
 }
 
 interface SeparacaoResponse {
-  // `encaixotado` é chave extra (não é status) — só preenchida na pista futura.
-  counts: Record<StatusServer, number> & { encaixotado?: number };
+  // `encaixotado`/`cancelado` são chaves extras (não são status_separacao).
+  counts: Record<StatusServer, number> & { encaixotado?: number; cancelado?: number };
   pedidos: SeparacaoPedido[];
   empresas: { id: string; nome: string }[]; // usado no filtro de empresa
   galpoes: { id: string; nome: string }[];
@@ -140,6 +144,9 @@ const TAB_TO_STATUS: Record<Tab, StatusServer[]> = {
   embalado: ["embalado"],
   conferido: ["conferido"],
   pendente_realocacao: ["pendente_realocacao"],
+  // Aba virtual: pedidos cancelados (status='cancelado'); a rota filtra via
+  // ?cancelado=1 e NÃO usa status_separacao (sempre null nos cancelados).
+  cancelado: [],
 };
 
 const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
@@ -179,6 +186,18 @@ const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
     title: "Nenhum pedido aguardando realocação",
     body: "Pedidos com itens a realocar para outro galpão aparecem aqui.",
   },
+  cancelado: {
+    title: "Nenhum pedido cancelado",
+    body: "Pedidos cancelados (pelo cliente, comprador ou operador) aparecem aqui com o motivo.",
+  },
+};
+
+// Rótulo da origem do cancelamento (aba Cancelados).
+const ORIGEM_CANCEL_LABEL: Record<string, string> = {
+  cliente: "Cancelado pelo cliente",
+  comprador: "Cancelado pelo comprador",
+  operador: "Cancelado pelo operador",
+  sistema: "Cancelado pelo sistema",
 };
 
 const MARKETPLACE_OPTS = [
@@ -283,6 +302,7 @@ function parseTab(value: string | null | undefined): Tab {
     "embalado",
     "conferido",
     "pendente_realocacao",
+    "cancelado",
   ];
   return valid.includes(value as Tab)
     ? (value as Tab)
@@ -929,7 +949,10 @@ export default function WmsSeparacaoPage() {
   // ── Query principal ────────────────────────────────────────────────────
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("status_separacao", TAB_TO_STATUS[tab].join(","));
+    // Aba Cancelados não filtra por status_separacao (sempre null) — a rota
+    // busca status='cancelado' via ?cancelado=1.
+    if (tab === "cancelado") params.set("cancelado", "1");
+    else params.set("status_separacao", TAB_TO_STATUS[tab].join(","));
     if (busca) params.set("busca", busca);
     if (marketplace) params.set("marketplace", marketplace);
     if (tagFilter) params.set("tag", tagFilter);
@@ -1008,6 +1031,7 @@ export default function WmsSeparacaoPage() {
       embalado: data?.counts.embalado ?? 0,
       conferido: data?.counts.conferido ?? 0,
       pendente_realocacao: data?.counts.pendente_realocacao ?? 0,
+      cancelado: data?.counts.cancelado ?? 0,
     }),
     [data?.counts],
   );
@@ -1990,7 +2014,11 @@ export default function WmsSeparacaoPage() {
                           flexWrap: "wrap",
                         }}
                       >
-                        <StatusBadge status={p.status_separacao} />
+                        {tab === "cancelado" ? (
+                          <StatusBadge status="cancelado" />
+                        ) : (
+                          <StatusBadge status={p.status_separacao} />
+                        )}
                         {p.nf_emitida && (
                           <span title="NF emitida" style={badgeFlag("info")}>
                             N
@@ -2035,6 +2063,30 @@ export default function WmsSeparacaoPage() {
                             />
                           </div>
                         )}
+                      {tab === "cancelado" && (
+                        <div style={{ marginTop: 3, maxWidth: 240 }}>
+                          <span
+                            className="wms-td-mute"
+                            style={{ fontSize: 10, fontWeight: 600 }}
+                          >
+                            {ORIGEM_CANCEL_LABEL[p.cancelado_origem ?? ""] ??
+                              "Cancelado"}
+                          </span>
+                          {p.motivo_cancelamento && (
+                            <div
+                              className="wms-td-mute"
+                              style={{
+                                fontSize: 10.5,
+                                whiteSpace: "normal",
+                                lineHeight: 1.25,
+                              }}
+                              title={p.motivo_cancelamento}
+                            >
+                              {p.motivo_cancelamento}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="wms-td-mute" style={{ fontSize: 11 }}>
                       {p.data_pedido ? fmtRelative(p.data_pedido) : "—"}

@@ -11,6 +11,7 @@ import {
   buscarLocComMaiorSaldoNoGalpao,
 } from "@/lib/separacao/wms-mapping";
 import { rotearPedidoDoBanco, TIPOS_LOC_VENDAVEIS } from "@/lib/wms/roteamento";
+import { camposCancelamento } from "@/lib/wms/cancelamento-fields";
 import { escolherGalpaoSeparacaoTransferencia } from "@/lib/wms/aprovar-roteamento";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
@@ -100,6 +101,7 @@ export async function POST(request: NextRequest) {
         decisao_final: "rejeitado",
         status: "cancelado",
         status_separacao: null,
+        ...camposCancelamento("operador", body.motivo ?? "Recusado na aprovação"),
       })
       .eq("id", pedidoId);
     if (updErr) {

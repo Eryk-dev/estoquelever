@@ -3,6 +3,7 @@ import { logger } from "@/lib/logger";
 import { liberarReserva, estornarReservaIndividual } from "./reservas";
 import { registrarEvento } from "@/lib/historico-service";
 import { classificarItensParaCancelamento } from "./cancelamento-parcial";
+import { camposCancelamento } from "./cancelamento-fields";
 
 /**
  * P3 #7.13 — cancela uma venda manual.
@@ -103,7 +104,11 @@ export async function cancelarVendaManual(input: {
 
     const { error: updErr } = await sb
       .from("siso_pedidos")
-      .update({ status: "cancelado", status_separacao: null })
+      .update({
+        status: "cancelado",
+        status_separacao: null,
+        ...camposCancelamento("operador", input.motivo ?? "Cancelado na venda"),
+      })
       .eq("id", input.pedido_id);
     if (updErr) throw new Error(`falha ao atualizar status: ${updErr.message}`);
 

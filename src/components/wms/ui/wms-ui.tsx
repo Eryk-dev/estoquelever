@@ -379,6 +379,7 @@ export type StatusKey =
   | "revisao"
   | "aprovada"
   | "cancelada"
+  | "cancelado"
   | "em_guarda"
   | "guardada"
   | "encerrada_sem_saldo";
@@ -400,6 +401,7 @@ const STATUS_MAP: Record<StatusKey, { label: string; cls: string }> = {
   aprovada: { label: "Aprovada", cls: "ok" },
   aplicada: { label: "Aplicada", cls: "aplicada" },
   cancelada: { label: "Cancelada", cls: "cancelada" },
+  cancelado: { label: "Cancelado", cls: "cancelada" },
   // Outros contextos
   pendente: { label: "Pendente", cls: "warn" },
   pendente_realocacao: { label: "Realocação", cls: "warn" },

@@ -23,6 +23,7 @@ import { classificarItensParaCancelamento } from "./wms/cancelamento-parcial";
 import { registrarPicksCanceladosParaDevolucao } from "./wms/devolucoes";
 import { registrarEvento } from "./historico-service";
 import { TAG_FUTURA } from "./wms/separacao-futura";
+import { camposCancelamento } from "./wms/cancelamento-fields";
 
 /** Usuário "Sistema (automação)" — carimba estornos automáticos. */
 const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
@@ -119,6 +120,8 @@ export async function handlePedidoCancelamento(params: {
     const cancelUpdate: Record<string, unknown> = {
       status: "cancelado",
       processado_em: new Date().toISOString(),
+      // Tiny não manda motivo no cancelamento do cliente → rótulo genérico.
+      ...camposCancelamento("cliente", "Cancelado pelo cliente (marketplace)"),
     };
     if (existingOrder.status_separacao != null) {
       cancelUpdate.status_separacao = null;

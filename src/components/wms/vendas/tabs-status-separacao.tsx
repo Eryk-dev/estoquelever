@@ -13,7 +13,8 @@ type TabId =
   | "encaixotado"
   | "embalado"
   | "conferido"
-  | "pendente_realocacao";
+  | "pendente_realocacao"
+  | "cancelado";
 
 interface TabsStatusSeparacaoProps {
   active: TabId;
@@ -33,6 +34,8 @@ interface TabsStatusSeparacaoProps {
     embalado: number;
     conferido: number;
     pendente_realocacao: number;
+    /** Pedidos cancelados (cliente/comprador/operador) — aba após Conferidos. */
+    cancelado: number;
   };
 }
 
@@ -45,6 +48,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "encaixotado", label: "Encaixotados" },
   { id: "embalado", label: "Embalados" },
   { id: "conferido", label: "Conferidos" },
+  { id: "cancelado", label: "Cancelados" },
   { id: "pendente_realocacao", label: "Realocação" },
 ];
 

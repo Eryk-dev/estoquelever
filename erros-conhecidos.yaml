@@ -7273,3 +7273,43 @@ erros:
       - src/app/api/wms/separacao/encaminhar/route.ts
       - test/integration/encaminhar-rota-pinada.test.ts
     tags: [encaminhar, forward, roteamento, pino, geo-priority, troca-equivalencia, oc, reservas]
+
+  - id: SEPARACAO-CANCELADOS-SOME-01
+    date: "2026-06-25"
+    source: src/app/api/wms/separacao/route.ts
+    category: business_logic
+    message: >
+      Pedido cancelado sumia da separação sem rastro. Todo cancelamento seta
+      status='cancelado' + status_separacao=null; a lista de separação filtra
+      .not(status_separacao,is,null), então o pedido evaporava. Pior no caminho
+      de compras (checkAndCancelPedidoIfAllTerminal) que nem gravava evento de
+      cancelamento — só 'compra_item_cancelado'. Repro: pedido nº 145518
+      (id 1046291242, decisao_final=oc, item L0113015), comprador cancelou o item
+      ("ZERADO NA LEFS") -> único item terminal -> pedido cancelado -> sumiu.
+      Bug correlato: 2 pedidos cancelados com status_separacao não-nulo
+      (em_separacao/embalado) VAZAVAM nas abas normais.
+    cause: >
+      Não havia (a) coluna de motivo/origem de cancelamento em siso_pedidos,
+      (b) aba/visão de cancelados na separação, (c) exclusão de status='cancelado'
+      nas abas normais (só dependia de status_separacao=null, que 2 linhas legadas
+      não tinham).
+    fix: >
+      Aba virtual "Cancelados" após Conferidos (status='cancelado' via
+      ?cancelado=1, ordena cancelado_em desc; NÃO usa status_separacao). Novas
+      colunas motivo_cancelamento/cancelado_origem/cancelado_em gravadas pelos ~7
+      caminhos de cancelamento via camposCancelamento() (cliente=webhook,
+      comprador=compras, operador=separação/aprovação/estorno). Abas normais ganham
+      .neq(status,cancelado). Migration normaliza status_separacao=null dos
+      cancelados legados + backfill de origem/motivo.
+    files:
+      - supabase/migrations/20260625_separacao_cancelados.sql
+      - src/lib/wms/cancelamento-fields.ts
+      - src/lib/pedido-cancel-handler.ts
+      - src/lib/compras-utils.ts
+      - src/lib/wms/vendas-cancelamento.ts
+      - src/app/api/wms/separacao/route.ts
+      - src/app/api/wms/separacao/cancelar/route.ts
+      - src/app/wms/separacao/page.tsx
+      - src/components/wms/vendas/tabs-status-separacao.tsx
+      - src/components/wms/ui/wms-ui.tsx
+    tags: [separacao, cancelamento, cancelados, motivo, compras, webhook, aba-virtual]

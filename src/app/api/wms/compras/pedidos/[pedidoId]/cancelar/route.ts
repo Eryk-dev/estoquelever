@@ -8,6 +8,7 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { cancelOcIfEmpty } from "@/lib/compras-utils";
 import { userCan } from "@/lib/permissions";
 import { registrarEvento } from "@/lib/historico-service";
+import { camposCancelamento } from "@/lib/wms/cancelamento-fields";
 import { estornarMovimentacao } from "@/lib/wms/ledger";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
 
@@ -154,6 +155,7 @@ export async function POST(
         status_separacao: null,
         processado_em: new Date().toISOString(),
         compra_estoque_lancado_alerta: hadStockEntrada || undefined,
+        ...camposCancelamento("comprador", "Cancelado pelo comprador"),
       })
       .eq("id", pedidoId);
 

@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase-server";
 import { logger } from "@/lib/logger";
 import { estornarReservaIndividual } from "@/lib/wms/reservas";
+import { camposCancelamento } from "@/lib/wms/cancelamento-fields";
 
 /** Fields to null when resetting an item's compra exception/equivalente/cancelamento state */
 export function buildCompraFieldReset(): Record<string, null | false> {
@@ -130,7 +131,7 @@ export async function checkAndCancelPedidoIfAllTerminal(
 ): Promise<{ pedidoCancelado: boolean }> {
   const { data: allItems, error } = await supabase
     .from("siso_pedido_itens")
-    .select("id, compra_status")
+    .select("id, compra_status, compra_cancelamento_motivo")
     .eq("pedido_id", pedidoId);
 
   if (error || !allItems || allItems.length === 0) {
@@ -147,12 +148,26 @@ export async function checkAndCancelPedidoIfAllTerminal(
 
   const now = new Date().toISOString();
 
+  // Motivo da aba Cancelados = junção dos motivos digitados nos itens de compra
+  // (ex.: "ZERADO NA LEFS"); fallback genérico se nenhum item trouxe texto.
+  const motivos = [
+    ...new Set(
+      allItems
+        .map((i) => (i.compra_cancelamento_motivo as string | null)?.trim())
+        .filter((m): m is string => !!m),
+    ),
+  ];
+  const motivoCancelamento = motivos.length
+    ? motivos.join(" · ")
+    : "Cancelado pelo comprador";
+
   await supabase
     .from("siso_pedidos")
     .update({
       status: "cancelado",
       status_separacao: null,
       processado_em: now,
+      ...camposCancelamento("comprador", motivoCancelamento),
     })
     .eq("id", pedidoId);
 

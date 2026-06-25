@@ -518,7 +518,7 @@ function ItensGrid({ itens }: { itens: ItemConferencia[] }) {
               </span>
             </div>
             <div className="wms-emb-foot">
-              <span className="wms-mono wms-emb-sku">{item.sku}</span>
+              <span className="wms-emb-sku">{item.sku}</span>
               {item.descricao && <span className="wms-emb-desc">{item.descricao}</span>}
             </div>
           </div>

@@ -37,6 +37,7 @@ import { reservarAtomico, estornarReservaIndividual } from "./wms/reservas";
 import {
   MARCADOR_FUTURA,
   TAG_FUTURA,
+  statusPosAutorizacaoNf,
   SUBSTATUS_FUTURA,
   ttlHorasReservaFutura,
   classificarPromocaoFutura,
@@ -560,9 +561,39 @@ export async function promoverPedidoFutura(
         ? "oc"
         : "propria";
 
+  // Status na promoção. Um pedido NÃO pode aparecer "pronto" (separado) enquanto
+  // a NF ainda não está AUTORIZADA — senão entra na fila de embalagem sem etiqueta.
+  // Vai pra `aguardando_nf` e só avança quando a NF autorizar; aí o
+  // nf-webhook-handler (Step 5b) decide separado×aguardando_separacao pelo
+  // `estoque_lancado` (via statusPosAutorizacaoNf).
+  // EXCEÇÃO — NF JÁ autorizada no ato da promoção (caminho do webhook de NF, que
+  // promove DEPOIS de gravar a chave): vai direto pro destino.
+  // OC fica de fora: o worker (executarMarcadoresOnly) é quem define o status dela
+  // (validacao_oc / aguardando_compra / vira propria). Só flipa a flag.
+  // ⚠ Mantém a baixa: o pick da futura já lançou o estoque (S sem NF; a peça já
+  //   saiu da loc). Este UPDATE direto de status NÃO passa por
+  //   reverterCutoverSeRetrocedeu, então a baixa permanece; o cutover de volta a
+  //   `separado` vê `estoque_lancado` e é no-op.
+  let novoStatus: string | null = null;
+  if (decisao !== "oc") {
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("estoque_lancado, chave_acesso_nf")
+      .eq("id", pedidoId)
+      .maybeSingle();
+    const nfAutorizada = !!ped?.chave_acesso_nf;
+    novoStatus = nfAutorizada
+      ? statusPosAutorizacaoNf(ped?.estoque_lancado === true)
+      : "aguardando_nf";
+  }
+
   await sb
     .from("siso_pedidos")
-    .update({ separacao_futura: false })
+    .update(
+      novoStatus
+        ? { separacao_futura: false, status_separacao: novoStatus }
+        : { separacao_futura: false },
+    )
     .eq("id", pedidoId);
 
   let enfileirou = false;
@@ -902,10 +933,13 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // 4b-promoção. A etiqueta liberou: o pedido era futura e agora chega como
   //   webhook NORMAL (separacaoFutura=false). PROMOVE — sem passar pelo upsert
   //   ingênuo abaixo (que regrediria status_separacao e zeraria o pick já feito).
-  //   Flipa a flag, MANTÉM o status_separacao atual (separado/aguardando_separacao)
-  //   e enfileira lancar_estoque conforme a decisao_final → segue o fluxo NORMAL
-  //   (gera NF + agrupamento; OC segue a compra). A reserva já existe; o
-  //   cutover/pos-NF é idempotente (estorno_de) → não duplica S.
+  //   promoverPedidoFutura flipa a flag, DEFINE o status pela autorização da NF
+  //   (aguardando_nf enquanto não autorizada; só vira separado/aguardando_separacao
+  //   quando a NF autorizar) e enfileira lancar_estoque conforme a decisao_final →
+  //   segue o fluxo NORMAL (gera NF + agrupamento; OC segue a compra). A reserva já
+  //   existe; o cutover/pos-NF é idempotente (estorno_de) → não duplica S.
+  //   ⚠ Só pega futura NÃO picada aqui (estoque_lancado=false): a picada é barrada
+  //   pela guarda post-pick acima e promove via sweep / webhook de NF.
   //
   //   GUARDAS (ver erros-conhecidos SEP-FUTURA-PROMO):
   //   (a) só promove com CONFIRMAÇÃO POSITIVA de release lida do ML neste intake

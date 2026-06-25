@@ -77,3 +77,21 @@ export function ttlHorasReservaFutura(
   const horas = Math.ceil((alvoMs - now.getTime()) / (3600 * 1000));
   return horas > 0 ? horas : FALLBACK_HORAS;
 }
+
+/**
+ * Status de destino quando a NF é AUTORIZADA (promovido da pista futura OU pedido
+ * normal). Se o estoque JÁ saiu no pick (`estoque_lancado=true` — futura que foi
+ * separada antes da NF), volta DIRETO pra `separado`: a peça já está fisicamente
+ * separada/na caixa, não re-pica. Senão `aguardando_separacao` (picking normal
+ * pelo time). Puro.
+ *
+ * Espelha a regra do usuário (2026-06-25): "os que foram separados dentro da
+ * futura vão do aguardando_nf direto pro separado; os que não foram separados
+ * seguem o fluxo normal". `estoque_lancado` é o sinal persistente de "foi picado
+ * na futura" (sobrevive ao trânsito por aguardando_nf, pois a baixa é mantida).
+ */
+export function statusPosAutorizacaoNf(
+  estoqueLancado: boolean,
+): "separado" | "aguardando_separacao" {
+  return estoqueLancado ? "separado" : "aguardando_separacao";
+}

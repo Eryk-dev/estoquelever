@@ -14,6 +14,7 @@ import { logger } from "./logger";
 import { registrarEvento } from "./historico-service";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { dispararCutoverSePronto } from "./wms/cutover";
+import { statusPosAutorizacaoNf } from "./wms/separacao-futura";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -410,7 +411,7 @@ export async function handleNfWebhook(
   // (gerarNotaFiscalPedido é idempotente), não re-emite.
   const { data: pedidoFutura } = await supabase
     .from("siso_pedidos")
-    .select("separacao_futura, decisao_final, empresa_origem_id")
+    .select("separacao_futura, decisao_final, empresa_origem_id, estoque_lancado")
     .eq("id", pedidoId)
     .maybeSingle();
   if (pedidoFutura?.separacao_futura === true) {
@@ -440,17 +441,23 @@ export async function handleNfWebhook(
     }
   }
 
-  // Step 5b — Transition aguardando_nf → aguardando_separacao (only if in correct status)
+  // Step 5b — Transição ao AUTORIZAR a NF (só se ainda em aguardando_nf).
+  // Normal / futura-não-picada → `aguardando_separacao` (picking normal). Mas uma
+  // futura PROMOVIDA que já foi picada na pista futura (estoque saiu no pick →
+  // estoque_lancado=true) volta DIRETO pra `separado`, sem re-picar. Pedido normal
+  // aqui tem estoque_lancado=false (o pick/cutover ainda não rodou) → segue
+  // `aguardando_separacao` como antes.
+  const alvoPosNf = statusPosAutorizacaoNf(pedidoFutura?.estoque_lancado === true);
   const { data: transitioned } = await supabase
     .from("siso_pedidos")
-    .update({ status_separacao: "aguardando_separacao" })
+    .update({ status_separacao: alvoPosNf })
     .eq("id", pedidoId)
     .eq("status_separacao", "aguardando_nf")
     .select("id")
     .maybeSingle();
 
   if (transitioned) {
-    logger.info("nf-webhook", "Pedido transitioned aguardando_nf → aguardando_separacao", {
+    logger.info("nf-webhook", `Pedido transitioned aguardando_nf → ${alvoPosNf}`, {
       pedidoId,
       idNotaFiscalTiny: String(idNotaFiscalTiny),
       empresaId,

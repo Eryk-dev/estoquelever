@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ttlHorasReservaFutura,
   classificarPromocaoFutura,
+  statusPosAutorizacaoNf,
 } from "./separacao-futura";
 
 describe("classificarPromocaoFutura", () => {
@@ -64,5 +65,15 @@ describe("ttlHorasReservaFutura", () => {
 
   it("prazo já passou → fallback 90d (nunca TTL <= 0)", () => {
     expect(ttlHorasReservaFutura("2026-06-01T00:00:00-03:00", now)).toBe(90 * 24);
+  });
+});
+
+describe("statusPosAutorizacaoNf", () => {
+  it("estoque já lançado (picado na futura) → separado direto (não re-pica)", () => {
+    expect(statusPosAutorizacaoNf(true)).toBe("separado");
+  });
+
+  it("estoque não lançado (não picado / pedido normal) → aguardando_separacao", () => {
+    expect(statusPosAutorizacaoNf(false)).toBe("aguardando_separacao");
   });
 });

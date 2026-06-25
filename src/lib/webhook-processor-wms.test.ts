@@ -38,6 +38,7 @@ const state = {
 
 const rec = {
   pedidoUpserts: [] as Array<Record<string, unknown>>,
+  pedidoUpdates: [] as Array<Record<string, unknown>>,
   jobInserts: [] as Array<Record<string, unknown>>,
   webhookUpdates: [] as Array<Record<string, unknown>>,
 };
@@ -60,6 +61,10 @@ function makeBuilder(table: string) {
       if (has("upsert")) {
         rec.pedidoUpserts.push(opArg("upsert") as Record<string, unknown>);
         return { data: null, error: null };
+      }
+      if (has("update")) {
+        rec.pedidoUpdates.push(opArg("update") as Record<string, unknown>);
+        return { data: { id: PEDIDO.id }, error: null };
       }
       if (selStr.includes("estoque_lancado")) return { data: state.existente, error: null };
       if (selStr.includes("vendedor_id")) return { data: state.vendedorPrev, error: null };
@@ -160,7 +165,8 @@ vi.mock("./wms/sync-tiny", () => ({
   ensureProdutoFromTiny: (...args: unknown[]) => ensureProdutoFromTinyMock(...(args as [])),
 }));
 
-import { processWebhookWms } from "./webhook-processor-wms";
+import { processWebhookWms, promoverPedidoFutura } from "./webhook-processor-wms";
+import { createServiceClient } from "./supabase-server";
 import type { TinyPedidoDetalhe } from "./tiny-api";
 
 const PEDIDO = {
@@ -190,6 +196,7 @@ function input() {
 beforeEach(() => {
   vi.clearAllMocks();
   rec.pedidoUpserts = [];
+  rec.pedidoUpdates = [];
   rec.jobInserts = [];
   rec.webhookUpdates = [];
   state.mappings = [{ produto_id: "uuid-1", tiny_produto_id: 111 }];
@@ -424,15 +431,19 @@ describe("processWebhookWms — separação futura (Fase 2)", () => {
 });
 
 describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", () => {
-  it("futura separado + webhook normal → PROMOVE: flip flag + enfileira lancar_estoque, SEM regredir o pick", async () => {
-    // Futura já picada (separado), decisao propria. Chega webhook normal (sem
-    // separacaoFutura) = etiqueta liberou.
+  it("futura NÃO picada + etiqueta liberou, NF não autorizada → promove pra aguardando_nf", async () => {
+    // Futura ainda NÃO picada (estoque_lancado=false), decisao propria. Webhook
+    // normal = etiqueta liberou. NF não autorizada → `aguardando_nf` (não pode ir
+    // pra separado sem a NF). Picada (estoque_lancado=true) é bloqueada AQUI pela
+    // guarda de idempotência (post-pick) e promove via sweep / webhook de NF —
+    // ver describe "promoverPedidoFutura — status na promoção (direto)".
     state.existente = {
       estoque_lancado: false,
       separacao_futura: true,
-      status_separacao: "separado",
+      status_separacao: "aguardando_separacao",
       decisao_final: "propria",
       empresa_origem_id: "emp-1",
+      chave_acesso_nf: null,
     };
     state.job = null;
     state.jobExistentePendente = null;
@@ -441,9 +452,10 @@ describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", (
     const res = await processWebhookWms(input()); // sem separacaoFutura
 
     expect(res.status).toBe("promovido");
-    // NÃO passa pelo upsert ingênuo (não regride separado → aguardando_nf).
-    expect(rec.pedidoUpserts).toHaveLength(0);
-    // Enfileira lancar_estoque (agora gera NF + agrupamento).
+    expect(rec.pedidoUpserts).toHaveLength(0); // não passa pelo upsert ingênuo
+    expect(rec.pedidoUpdates).toContainEqual(
+      expect.objectContaining({ separacao_futura: false, status_separacao: "aguardando_nf" }),
+    );
     expect(rec.jobInserts).toHaveLength(1);
     expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "propria" });
     expect(rec.webhookUpdates[0]).toMatchObject({ status: "concluido" });
@@ -577,5 +589,57 @@ describe("processWebhookWms — promoção futura (Fase 6: etiqueta liberou)", (
 
     expect(res.status).toBe("duplicado"); // NÃO promovido
     expect(rec.jobInserts).toHaveLength(0); // NÃO enfileira lancar_estoque (sem NF)
+  });
+});
+
+// Picado (estoque_lancado=true) é bloqueado no caminho inline (guarda post-pick),
+// então a promoção dele acontece via sweep / webhook de NF chamando
+// promoverPedidoFutura direto. Aqui testamos a decisão de status da função.
+describe("promoverPedidoFutura — status na promoção (direto)", () => {
+  function sb() {
+    return createServiceClient() as unknown as Parameters<typeof promoverPedidoFutura>[0];
+  }
+
+  it("NF NÃO autorizada (sem chave) → aguardando_nf + flipa a flag", async () => {
+    state.existente = { estoque_lancado: true, chave_acesso_nf: null };
+    state.jobExistentePendente = null;
+    await promoverPedidoFutura(sb(), {
+      pedidoId: "p1", decisaoFinal: "propria", galpaoNome: "CWB", empresaId: "emp-1",
+    });
+    expect(rec.pedidoUpdates).toContainEqual(
+      expect.objectContaining({ separacao_futura: false, status_separacao: "aguardando_nf" }),
+    );
+  });
+
+  it("NF autorizada + PICADO (estoque_lancado) → separado direto (não re-pica)", async () => {
+    state.existente = { estoque_lancado: true, chave_acesso_nf: "CHAVE" };
+    state.jobExistentePendente = null;
+    await promoverPedidoFutura(sb(), {
+      pedidoId: "p1", decisaoFinal: "propria", galpaoNome: "CWB", empresaId: "emp-1",
+    });
+    expect(rec.pedidoUpdates).toContainEqual(
+      expect.objectContaining({ separacao_futura: false, status_separacao: "separado" }),
+    );
+  });
+
+  it("NF autorizada + NÃO picado → aguardando_separacao (picking normal)", async () => {
+    state.existente = { estoque_lancado: false, chave_acesso_nf: "CHAVE" };
+    state.jobExistentePendente = null;
+    await promoverPedidoFutura(sb(), {
+      pedidoId: "p1", decisaoFinal: "transferencia", galpaoNome: "CWB", empresaId: "emp-1",
+    });
+    expect(rec.pedidoUpdates).toContainEqual(
+      expect.objectContaining({ separacao_futura: false, status_separacao: "aguardando_separacao" }),
+    );
+  });
+
+  it("decisao=oc → só flipa a flag, NÃO mexe no status (worker define)", async () => {
+    state.existente = { estoque_lancado: false, chave_acesso_nf: "CHAVE" };
+    state.jobExistentePendente = null;
+    await promoverPedidoFutura(sb(), {
+      pedidoId: "p1", decisaoFinal: "oc", galpaoNome: "CWB", empresaId: "emp-1",
+    });
+    expect(rec.pedidoUpdates).toContainEqual({ separacao_futura: false });
+    expect(rec.pedidoUpdates.some((u) => "status_separacao" in u)).toBe(false);
   });
 });

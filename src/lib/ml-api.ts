@@ -7,6 +7,7 @@
  */
 import { ML_API_BASE, getValidMlToken } from "./ml-oauth";
 import { createServiceClient } from "./supabase-server";
+import { extrairZplDeBuffer } from "./etiqueta-download";
 import { logger } from "./logger";
 import {
   isMlDisabled,
@@ -450,6 +451,70 @@ export async function getMlShipmentStatus(
     });
     return null;
   }
+}
+
+// ─── Etiqueta de envio direto do ML (NF já expedida no Tiny) ─────────
+
+export interface MlEtiquetaZplResult {
+  zpl: string;
+  shipmentId: number;
+  trackingNumber: string | null;
+}
+
+/**
+ * Baixa a etiqueta de envio (ZPL) direto do Mercado Livre.
+ *
+ * Necessário quando o ML/Tiny já marcou a NF como "expedida" (vendas Mercado
+ * Envios geram a etiqueta no ML e a integração ML↔Tiny expede a NF sozinha) —
+ * aí `criarAgrupamento` no Tiny falha com "já foi expedida" e o ZPL nunca fica
+ * sob um agrupamento que o SISO conheça. O ML expõe o mesmo ZIP que o Tiny
+ * ("Etiqueta de envio.txt" + "Controle.pdf"), então reusamos o extrator.
+ *
+ * GET /shipment_labels?shipment_ids={id}&response_type=zpl2 → ZIP (binário), por
+ * isso NÃO passa pelo mlFetch (JSON-only) — fetch direto com Bearer.
+ * Retorna null quando ML está desabilitado, não há shipment, ou o download falha.
+ */
+export async function obterEtiquetaZplShipment(
+  connectionId: string,
+  orderId: string,
+): Promise<MlEtiquetaZplResult | null> {
+  if (isMlDisabled()) return null;
+
+  const shipmentId = await resolverShipmentId(connectionId, orderId);
+  if (!shipmentId) return null;
+
+  // Tracking (best-effort) só pra semear os barcodes da conferência.
+  let trackingNumber: string | null = null;
+  try {
+    const sh = await mlFetch<{ tracking_number?: string | null }>(
+      connectionId,
+      `/shipments/${shipmentId}`,
+    );
+    trackingNumber = sh.tracking_number ?? null;
+  } catch {
+    /* non-fatal */
+  }
+
+  const token = await getValidMlToken(connectionId);
+  const url = `${ML_API_BASE}/shipment_labels?shipment_ids=${shipmentId}&response_type=zpl2`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) {
+    logger.warn("ml-api", "falha ao baixar etiqueta ZPL do shipment", {
+      connectionId,
+      shipmentId: String(shipmentId),
+      status: String(res.status),
+    });
+    return null;
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const zpl = await extrairZplDeBuffer(buffer, `ml-shipment-${shipmentId}`);
+  if (!zpl) return null;
+
+  return { zpl, shipmentId, trackingNumber };
 }
 
 // ─── Test connection ────────────────────────────────────────────────

@@ -7313,3 +7313,109 @@ erros:
       - src/components/wms/vendas/tabs-status-separacao.tsx
       - src/components/wms/ui/wms-ui.tsx
     tags: [separacao, cancelamento, cancelados, motivo, compras, webhook, aba-virtual]
+
+  - id: SEP-FUTURA-PROMO-NF-01
+    date: "2026-06-25"
+    source: src/lib/execution-worker.ts
+    category: business_logic
+    message: >
+      Pedidos de separação futura PROMOVIDOS (etiqueta liberou) ficavam em
+      'separado'/encaixotado SEM NF e SEM agrupamento. Repro: 12 pedidos NetAir
+      (ex. 1046438132), futura=false, estoque_lancado=true, nota_fiscal_id=null,
+      agrupamento_expedicao_id=null. Timeline: lancar_estoque_pos_nf baixou o
+      estoque no pick (17:04, S com nota_fiscal_id=NULL) -> promoção enfileirou
+      lancar_estoque (19:30) com estoque já lançado. Outros 12 (futura=true)
+      eram a mesma bomba pré-promoção (viram esse caso assim que o sweep ML rodar).
+    cause: >
+      Separação futura INVERTE a ordem normal NF->estoque: o pick baixa o estoque
+      (cutover, S sem NF) ANTES da NF existir; a NF só nasce na promoção. Mas o
+      guard de idempotência de executarSaidaPropria era `if (estoque_lancado)
+      return` ANTES de gerar a NF — assumia "estoque lançado => NF já emitida".
+      Na promoção, com estoque já lançado pelo pick, curto-circuitava e a NF nunca
+      saía. Sem NF -> criarAgrupamentoFase1 barrado pelo gate (precisa
+      nota_fiscal_id+chave_acesso_nf) -> sem agrupamento. executarSaidaTransferencia
+      não tinha o guard (NF saía), mas o cutover pós-NF virava no-op 'ja_lancado'
+      e o pos_nf (que cria o agrupamento) não rodava de novo -> mesmo buraco de
+      agrupamento.
+    fix: >
+      executarSaidaPropria: guard idempotente só retorna se (estoque_lancado E
+      (futura OU nota_fiscal_id)); o caso futura PROMOVIDA (futura=false +
+      estoque_lancado + sem NF) cai adiante e emite só a camada fiscal
+      (marcadores+NF+enriquecer) e chama criarAgrupamentoFase1 DIRETO (pula o
+      cutover, que seria no-op). executarSaidaTransferencia: após a NF, se
+      estoque_lancado já é true, cria agrupamento direto e retorna. Remediação dos
+      12 travados = re-enfileirar lancar_estoque (worker corrigido emite NF +
+      agrupamento). Movs S históricas ficam com nota_fiscal_id=null (gotcha #5).
+    files:
+      - src/lib/execution-worker.ts
+      - src/lib/execution-worker.test.ts
+    tags: [separacao-futura, promocao, nota-fiscal, agrupamento, worker, idempotencia, cutover]
+
+  - id: SEP-FUTURA-PROMO-STATUS-01
+    date: "2026-06-25"
+    source: src/lib/webhook-processor-wms.ts
+    category: business_logic
+    message: >
+      Promoção de separação futura jogava o pedido picado direto pra `separado`
+      ANTES da NF autorizar → aparecia "pronto pra embalar" sem etiqueta (a NF
+      ainda processando no SEFAZ). promoverPedidoFutura mantinha o status atual
+      (separado), então um pedido picado na futura virava separado no ato da
+      promoção, com a NF não-autorizada.
+    cause: >
+      promoverPedidoFutura só flipava separacao_futura=false e mantinha o
+      status_separacao; o nf-webhook-handler (Step 5b) sempre transicionava
+      aguardando_nf → aguardando_separacao (nunca separado). Faltava acoplar o
+      status à AUTORIZAÇÃO da NF + distinguir picado×não-picado.
+    fix: >
+      Modelo novo (regra do Eryk): promoção SEMPRE vai pra `aguardando_nf`
+      (exceto OC, cujo status o worker define) e só avança quando a NF AUTORIZA.
+      Helper puro statusPosAutorizacaoNf(estoque_lancado): picado (estoque já
+      saiu no pick = estoque_lancado=true) → `separado` direto (não re-pica);
+      não-picado → `aguardando_separacao` (picking normal). promoverPedidoFutura
+      define o status (aguardando_nf, ou direto se a chave já existe no ato);
+      nf-webhook Step 5b usa o helper. ⚠ Mantém a baixa do pick (a peça já está
+      na caixa): o UPDATE de status é direto, não passa por
+      reverterCutoverSeRetrocedeu; o cutover de volta a separado é no-op
+      (estoque_lancado). Picado é barrado no caminho inline (guarda post-pick) e
+      promove via sweep / webhook de NF.
+    files:
+      - src/lib/wms/separacao-futura.ts
+      - src/lib/webhook-processor-wms.ts
+      - src/lib/nf-webhook-handler.ts
+    tags: [separacao-futura, promocao, aguardando-nf, status-separacao, nota-fiscal, cutover]
+
+  - id: SEP-FUTURA-ETIQUETA-ML-01
+    date: "2026-06-26"
+    source: src/lib/agrupamento-service.ts
+    category: external_api
+    message: >
+      Pedidos Mercado Livre (incl. separação futura promovida) ficavam SEM
+      etiqueta imprimível: criar o agrupamento no Tiny falhava com "a NF já foi
+      expedida", o pedido era marcado agrupamento_expedicao_id='expedido_externo'
+      e o ZPL nunca era cacheado. 33 pedidos travados (32 sem ZPL) desde 12/06,
+      em todos os marketplaces. Cobaia: #146278 (NF 1046504726, shipment ML
+      47331508924 em ready_to_print).
+    cause: >
+      Vendas Mercado Envios geram a etiqueta no PRÓPRIO ML e a integração ML↔Tiny
+      expede a NF sozinha. Quando o SISO emite a NF e tenta criar SEU agrupamento
+      (criarAgrupamento), o Tiny recusa "já foi expedida" — e a NF nunca fica sob
+      um agrupamento que o SISO conheça (varredura ao vivo: NENHUM agrupamento
+      Tiny contém a NF). O catch marcava expedido_externo e desistia; pior,
+      expedido_externo só era ESCRITO, nunca lido, e o retry-etiqueta filtra só
+      agrupamento numérico (/^\d+$/) → beco sem saída, sem recuperação.
+    fix: >
+      Buscar a etiqueta direto do ML quando a NF já foi expedida no Tiny. Novo
+      obterEtiquetaZplShipment (ml-api): resolve o shipment (order/pack), baixa
+      GET /shipment_labels?...&response_type=zpl2 (ZIP no MESMO layout do Tiny:
+      "Etiqueta de envio.txt" + "Controle.pdf") e extrai o ZPL pelo extrator
+      compartilhado (extrairZplDeBuffer, exportado de etiqueta-download).
+      agrupamento-service: nos 2 catch de "já foi expedida" (processarPedido +
+      criarAgrupamentoFase1) tratarNfJaExpedida marca expedido_externo E recupera
+      o ZPL via ML (só pedidos ML com conexão ativa; Shopee/sem-ML seguem
+      expedido_externo). ZPL cacheado → imprime pelo fast path normal.
+    files:
+      - src/lib/ml-api.ts
+      - src/lib/agrupamento-service.ts
+      - src/lib/etiqueta-download.ts
+      - src/lib/ml-api-etiqueta.test.ts
+    tags: [separacao-futura, etiqueta, mercado-livre, agrupamento, nota-fiscal, expedido-externo, zpl]

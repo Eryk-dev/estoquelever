@@ -33,7 +33,7 @@ export async function baixarZpl(url: string): Promise<string | null> {
 
     // If it's a ZIP, extract the ZPL file from inside
     if (contentType.includes("zip") || contentType.includes("octet-stream")) {
-      return await extrairZplDoZip(Buffer.from(buffer), url);
+      return await extrairZplDeBuffer(Buffer.from(buffer), url);
     }
 
     // Otherwise treat as raw text (legacy/fallback)
@@ -58,9 +58,15 @@ export async function baixarZpl(url: string): Promise<string | null> {
 
 // ─── Internal ────────────────────────────────────────────────────────────────
 
-async function extrairZplDoZip(
+/**
+ * Extract the ZPL text from a ZIP buffer. Both Tiny and Mercado Livre return the
+ * same ZIP layout ("Etiqueta de envio.txt" = ZPL + "Controle.pdf" = ignored), so
+ * this is shared by the Tiny URL download (baixarZpl) and the ML direct-label
+ * fetch (obterEtiquetaZplShipment). `origem` is only used for log context.
+ */
+export async function extrairZplDeBuffer(
   buffer: Buffer,
-  url: string,
+  origem: string,
 ): Promise<string | null> {
   try {
     const zip = await JSZip.loadAsync(buffer);
@@ -74,7 +80,7 @@ async function extrairZplDoZip(
 
     if (!zplEntry) {
       logger.warn(LOG_SOURCE, "ZIP não contém arquivo ZPL", {
-        url,
+        origem,
         files: Object.keys(zip.files).join(", "),
       });
       return null;
@@ -84,14 +90,14 @@ async function extrairZplDoZip(
     if (validarZpl(text)) return text;
 
     logger.warn(LOG_SOURCE, "Arquivo extraído do ZIP não é ZPL válido", {
-      url,
+      origem,
       fileName: zplEntry.name,
       preview: text.substring(0, 100),
     });
     return null;
   } catch (err) {
     logger.warn(LOG_SOURCE, "Falha ao descompactar ZIP", {
-      url,
+      origem,
       error: err instanceof Error ? err.message : String(err),
     });
     return null;

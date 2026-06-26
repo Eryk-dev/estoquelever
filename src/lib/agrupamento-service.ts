@@ -25,6 +25,11 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
 import { extrairBarcodesDoRaster } from "@/lib/etiqueta-barcode-raster";
+import {
+  getActiveMlConnectionForEmpresa,
+  obterEtiquetaZplShipment,
+} from "@/lib/ml-api";
+import { isMercadoLivre } from "@/lib/domain-helpers";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -382,14 +387,11 @@ export async function criarAgrupamentoFase1(pedidoId: string): Promise<void> {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("já foi expedida")) {
-          logger.warn(LOG_SOURCE, "Fase1: NF já expedida no Tiny", {
+          logger.warn(LOG_SOURCE, "Fase1: NF já expedida no Tiny — recuperando etiqueta via ML", {
             pedidoId,
             nfId: String(p.nota_fiscal_id),
           });
-          await supabase
-            .from("siso_pedidos")
-            .update({ agrupamento_expedicao_id: "expedido_externo" })
-            .eq("id", pedidoId);
+          await tratarNfJaExpedida(supabase, pedidoId);
           return;
         }
         throw err;
@@ -527,14 +529,11 @@ async function processarPedido(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("já foi expedida")) {
-        logger.warn(LOG_SOURCE, "NF já expedida no Tiny", {
+        logger.warn(LOG_SOURCE, "NF já expedida no Tiny — recuperando etiqueta via ML", {
           pedidoId: pedido.id,
           nfId: String(pedido.nota_fiscal_id),
         });
-        await supabase
-          .from("siso_pedidos")
-          .update({ agrupamento_expedicao_id: "expedido_externo" })
-          .eq("id", pedido.id);
+        await tratarNfJaExpedida(supabase, pedido.id);
         return;
       }
       throw err;
@@ -762,6 +761,93 @@ async function salvarEtiqueta(
     .from("siso_pedidos")
     .update(updateData)
     .eq("id", pedidoId);
+}
+
+/**
+ * NF já expedida no Tiny: marca o pedido como `expedido_externo` e, quando é
+ * venda Mercado Livre, recupera a etiqueta ZPL direto do ML.
+ *
+ * Vendas Mercado Envios geram a etiqueta no próprio ML e a integração ML↔Tiny
+ * expede a NF sozinha — então o `criarAgrupamento` do SISO falha com "já foi
+ * expedida" e a NF NUNCA fica sob um agrupamento Tiny que o SISO conheça
+ * (confirmado em campo: nenhum agrupamento contém a NF). Sem a recuperação via
+ * ML o pedido fica preso sem etiqueta imprimível, pois `expedido_externo` não é
+ * numérico e o retry de etiqueta o ignora (filtro `/^\d+$/`).
+ */
+async function tratarNfJaExpedida(
+  supabase: SupabaseClient,
+  pedidoId: string,
+): Promise<void> {
+  await supabase
+    .from("siso_pedidos")
+    .update({ agrupamento_expedicao_id: "expedido_externo" })
+    .eq("id", pedidoId);
+
+  try {
+    await recuperarEtiquetaViaMl(supabase, pedidoId);
+  } catch (err) {
+    logger.warn(LOG_SOURCE, "Recuperação de etiqueta via ML falhou (segue expedido_externo)", {
+      pedidoId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Busca a etiqueta ZPL direto do Mercado Livre e cacheia no pedido. Só atua em
+ * vendas ML com order id e conexão ML ativa; ignora se já há ZPL cacheado.
+ * Retorna true quando recuperou (ou já havia) o ZPL.
+ */
+async function recuperarEtiquetaViaMl(
+  supabase: SupabaseClient,
+  pedidoId: string,
+): Promise<boolean> {
+  const { data: p } = await supabase
+    .from("siso_pedidos")
+    .select("id_pedido_ecommerce, nome_ecommerce, empresa_origem_id, etiqueta_zpl")
+    .eq("id", pedidoId)
+    .maybeSingle();
+
+  if (!p) return false;
+  if (p.etiqueta_zpl) return true; // já cacheada
+  if (
+    !isMercadoLivre(p.nome_ecommerce) ||
+    !p.id_pedido_ecommerce ||
+    !p.empresa_origem_id
+  ) {
+    return false;
+  }
+
+  const connId = await getActiveMlConnectionForEmpresa(p.empresa_origem_id);
+  if (!connId) return false;
+
+  const res = await obterEtiquetaZplShipment(connId, String(p.id_pedido_ecommerce));
+  if (!res?.zpl) return false;
+
+  const doRaster = await extrairBarcodesDoRaster(res.zpl);
+  const barcodes = montarBarcodesEtiqueta(res.zpl, [res.trackingNumber, ...doRaster]);
+  await supabase
+    .from("siso_pedidos")
+    .update({
+      etiqueta_zpl: res.zpl,
+      ...(barcodes.length > 0 ? { etiqueta_barcodes: barcodes } : {}),
+    })
+    .eq("id", pedidoId);
+
+  // Status via RPC (coluna etiqueta_status tem schema-cache quirk no PostgREST).
+  // Best-effort: o ZPL já está cacheado mesmo se o status não atualizar.
+  await supabase
+    .rpc("siso_set_etiqueta_status", { p_pedido_id: pedidoId, p_status: "pendente" })
+    .then(
+      () => {},
+      () => {},
+    );
+
+  logger.info(LOG_SOURCE, "Etiqueta recuperada via ML (NF já expedida no Tiny)", {
+    pedidoId,
+    shipmentId: String(res.shipmentId),
+  });
+  return true;
 }
 
 /**

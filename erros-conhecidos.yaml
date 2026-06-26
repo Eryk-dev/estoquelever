@@ -7419,3 +7419,32 @@ erros:
       - src/lib/etiqueta-download.ts
       - src/lib/ml-api-etiqueta.test.ts
     tags: [separacao-futura, etiqueta, mercado-livre, agrupamento, nota-fiscal, expedido-externo, zpl]
+
+  - id: tiny-oauth-refresh-corrida-invalid-grant
+    date: "2026-06-26"
+    source: src/lib/tiny-oauth.ts
+    category: auth
+    message: >
+      Erro critical recorrente "Token refresh failed (400): invalid_grant /
+      Token is not active" no refresh OAuth do Tiny (Keycloak). Transitório e
+      auto-curado: ~90s depois a conexão volta a token_status='ok'. Visto na
+      conexão da Bellator (connectionId d3d5090b), mas afeta qualquer empresa.
+    cause: >
+      Keycloak rotaciona o refresh_token a cada uso (single-use). getValidToken
+      não serializava o refresh, então 2 requests concorrentes da mesma conexão
+      (tiny-queue roda até TINY_MAX_CONCURRENT=5; + corrida cross-instância no
+      serverless) viam o token expirado ao mesmo tempo e ambos disparavam
+      refresh. O 1º rotacionava o token; o 2º usava o refresh_token já queimado →
+      400 invalid_grant, logado como critical e marcando token_status='erro',
+      mesmo a conexão estando saudável (o vencedor já salvara um token válido).
+    fix: >
+      (1) Dedup in-flight por connectionId (Map inflightRefresh) colapsa os
+      refreshes concorrentes desta instância num só. (2) Recovery cross-instância
+      em refreshAndSave: ao falhar o refresh, re-lê a conexão; se já existe um
+      access_token fresco, diferente e ainda válido (>60s), reutiliza-o em vez de
+      logar critical (corrida perdida, recuperada). Só loga critical + marca
+      token_status='erro' quando o refresh_token está genuinamente morto.
+    files:
+      - src/lib/tiny-oauth.ts
+      - src/lib/tiny-oauth.test.ts
+    tags: [oauth, tiny, keycloak, refresh-token, corrida, invalid-grant, auth]

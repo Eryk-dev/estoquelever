@@ -109,6 +109,14 @@ export async function refreshAccessToken(params: {
 // ─── Get a valid access token for a connection ──────────────────────────────
 
 /**
+ * Refreshes em andamento por conexão. Tiny/Keycloak rotaciona o refresh_token a
+ * cada uso, então dois refreshes simultâneos da mesma conexão fazem o perdedor
+ * usar um refresh_token já queimado → 400 invalid_grant ("Token is not active").
+ * Colapsar os refreshes concorrentes desta instância num só elimina a corrida.
+ */
+const inflightRefresh = new Map<string, Promise<string>>();
+
+/**
  * Returns a valid access_token for the given connection.
  * Automatically refreshes if expired.
  */
@@ -142,7 +150,30 @@ export async function getValidToken(connectionId: string): Promise<string> {
     return conn.access_token;
   }
 
-  // Token expired — refresh
+  // Token expirado — refresh deduplicado por conexão nesta instância.
+  let pending = inflightRefresh.get(connectionId);
+  if (!pending) {
+    pending = refreshAndSave(connectionId, {
+      access_token: conn.access_token,
+      refresh_token: conn.refresh_token,
+      client_id: conn.client_id,
+      client_secret: conn.client_secret,
+    }).finally(() => inflightRefresh.delete(connectionId));
+    inflightRefresh.set(connectionId, pending);
+  }
+  return pending;
+}
+
+async function refreshAndSave(
+  connectionId: string,
+  conn: {
+    access_token: string;
+    refresh_token: string;
+    client_id: string;
+    client_secret: string;
+  },
+): Promise<string> {
+  const supabase = createServiceClient();
   logger.info("oauth", "Refreshing access token", { connectionId });
 
   let tokens;
@@ -153,6 +184,32 @@ export async function getValidToken(connectionId: string): Promise<string> {
       clientSecret: conn.client_secret,
     });
   } catch (err) {
+    // Possível corrida cross-instância: outro worker já renovou o token e
+    // rotacionou o refresh_token, deixando o nosso inválido. Re-lê a conexão;
+    // se já existe um token fresco e diferente, usa-o (corrida perdida,
+    // recuperada — sem alarme falso).
+    const { data: latest } = await supabase
+      .from("siso_tiny_connections")
+      .select("access_token, token_expires_at")
+      .eq("id", connectionId)
+      .single();
+    const latestExp = latest?.token_expires_at
+      ? new Date(latest.token_expires_at).getTime()
+      : 0;
+    if (
+      latest?.access_token &&
+      latest.access_token !== conn.access_token &&
+      latestExp > Date.now() + 60_000
+    ) {
+      logger.info(
+        "oauth",
+        "Refresh perdeu corrida; reutilizando token renovado por refresh concorrente",
+        { connectionId },
+      );
+      return latest.access_token;
+    }
+
+    // Falha genuína — refresh_token morto.
     logger.logError({
       error: err,
       source: "oauth",

@@ -96,6 +96,38 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 ---
 
+### POST /api/wms/ml/webhook
+
+**File:** `src/app/api/wms/ml/webhook/route.ts`
+
+**Purpose:** Recebe as notificações (webhook) do Mercado Livre. Usado pra promover separação futura em TEMPO REAL: quando o ML libera a etiqueta de uma venda buffered (substatus deixa de ser `buffered`), empurra uma notificação no tópico `shipments` → o app casa shipment → pedido (`siso_pedidos.ml_shipment_id`) e promove (emite NF + agrupamento). O polling de 30min (`promoverFuturasLiberadas`) segue como rede de segurança.
+
+**Auth:** None (webhook externo; ML não assina). Só age em shipments que casam com uma futura viva nossa e re-lê o estado com nosso token.
+
+**Request Body (notificação ML):**
+```json
+{
+  "resource": "/shipments/123",
+  "topic": "shipments",
+  "user_id": 421259712,
+  "application_id": 6941672126013833
+}
+```
+
+**Response (200):** `{ "ok": true }` — sempre 200 imediato; processa em `after()` (ML re-tenta em não-200). `GET` também responde 200 (validação da URL no DevCenter).
+
+**Config (manual no DevCenter do app ESTOQUE LEVER):**
+- `notifications_callback_url = https://estoquelever.vercel.app/api/wms/ml/webhook`
+- tópico = `shipments`
+
+**Business Logic (`processMlNotification`):**
+- Só `topic = shipments`; resto ignorado de barato
+- Extrai `shipment_id` do `resource`, casa com `siso_pedidos` (`ml_shipment_id`, `separacao_futura=true`, `status != cancelado`, `decisao_final != null`)
+- Re-lê o substatus no ML (`getMlShipmentStatusById`); `classificarPromocaoFutura` → `promover` chama `promoverPedidoFutura`
+- Idempotente: pós-promoção `separacao_futura=false` → notificação repetida vira no-op
+
+---
+
 ### POST /api/wms/webhook/reprocessar
 
 **File:** `src/app/api/wms/webhook/reprocessar/route.ts`

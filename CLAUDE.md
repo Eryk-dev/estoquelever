@@ -180,7 +180,7 @@ src/
     cross/**                            # busca universal, OEM, fetch Tiny
     separacao/**                        # bridge Tiny↔WMS (wms-mapping, realocacao-resolver, ...)
     tiny-{api,oauth,stub,queue}.ts · rate-limiter.ts · sku-fornecedor.ts
-    ml-{api,oauth,anuncios,stub}.ts
+    ml-{api,oauth,anuncios,stub}.ts · ml-notifications.ts  # webhook ML (tópico shipments) → promove futura real-time
     printnode.ts · etiqueta-*.ts · zpl-produto.ts · agrupamento-service.ts
     session.ts · permissions.ts · roles-loader.ts · auth-context.tsx
     logger.ts · supabase-server.ts · config.ts · historico-service.ts · utils.ts
@@ -209,7 +209,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### API — grupos por domínio (209 rotas em `/api/wms`)
 
-`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (7) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) · `encaixotamento` (4) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`, `client-error`).
+`separacao` (33) · `admin` (21) · `cross` (17) · `inventario` (15) · `compras` (14) · `trocas` (5) · `guarda` (10) · `pedidos` (8) · `compras-manuais` (7) · `ml` (8) · `tiny` (8) · `produtos` (7) · `vendas` (6) · `transferencias` (5) · `receber` (5) · `localizacoes` (5) · `devolucoes` (4) · `fornecedores` (3) · `encaixotamento` (4) + singletons (`estoque`, `ledger`, `ajuste`, `replenishment`, `cobertura`, `reconciliacao*`, `impressoes`, `dashboard-*`, `webhook`, `worker`, `snapshot-inicial`, `saldo-recebimento-orfao`, `transferir-galpao`, `rotear`, `lancamento-retroativo`, `produto-fornecedores`, `client-error`).
 
 ### Database — tabelas principais
 

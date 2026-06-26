@@ -1123,15 +1123,19 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
         const connId = await getActiveMlConnectionForEmpresa(empresaOrigemId);
         if (!connId) return; // empresa sem conexão ML vinculada
         const sla = await getMlShipmentSla(connId, orderIdMl);
-        if (!sla?.expectedDate) return;
-        await sb
-          .from("siso_pedidos")
-          .update({ prazo_envio: sla.expectedDate })
-          .eq("id", pedido.id);
-        logger.info("processor.wms", "prazo_envio atualizado via ML SLA", {
+        if (!sla) return;
+        // Persiste o shipment_id (mesmo sem SLA) — é a chave de match do webhook
+        // de notificações do ML (promoção futura real-time). prazo_envio entra
+        // junto quando o ML expõe a hora-limite de despacho.
+        const upd: Record<string, string> = {};
+        if (sla.shipmentId) upd.ml_shipment_id = String(sla.shipmentId);
+        if (sla.expectedDate) upd.prazo_envio = sla.expectedDate;
+        if (Object.keys(upd).length === 0) return;
+        await sb.from("siso_pedidos").update(upd).eq("id", pedido.id);
+        logger.info("processor.wms", "enrich ML (prazo_envio + shipment_id)", {
           pedidoId: pedido.id,
           shipmentId: sla.shipmentId,
-          expectedDate: sla.expectedDate,
+          expectedDate: sla.expectedDate ?? "null",
         });
       } catch (err) {
         logger.warn("processor.wms", "falha no enrich de prazo_envio (ML)", {

@@ -453,6 +453,33 @@ export async function getMlShipmentStatus(
   }
 }
 
+/**
+ * Lê status + substatus de um shipment DIRETO pelo shipmentId (sem resolver
+ * order/pack). Usado pelo webhook de notificações do ML, que já entrega o
+ * shipment_id no `resource`. Retorna null se ML desabilitado ou shipment
+ * inacessível.
+ */
+export async function getMlShipmentStatusById(
+  connectionId: string,
+  shipmentId: number | string,
+): Promise<{ status: string | null; substatus: string | null } | null> {
+  if (isMlDisabled()) return null;
+  try {
+    const sh = await mlFetch<MlShipmentDetail>(
+      connectionId,
+      `/shipments/${shipmentId}`,
+    );
+    return { status: sh.status ?? null, substatus: sh.substatus ?? null };
+  } catch (err) {
+    logger.info("ml-api", "falha ao ler shipment detail by id", {
+      connectionId,
+      shipmentId: String(shipmentId),
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 // ─── Etiqueta de envio direto do ML (NF já expedida no Tiny) ─────────
 
 export interface MlEtiquetaZplResult {

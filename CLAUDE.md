@@ -180,7 +180,7 @@ src/
     cross/**                            # busca universal, OEM, fetch Tiny
     separacao/**                        # bridge Tiny↔WMS (wms-mapping, realocacao-resolver, ...)
     tiny-{api,oauth,stub,queue}.ts · rate-limiter.ts · sku-fornecedor.ts
-    ml-{api,oauth,anuncios,stub}.ts · ml-notifications.ts  # webhook ML (tópico shipments) → promove futura real-time
+    ml-{api,oauth,anuncios,stub}.ts · ml-notifications.ts  # webhook ML: orders_v2→intake futura buffered · shipments→promove (real-time; polling de backup)
     printnode.ts · etiqueta-*.ts · zpl-produto.ts · agrupamento-service.ts
     session.ts · permissions.ts · roles-loader.ts · auth-context.tsx
     logger.ts · supabase-server.ts · config.ts · historico-service.ts · utils.ts

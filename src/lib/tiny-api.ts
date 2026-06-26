@@ -215,6 +215,7 @@ export async function listarPedidos(
     dataInicial?: string;
     dataFinal?: string;
     dataAtualizacao?: string;
+    numeroPedidoEcommerce?: string;
     limit?: number;
     offset?: number;
   } = {},
@@ -224,6 +225,7 @@ export async function listarPedidos(
   if (params.dataInicial) query.set("dataInicial", params.dataInicial);
   if (params.dataFinal) query.set("dataFinal", params.dataFinal);
   if (params.dataAtualizacao) query.set("dataAtualizacao", params.dataAtualizacao);
+  if (params.numeroPedidoEcommerce) query.set("numeroPedidoEcommerce", params.numeroPedidoEcommerce);
   query.set("limit", String(params.limit ?? 100));
   if (params.offset) query.set("offset", String(params.offset));
   const qs = query.toString();

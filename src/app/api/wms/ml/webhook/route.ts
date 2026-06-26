@@ -16,9 +16,12 @@ import { logger } from "@/lib/logger";
  *
  * Config (manual no DevCenter do app ESTOQUE LEVER):
  *   notifications_callback_url = https://estoquelever.vercel.app/api/wms/ml/webhook
- *   tópico = shipments
+ *   tópicos = orders_v2 (intake da futura buffered) + shipments (promoção)
+ *
+ * maxDuration alto: o intake roda o processWebhook inteiro (fetch do pedido no
+ * Tiny via fila rate-limited), igual ao webhook do Tiny.
  */
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   let payload: MlNotification;
@@ -38,8 +41,9 @@ export async function POST(request: NextRequest) {
   after(async () => {
     try {
       const r = await processMlNotification(payload);
-      if (r.reason === "promovido") {
-        logger.info("ml-webhook", "futura promovida via webhook", {
+      if (r.reason === "promovido" || r.reason === "carregado") {
+        logger.info("ml-webhook", "futura processada via webhook", {
+          acao: r.reason,
           pedidoId: r.pedidoId ?? "",
         });
       }

@@ -100,15 +100,17 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **File:** `src/app/api/wms/ml/webhook/route.ts`
 
-**Purpose:** Recebe as notificações (webhook) do Mercado Livre. Usado pra promover separação futura em TEMPO REAL: quando o ML libera a etiqueta de uma venda buffered (substatus deixa de ser `buffered`), empurra uma notificação no tópico `shipments` → o app casa shipment → pedido (`siso_pedidos.ml_shipment_id`) e promove (emite NF + agrupamento). O polling de 30min (`promoverFuturasLiberadas`) segue como rede de segurança.
+**Purpose:** Recebe as notificações (webhook) do Mercado Livre — separação futura em TEMPO REAL, dois caminhos (substituem a latência do polling de 30min, que segue de rede de segurança):
+1. **Intake** (`orders_v2`/`orders`/`created_orders`): venda ML paga com etiqueta segurada (substatus `buffered`) NÃO dispara o webhook do Tiny. Aqui, ao receber a notificação de pedido, checa o substatus; se `buffered` e ainda não carregado, acha o pedido no Tiny (por `numeroPedidoEcommerce`) e carrega na pista futura (`processWebhook` com `separacaoFutura=true`).
+2. **Promoção** (`shipments`): quando a etiqueta libera (substatus deixa de ser `buffered`), casa shipment → pedido (`siso_pedidos.ml_shipment_id`) e promove (emite NF + agrupamento).
 
-**Auth:** None (webhook externo; ML não assina). Só age em shipments que casam com uma futura viva nossa e re-lê o estado com nosso token.
+**Auth:** None (webhook externo; ML não assina). Só age em pedidos/shipments que casam com os nossos e re-lê o estado com nosso token.
 
 **Request Body (notificação ML):**
 ```json
 {
-  "resource": "/shipments/123",
-  "topic": "shipments",
+  "resource": "/orders/123" | "/shipments/123",
+  "topic": "orders_v2" | "shipments",
   "user_id": 421259712,
   "application_id": 6941672126013833
 }
@@ -118,13 +120,13 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Config (manual no DevCenter do app ESTOQUE LEVER):**
 - `notifications_callback_url = https://estoquelever.vercel.app/api/wms/ml/webhook`
-- tópico = `shipments`
+- tópicos = `orders_v2` (intake) + `shipments` (promoção)
 
 **Business Logic (`processMlNotification`):**
-- Só `topic = shipments`; resto ignorado de barato
-- Extrai `shipment_id` do `resource`, casa com `siso_pedidos` (`ml_shipment_id`, `separacao_futura=true`, `status != cancelado`, `decisao_final != null`)
-- Re-lê o substatus no ML (`getMlShipmentStatusById`); `classificarPromocaoFutura` → `promover` chama `promoverPedidoFutura`
-- Idempotente: pós-promoção `separacao_futura=false` → notificação repetida vira no-op
+- Roteia por tópico; tópico desconhecido ignorado de barato
+- **Intake**: order id do `resource` → pula se já em `siso_pedidos` → `user_id`→empresa (`siso_ml_connections.ml_user_id`) → `getMlShipmentStatus` (só `buffered`) → acha tinyId via `listarPedidos({numeroPedidoEcommerce})` (adia se o Tiny não importou) → dedup `siso_webhook_logs` (`tipo=ml_webhook_intake`) → `processWebhook(separacaoFutura=true)`
+- **Promoção**: shipment id do `resource`, casa `siso_pedidos` (`ml_shipment_id`, `separacao_futura=true`, `status != cancelado`, `decisao_final != null`) → re-lê substatus (`getMlShipmentStatusById`) → `classificarPromocaoFutura` → `promoverPedidoFutura`
+- Idempotente: intake dedup-a + checa "já carregado"; promoção filtra `separacao_futura=true` (notificação repetida vira no-op)
 
 ---
 

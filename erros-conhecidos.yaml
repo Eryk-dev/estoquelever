@@ -7519,3 +7519,31 @@ erros:
     files:
       - src/app/api/wms/vendas/criar/route.ts
     tags: [venda-manual, reserva, separacao, multi-loc, object-object, postgrest-error, business_logic]
+
+  - id: venda-manual-nao-propaga-imagem-url-pro-item
+    date: "2026-06-30"
+    source: src/app/api/wms/vendas/criar/route.ts
+    category: business_logic
+    message: >
+      Itens de venda manual (pedido MAN-*) aparecem SEM foto na tela de separação
+      (/wms/separacao), mesmo o produto tendo imagem no catálogo
+      (siso_produtos.imagem_url + imagens). A galeria do lightbox funciona, mas a
+      foto-capa do card fica vazia.
+    cause: >
+      A foto-capa da separação vem de siso_pedido_itens.imagem_url
+      (checklist-items/route.ts: capaImagem = sub?.imagem_url ?? item.imagem_url),
+      NÃO do catálogo. O pedido normal de webhook popula esse campo
+      (webhook-processor-wms.ts resolve siso_produtos.imagem_url e grava no item),
+      mas vendas/criar montava itensRows sem imagem_url — o prodMap nem selecionava
+      a coluna. Resultado: todo item de venda manual nasce com imagem_url=null e a
+      separação não mostra capa.
+    fix: >
+      Propaga imagem_url do catálogo pro item, espelhando o webhook: adiciona
+      imagem_url ao select de siso_produtos, ao tipo/valor do prodMap, ao
+      ItemResolvido e ao itensRows do insert. Backfill dos pedidos manuais abertos
+      já criados: UPDATE siso_pedido_itens SET imagem_url = siso_produtos.imagem_url
+      (via siso_produto_empresas pela empresa_origem do pedido) WHERE imagem_url IS NULL.
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+      - src/app/api/wms/separacao/checklist-items/route.ts
+    tags: [venda-manual, imagem, foto, separacao, checklist-items, business_logic]

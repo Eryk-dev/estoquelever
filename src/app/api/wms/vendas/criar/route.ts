@@ -52,6 +52,7 @@ interface ItemResolvido {
   tiny_produto_id: number; // bigint do mapping siso_produto_empresas
   sku: string;
   descricao: string;
+  imagem_url: string | null;
   quantidade: number;
   // Resolvidos via resolverDisponibilidadeVenda (null se não tem saldo).
   // Em 3D estoque é fungível dentro do galpão — não há mais empresa dona.
@@ -227,7 +228,7 @@ export async function POST(request: NextRequest) {
   // Resolve dados dos produtos (sku, descricao)
   const { data: produtos, error: prodErr } = await supabase
     .from("siso_produtos")
-    .select("id, sku, descricao")
+    .select("id, sku, descricao, imagem_url")
     .in("id", produtoIds);
 
   if (prodErr) {
@@ -235,8 +236,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ erro: "Erro lendo catálogo de produtos" }, { status: 500 });
   }
 
-  const prodMap = new Map<string, { sku: string; descricao: string }>(
-    (produtos ?? []).map((p) => [String(p.id), { sku: p.sku, descricao: p.descricao }]),
+  const prodMap = new Map<string, { sku: string; descricao: string; imagem_url: string | null }>(
+    (produtos ?? []).map((p) => [
+      String(p.id),
+      { sku: p.sku, descricao: p.descricao, imagem_url: p.imagem_url ?? null },
+    ]),
   );
 
   // Resolve empresa origem + nome do galpão escolhido
@@ -335,6 +339,7 @@ export async function POST(request: NextRequest) {
           tiny_produto_id: tinyId,
           sku: prod.sku,
           descricao: prod.descricao,
+          imagem_url: prod.imagem_url,
           quantidade: item.quantidade,
           localizacao_id: dispon.sugestao?.localizacao_id ?? null,
           localizacao_codigo: dispon.sugestao?.localizacao_codigo ?? null,
@@ -447,6 +452,7 @@ export async function POST(request: NextRequest) {
     produto_id: i.tiny_produto_id,
     sku: i.sku,
     descricao: i.descricao,
+    imagem_url: i.imagem_url,
     quantidade_pedida: i.quantidade,
     // [Fix-D T10] cwb_atende/sp_atende removed (zero readers confirmados)
     // de painéis. Popula com case-insensitive match no nome do galpão.

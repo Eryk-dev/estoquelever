@@ -20,6 +20,45 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: etiqueta-ml-direto-so-disparava-em-nf-ja-expedida
+    date: "2026-06-30"
+    source: etiqueta-service
+    category: external_api
+    message: >
+      Pedidos ML (EasyPeasy) embalados ficam com etiqueta_status='falhou' e sem
+      ZPL — não puxam a etiqueta do Mercado Livre nem têm NF/agrupamento no Tiny.
+      14 pedidos embalados em 30/06 entre 12:55-13:05 BRT, todos com
+      nota_fiscal_id=null, agrupamento_expedicao_id=null, mas id_pedido_ecommerce
+      + ml_shipment_id presentes.
+    cause: >
+      A recuperação da etiqueta via ML (recuperarEtiquetaViaMl) só era acionada
+      por tratarNfJaExpedida, que por sua vez só dispara quando criarAgrupamento
+      lança "já foi expedida". Para vendas Mercado Envios despachadas SEM NF no
+      Tiny (canal EasyPeasy emite/expede a NF fora do Tiny), criarAgrupamento
+      nunca é chamado (todo o caminho de agrupamento é gated por
+      nota_fiscal_id+chave_acesso_nf), então o fallback ML jamais rodava. O
+      caminho de impressão (etiqueta-service.resolverZplFallback) exigia NF pra
+      criar agrupamento → criarNovoAgrupamento lança "sem nota_fiscal_id" →
+      retorna null → falhou. O retry-etiqueta (preCriarAgrupamentosEmLote) também
+      é NF-gated. Só o script throwaway _recuperar-etiqueta-ml.ts puxava do ML.
+    fix: >
+      Extraído recuperarEtiquetaViaMl pra módulo compartilhado src/lib/etiqueta-ml.ts
+      (retorna o ZPL, cacheia etiqueta_zpl+barcodes+status pendente; no-op pra
+      não-ML / sem conexão / já cacheado). (1) resolverZplFallback agora é
+      Tiny-first, ML-fallback: tenta o caminho Tiny (resolverZplViaTiny) e, se
+      falhar/retornar null, puxa do ML — cobre TODOS os entrypoints de impressão
+      (bipar-embalagem, bipar-embalagem-oc, confirmar-item-embalagem, reimprimir).
+      (2) retry-etiqueta puxa do ML os alvos que continuam sem ZPL após a passada
+      Tiny. (3) agrupamento-service.tratarNfJaExpedida reusa o módulo
+      compartilhado (NF já expedida segue coberto).
+    files:
+      - src/lib/etiqueta-ml.ts
+      - src/lib/etiqueta-ml.test.ts
+      - src/lib/etiqueta-service.ts
+      - src/lib/agrupamento-service.ts
+      - src/app/api/wms/separacao/retry-etiqueta/route.ts
+    tags: [etiqueta, mercado-livre, zpl, nota-fiscal, agrupamento, easypeasy, impressao, fallback]
+
   - id: nf-rejeitada-empurra-pedido-pra-separacao
     date: "2026-06-15"
     source: worker / nf-webhook-handler
@@ -7448,3 +7487,35 @@ erros:
       - src/lib/tiny-oauth.ts
       - src/lib/tiny-oauth.test.ts
     tags: [oauth, tiny, keycloak, refresh-token, corrida, invalid-grant, auth]
+
+  - id: venda-manual-separacao-reserva-nao-divide-entre-locs
+    date: "2026-06-30"
+    source: src/app/api/wms/vendas/criar/route.ts
+    category: business_logic
+    message: >
+      Ao criar venda manual em modo separação, a UI retorna
+      "Falha criando reservas: [object Object]" (HTTP 409) e o pedido não é
+      criado. No log (siso_logs, source wms.reservas) o erro real é
+      "reserva excede saldo: 0 + N > M" (RPC wms_reservar_atomico, P0001).
+    cause: >
+      O loop de criação de R no modo separação reservava a qty INTEIRA do item
+      numa única loc — item.localizacao_id, que é só sugestoes[0] (a 1ª da ordem
+      picking>overstock>recebimento, podendo ter saldo MENOR que outras). O guard
+      checava quantidade > disponivel usando o TOTAL do galpão (soma de todas as
+      locs), então passava mesmo quando nenhuma loc sozinha cobria a qty. Ex.:
+      produto com 2 em F-17-3 (picking) + 9 em C-13-6 (overstock), total 11;
+      pedido de 10 → tentava reservar 10 em F-17-3 (saldo 2) → estoura o CHECK
+      reservado<=saldo. O caminho baixa_direta já dividia entre sugestoes; só o
+      separação não. Bug secundário: o catch montava a msg com
+      String(rErr) — PostgrestError não é instância de Error → "[object Object]",
+      mascarando a causa real.
+    fix: >
+      No loop de R do modo separação, distribui a qty entre item.sugestoes[]
+      (Math.min(restante, sug.disponivel) por loc até completar), espelhando o
+      split já existente do baixa_direta. O guard quantidade > disponivel (total)
+      continua garantindo cobertura. No catch, extrai .message do erro
+      (instanceof Error → .message; senão objeto com "message" → String(.message);
+      senão String(rErr)) pra não logar/retornar "[object Object]".
+    files:
+      - src/app/api/wms/vendas/criar/route.ts
+    tags: [venda-manual, reserva, separacao, multi-loc, object-object, postgrest-error, business_logic]

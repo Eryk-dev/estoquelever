@@ -476,22 +476,41 @@ export async function POST(request: NextRequest) {
     try {
       for (const item of itensResolvidos) {
         if (!item.localizacao_id) continue; // sem saldo — segue sem reserva
-        if (item.quantidade > item.disponivel) continue; // saldo insuficiente — pula
-        const reservaId = await reservarAtomico({
-          tripla: {
-            produto_id: item.produto_id,
-            galpao_id: galpao_id,
-            localizacao_id: item.localizacao_id,
-          },
-          qty: item.quantidade,
-          pedido_id: pedidoId,
-          ttl_horas: 24 * 30, // 30 dias, alinhado com aprovar e webhook-processor-wms
-          usuario_id: user.id,
-        });
-        reservasCriadas.push(reservaId);
+        if (item.quantidade > item.disponivel) continue; // saldo insuficiente no galpão — pula
+        // Distribui a R entre as locs com saldo (mesmo split do baixa_direta):
+        // a qty pedida pode não caber numa única loc — `localizacao_id` é só a
+        // 1ª sugestão (picking ranqueia 1º mesmo com saldo menor). Dumpar a qty
+        // inteira nela estoura o CHECK reservado<=saldo. Iteramos as sugestoes
+        // (já ordenadas) até completar — o guard acima garante total >= qty.
+        let restante = item.quantidade;
+        for (const sug of item.sugestoes) {
+          if (restante <= 0) break;
+          const qtyDestaLoc = Math.min(restante, sug.disponivel);
+          if (qtyDestaLoc <= 0) continue;
+          const reservaId = await reservarAtomico({
+            tripla: {
+              produto_id: item.produto_id,
+              galpao_id: galpao_id,
+              localizacao_id: sug.localizacao_id,
+            },
+            qty: qtyDestaLoc,
+            pedido_id: pedidoId,
+            ttl_horas: 24 * 30, // 30 dias, alinhado com aprovar e webhook-processor-wms
+            usuario_id: user.id,
+          });
+          reservasCriadas.push(reservaId);
+          restante -= qtyDestaLoc;
+        }
       }
     } catch (rErr) {
-      const msg = rErr instanceof Error ? rErr.message : String(rErr);
+      // PostgrestError / erro de RPC não é instância de Error — extrai .message
+      // pra não cair em String(obj) === "[object Object]" no retorno e no log.
+      const msg =
+        rErr instanceof Error
+          ? rErr.message
+          : rErr && typeof rErr === "object" && "message" in rErr
+            ? String((rErr as { message: unknown }).message)
+            : String(rErr);
       logger.error("vendas.criar", "Falha ao criar R em modo separacao — rollback", {
         pedidoId,
         erro: msg,

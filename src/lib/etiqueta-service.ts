@@ -17,6 +17,7 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
 import { extrairBarcodesDoRaster } from "@/lib/etiqueta-barcode-raster";
+import { recuperarEtiquetaViaMl } from "@/lib/etiqueta-ml";
 import { enviarImpressaoZpl } from "@/lib/printnode";
 import { resolverImpressora } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
@@ -345,10 +346,42 @@ async function criarNovoAgrupamento(
 }
 
 /**
- * Slow fallback: ZPL not pre-cached. Create agrupamento if needed,
- * fetch etiqueta URL, download ZPL, and cache for future use.
+ * Slow fallback: ZPL not pre-cached. Tries Tiny first (agrupamento → expedição →
+ * ZPL, needs NF). When the Tiny route fails or can't run (pedido sem NF nem
+ * agrupamento — ex.: vendas ML do EasyPeasy despachadas sem NF no Tiny), cai pro
+ * ML direto: Mercado Envios gera a etiqueta no próprio ML, então é a única fonte
+ * do ZPL quando não há rota Tiny.
  */
 async function resolverZplFallback(
+  supabase: SupabaseClient,
+  pedido: PedidoRow,
+): Promise<string | null> {
+  let zpl: string | null = null;
+  try {
+    zpl = await resolverZplViaTiny(supabase, pedido);
+  } catch (err) {
+    logger.warn(LOG_SOURCE, "Caminho Tiny falhou — tentando ML direto", {
+      pedidoId: pedido.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  if (zpl) return zpl;
+
+  const zplMl = await recuperarEtiquetaViaMl(pedido.id);
+  if (zplMl) {
+    logger.info(LOG_SOURCE, "Etiqueta recuperada via ML (sem NF/agrupamento no Tiny)", {
+      pedidoId: pedido.id,
+    });
+    return zplMl;
+  }
+  return null;
+}
+
+/**
+ * Caminho Tiny: cria agrupamento se preciso, busca a URL da etiqueta, baixa o
+ * ZPL e cacheia. Exige nota_fiscal_id (ou um agrupamento já existente).
+ */
+async function resolverZplViaTiny(
   supabase: SupabaseClient,
   pedido: PedidoRow,
 ): Promise<string | null> {

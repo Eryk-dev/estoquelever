@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/agrupamento-service";
+import { recuperarEtiquetaViaMl } from "@/lib/etiqueta-ml";
 import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
@@ -209,6 +210,20 @@ export async function POST(request: NextRequest) {
         await preCriarAgrupamentosEmLote(needsRecreate);
         await recarregarEtiquetasFaltantes(needsRecreate);
       }
+
+      // Fallback ML direto: pedidos ML sem NF nem agrupamento no Tiny (ex.:
+      // EasyPeasy, despachados sem NF) nunca passam pelo caminho Tiny acima.
+      // Mercado Envios gera a etiqueta no próprio ML, então puxamos de lá.
+      // No-op pra pedidos não-ML ou já recuperados.
+      const { data: aindaSemZpl } = await supabase
+        .from("siso_pedidos")
+        .select("id")
+        .in("id", targetIds)
+        .is("etiqueta_zpl", null);
+
+      await Promise.allSettled(
+        (aindaSemZpl ?? []).map((row) => recuperarEtiquetaViaMl(row.id)),
+      );
     }
 
     const { data: finalRowsData, error: finalFetchError } = await supabase

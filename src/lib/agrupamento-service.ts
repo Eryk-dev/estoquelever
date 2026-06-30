@@ -25,11 +25,7 @@ import { runWithEmpresa } from "@/lib/tiny-queue";
 import { baixarZpl } from "@/lib/etiqueta-download";
 import { montarBarcodesEtiqueta } from "@/lib/etiqueta-barcode";
 import { extrairBarcodesDoRaster } from "@/lib/etiqueta-barcode-raster";
-import {
-  getActiveMlConnectionForEmpresa,
-  obterEtiquetaZplShipment,
-} from "@/lib/ml-api";
-import { isMercadoLivre } from "@/lib/domain-helpers";
+import { recuperarEtiquetaViaMl } from "@/lib/etiqueta-ml";
 import { logger } from "@/lib/logger";
 
 const LOG_SOURCE = "agrupamento-service";
@@ -784,70 +780,13 @@ async function tratarNfJaExpedida(
     .eq("id", pedidoId);
 
   try {
-    await recuperarEtiquetaViaMl(supabase, pedidoId);
+    await recuperarEtiquetaViaMl(pedidoId);
   } catch (err) {
     logger.warn(LOG_SOURCE, "Recuperação de etiqueta via ML falhou (segue expedido_externo)", {
       pedidoId,
       error: err instanceof Error ? err.message : String(err),
     });
   }
-}
-
-/**
- * Busca a etiqueta ZPL direto do Mercado Livre e cacheia no pedido. Só atua em
- * vendas ML com order id e conexão ML ativa; ignora se já há ZPL cacheado.
- * Retorna true quando recuperou (ou já havia) o ZPL.
- */
-async function recuperarEtiquetaViaMl(
-  supabase: SupabaseClient,
-  pedidoId: string,
-): Promise<boolean> {
-  const { data: p } = await supabase
-    .from("siso_pedidos")
-    .select("id_pedido_ecommerce, nome_ecommerce, empresa_origem_id, etiqueta_zpl")
-    .eq("id", pedidoId)
-    .maybeSingle();
-
-  if (!p) return false;
-  if (p.etiqueta_zpl) return true; // já cacheada
-  if (
-    !isMercadoLivre(p.nome_ecommerce) ||
-    !p.id_pedido_ecommerce ||
-    !p.empresa_origem_id
-  ) {
-    return false;
-  }
-
-  const connId = await getActiveMlConnectionForEmpresa(p.empresa_origem_id);
-  if (!connId) return false;
-
-  const res = await obterEtiquetaZplShipment(connId, String(p.id_pedido_ecommerce));
-  if (!res?.zpl) return false;
-
-  const doRaster = await extrairBarcodesDoRaster(res.zpl);
-  const barcodes = montarBarcodesEtiqueta(res.zpl, [res.trackingNumber, ...doRaster]);
-  await supabase
-    .from("siso_pedidos")
-    .update({
-      etiqueta_zpl: res.zpl,
-      ...(barcodes.length > 0 ? { etiqueta_barcodes: barcodes } : {}),
-    })
-    .eq("id", pedidoId);
-
-  // Status via RPC (coluna etiqueta_status tem schema-cache quirk no PostgREST).
-  // Best-effort: o ZPL já está cacheado mesmo se o status não atualizar.
-  await supabase
-    .rpc("siso_set_etiqueta_status", { p_pedido_id: pedidoId, p_status: "pendente" })
-    .then(
-      () => {},
-      () => {},
-    );
-
-  logger.info(LOG_SOURCE, "Etiqueta recuperada via ML (NF já expedida no Tiny)", {
-    pedidoId,
-    shipmentId: String(res.shipmentId),
-  });
-  return true;
 }
 
 /**

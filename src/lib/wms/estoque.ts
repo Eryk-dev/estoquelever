@@ -46,7 +46,9 @@ export async function saldosPorPerspectiva(
         localizacao:siso_localizacoes(id, codigo, tipo)
       `,
       )
-      .gt("saldo", 0)
+      // Mantém posições zeradas (saldo=0) na listagem — a loc só some quando
+      // o operador a remove/desativa manualmente. Antes filtrava .gt("saldo",0)
+      // e a loc desaparecia ao zerar.
       .order("id", { ascending: true })
       .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 

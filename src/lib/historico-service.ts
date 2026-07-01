@@ -113,7 +113,9 @@ export type EventoPedido =
   | "troca_cancelada"
   | "troca_substituto_alterado"
   | "troca_desfeita"
-  | "full_criado";
+  | "full_criado"
+  | "full_fechado"
+  | "full_reaberto";
 
 /**
  * Record a single event in the order history.

@@ -96,6 +96,10 @@ export async function GET(request: NextRequest) {
   // Encaixotamento (pista futura): "0" = ainda não encaixotado (fila do que falta),
   // "1" = já encaixotado (encaixotado_em preenchido). Ausente = sem filtro.
   const encaixotado = searchParams.get("encaixotado");
+  // Lane Full — aba virtual Fechados (espelha encaixotado): "0" = separado ainda
+  // não fechado (fila ativa), "1" = já fechado (fechado_em preenchido). Ausente
+  // = sem filtro.
+  const fechado = searchParams.get("fechado");
   // Aba Cancelados: ?cancelado=1 → pedidos status='cancelado' (status_separacao é
   // null, então NÃO usa o filtro de status_separacao nem o de separacao_futura).
   const cancelado = searchParams.get("cancelado") === "1";
@@ -302,6 +306,11 @@ export async function GET(request: NextRequest) {
     } else if (encaixotado === "0") {
       pedidosQuery = pedidosQuery.is("encaixotado_em", null);
     }
+    if (fechado === "1") {
+      pedidosQuery = pedidosQuery.not("fechado_em", "is", null);
+    } else if (fechado === "0") {
+      pedidosQuery = pedidosQuery.is("fechado_em", null);
+    }
     if (cancelado) {
       // Cancelados: mais recente primeiro.
       pedidosQuery = pedidosQuery
@@ -343,6 +352,8 @@ export async function GET(request: NextRequest) {
     if (tagList.length) diasQuery = diasQuery.overlaps("separacao_tags", tagList);
     if (encaixotado === "1") diasQuery = diasQuery.not("encaixotado_em", "is", null);
     else if (encaixotado === "0") diasQuery = diasQuery.is("encaixotado_em", null);
+    if (fechado === "1") diasQuery = diasQuery.not("fechado_em", "is", null);
+    else if (fechado === "0") diasQuery = diasQuery.is("fechado_em", null);
 
     // 1c. Fetch all active galpões (for encaminhar dropdown)
     const galpoesPromise = supabase
@@ -484,6 +495,30 @@ export async function GET(request: NextRequest) {
       encaixotadoCount = count ?? 0;
       // "Separados" passa a contar só o que falta encaixotar.
       counts.separado = Math.max(0, counts.separado - encaixotadoCount);
+    }
+
+    // Lane Full: separa o count de "separado" em ainda-a-fechar (fila ativa) vs
+    // já-fechado (aba Fechados). Espelha o split de encaixotado. fechado_em não é
+    // status → 1 HEAD-count extra (só na lane Full) resolve.
+    let fechadoCount = 0;
+    if (full) {
+      let fq = supabase
+        .from("siso_pedidos")
+        .select("*", { count: "exact", head: true })
+        .eq("separacao_full", true)
+        .eq("status_separacao", "separado")
+        .not("fechado_em", "is", null);
+      if (activeGalpaoId) fq = fq.eq("separacao_galpao_id", activeGalpaoId);
+      if (empresaIds.length === 1) fq = fq.eq("empresa_origem_id", empresaIds[0]);
+      else if (empresaIds.length > 1) fq = fq.in("empresa_origem_id", empresaIds);
+      if (marketplaceFilter) fq = fq.ilike("nome_ecommerce", `%${marketplaceFilter}%`);
+      fq = applyBuscaFilter(fq);
+      fq = applyPrazoFilter(fq);
+      if (tagList.length) fq = fq.overlaps("separacao_tags", tagList);
+      const { count } = await fq;
+      fechadoCount = count ?? 0;
+      // "Separados" passa a contar só o que falta fechar.
+      counts.separado = Math.max(0, counts.separado - fechadoCount);
     }
 
     // Count da aba Cancelados (status='cancelado', sem status_separacao/futura).
@@ -669,7 +704,7 @@ export async function GET(request: NextRequest) {
     );
 
     return NextResponse.json({
-      counts: { ...counts, encaixotado: encaixotadoCount, cancelado: canceladoCount },
+      counts: { ...counts, encaixotado: encaixotadoCount, fechado: fechadoCount, cancelado: canceladoCount },
       pedidos: filteredResult,
       empresas,
       galpoes: galpoesList ?? [],

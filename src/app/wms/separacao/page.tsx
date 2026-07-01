@@ -985,6 +985,10 @@ export default function WmsSeparacaoPage() {
     // (encaixotado_em IS NULL); a aba "Encaixotados" mostra os já feitos.
     if (tab === "encaixotado") params.set("encaixotado", "1");
     else if (futura && tab === "separado") params.set("encaixotado", "0");
+    // Lane Full: a aba "Separados" mostra só o que FALTA fechar (fechado_em IS
+    // NULL); a aba "Fechados" mostra os já fechados.
+    if (full && tab === "fechado") params.set("fechado", "1");
+    else if (full && tab === "separado") params.set("fechado", "0");
     return params.toString();
   }, [tab, busca, marketplace, tagFilter, empresaFilter, sort, futura, full]);
 
@@ -1373,6 +1377,30 @@ export default function WmsSeparacaoPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Fechar Full — etapa terminal da lane Full (aba Separado → Fechados). Só
+  // grava fechado_em/por (sem estoque/NF); idempotente.
+  const fecharMut = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const r = await sisoFetch("/api/wms/separacao/full/fechar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedido_ids: ids }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body as { atualizados: string[] };
+    },
+    onSuccess: (b) => {
+      toast.success(
+        b.atualizados.length > 0 ? `${b.atualizados.length} Full fechado(s)` : "Nada a fechar",
+      );
+      clearSelection();
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["wms-separacao"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // ── Lógica de IDs pra ações em lote ─────────────────────────────────────
   // Paridade com legado: quando NÃO há selection, ações operam em todos os pedidos da tab.
   const selectedArr = Array.from(selectedIds);
@@ -1598,6 +1626,7 @@ export default function WmsSeparacaoPage() {
             <PrimaryTabActions
               tab={tab}
               futura={futura}
+              full={full}
               effectiveCount={effectiveCount}
               hasSelection={selectedArr.length > 0}
               selectedCount={selectedArr.length}
@@ -1608,7 +1637,8 @@ export default function WmsSeparacaoPage() {
                 iniciarMut.isPending ||
                 retryEtiquetaMut.isPending ||
                 reimprimirMut.isPending ||
-                encaixotarDiaMut.isPending
+                encaixotarDiaMut.isPending ||
+                fecharMut.isPending
               }
               diaUnico={diaUnico}
               onSepararChecklist={batchSepararChecklist}
@@ -1619,6 +1649,7 @@ export default function WmsSeparacaoPage() {
               onConferir={() => router.push("/wms/separacao/conferencia")}
               onEncaixotar={() => router.push("/wms/separacao/encaixotamento")}
               onEncaixotarDia={(dia) => encaixotarDiaMut.mutate(dia)}
+              onFechar={() => fecharMut.mutate(effectiveIds)}
             />
           </div>
         )}
@@ -2252,6 +2283,7 @@ export default function WmsSeparacaoPage() {
 interface PrimaryTabActionsProps {
   tab: Tab;
   futura: boolean;
+  full: boolean;
   effectiveCount: number;
   hasSelection: boolean;
   selectedCount: number;
@@ -2265,12 +2297,14 @@ interface PrimaryTabActionsProps {
   onConferir: () => void;
   onEncaixotar: () => void;
   onEncaixotarDia: (dia: string) => void;
+  onFechar: () => void;
   diaUnico: string | null;
 }
 
 function PrimaryTabActions({
   tab,
   futura,
+  full,
   effectiveCount,
   hasSelection,
   selectedCount,
@@ -2284,8 +2318,26 @@ function PrimaryTabActions({
   onConferir,
   onEncaixotar,
   onEncaixotarDia,
+  onFechar,
   diaUnico,
 }: PrimaryTabActionsProps) {
+  // Lane Full: a aba Separado termina em FECHAR (etapa terminal). Só grava
+  // fechado_em e move pra aba Fechados — sem embalagem/NF. Espelha o Encaixotar
+  // da futura. (full/futura são mutuamente exclusivos, então a ordem não colide.)
+  if (full && tab === "separado") {
+    return (
+      <button
+        className="wms-btn wms-btn-primary wms-btn-sm"
+        onClick={() => onFechar()}
+        type="button"
+        disabled={loading || effectiveCount === 0}
+        title="Fechar os Full separados — move pra aba Fechados (sem estoque/NF)"
+      >
+        <Icon name="check" size={11} />
+        {loading ? "Fechando…" : `Fechar · ${effectiveCount}`}
+      </button>
+    );
+  }
   // Separação futura PARA em `separado` (peça na caixa do dia) — a etiqueta/NF
   // só na promoção. Sem ação de embalar; a ação desta aba é ENCAIXOTAR por dia
   // (botão → sub-tela, mesmo padrão do "Conferir" da aba Embalados).

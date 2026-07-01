@@ -8,7 +8,7 @@ import { createServiceClient } from "../../../src/lib/supabase-server";
 import type { Cenario, ScenarioResult } from "./_harness/types";
 import { createContext } from "./_harness/context";
 import { createHttp } from "./_harness/http";
-import { seedInicial, truncateOperacional } from "./_harness/seed";
+import { seedInicial } from "./_harness/seed";
 import { loginTestRunner, startDevServer, waitForHealth, buildProd, isHealthy, type DevServerHandle } from "./_harness/dev-server";
 import { rodarInvariantes } from "./_harness/invariantes";
 import { writeReport } from "./_harness/relatorio";
@@ -100,9 +100,11 @@ async function main() {
     throw e;
   }
 
-  console.log(`[2/6] truncate + reseed`);
+  // NÃO-DESTRUTIVO: staging é vivo. Só garante fixtures compartilhados
+  // (idempotente). Cenários são auto-contidos e isolados — criam/limpam os
+  // próprios dados com id único.
+  console.log(`[2/6] garantir fixtures (sem truncate)`);
   const sb = createServiceClient();
-  await truncateOperacional(sb);
   const staging = await seedInicial(sb);
 
   console.log(`[3/6] login test-runner`);

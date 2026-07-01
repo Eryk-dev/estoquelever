@@ -38,14 +38,21 @@ npm run dev              # dev server
 npm run build / start    # produção
 npm run lint             # ESLint (flat config)
 npm test                 # vitest unit (happy-dom)
-npm run test:integration # vitest contra staging real (serializado, trunca tabelas operacionais)
+npm run test:integration # vitest contra staging real (serializado, NÃO-destrutivo — cada teste isola)
 npm run scenarios        # E2E HTTP em /api/wms/* (run-all.ts); :only, :ci (--prod)
 npm run auth-matrix      # matriz de auth/permissões
 # seeds/utils: seed:cross, seed:staging, seed:cenarios, fake:webhook, verificar:saldos, notify:stock
 ```
 
-> ⚠️ **integration + scenarios rodam contra o staging real e truncam tabelas operacionais antes de cada run.** Nunca apontar pra prod.
-> 🔒 **O staging é ambiente VIVO (pedidos reais)** — desde 2026-06-11 todo wipe (truncate do harness + `seed:staging`) exige `ALLOW_STAGING_WIPE=true` no env, senão aborta. O cron diário do GitHub Actions (`wms-stock-suite`) foi removido — a suite só roda via dispatch manual. **NUNCA setar a flag sem o Eryk pedir explicitamente.**
+> 🔒 **O staging é ambiente VIVO (pedidos reais). Testes NUNCA truncam / apagam dados vivos.**
+> **Política (2026-07-01): todo teste é auto-contido + isolado.** Cada `integration`/`scenario`:
+> cria seus próprios fixtures com id/SKU único (`TEST-…-${random}`, `ctx.skuUnico(...)`), assere
+> SÓ nos próprios dados (por id — nunca em contagem global de tabela), e **limpa o que criou**
+> (`afterAll`/`afterEach` deletando pedidos/itens/movs por id). O `globalSetup`/`run-all` só
+> **garantem fixtures compartilhados** (galpões/locs/`test-runner`) via `seedInicial` idempotente —
+> **sem truncate**. Podem rodar concorrente com operadores em staging. Nunca apontar pra prod.
+> O único wipe destrutivo sobrevive no tool manual `npm run seed:staging` (gated por
+> `ALLOW_STAGING_WIPE=true`) — **NUNCA setar a flag sem o Eryk pedir explicitamente.**
 
 ### Environment variables (só nomes — nunca commitar valores)
 
@@ -236,7 +243,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 ### RPCs-chave
 
-`wms_inserir_movimentacao` (único write do ledger; aceita `p_idempotency_key` no-op desde fase-5) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick; aceita `p_idempotency_key`, propagado só no ramo sem-reserva) · `wms_iniciar_guarda_atomico` / `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` / `wms_cancelar_pendencia_guarda_atomico` (ver FASE 6 abaixo) · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim; desde 2026-06-12 tem FASE 0 de retomada — loc `em_contagem` do próprio operador volta com `retomada=true`+`bipes` — e param `p_somente_retomar` que não claima) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (test harness).
+`wms_inserir_movimentacao` (único write do ledger; aceita `p_idempotency_key` no-op desde fase-5) · `wms_reservar_atomico` (wrapper `tipo='R'`) · `wms_pick_item_atomico` (L+S no pick; aceita `p_idempotency_key`, propagado só no ramo sem-reserva) · `wms_iniciar_guarda_atomico` / `wms_confirmar_guarda_atomico` / `wms_desfazer_guarda_atomico` / `wms_cancelar_pendencia_guarda_atomico` (ver FASE 6 abaixo) · `wms_replenishment_intra_galpao` (par S+E) · `wms_inventario_proxima_loc` (pull queue + claim; desde 2026-06-12 tem FASE 0 de retomada — loc `em_contagem` do próprio operador volta com `retomada=true`+`bipes` — e param `p_somente_retomar` que não claima) / `wms_inventario_sugerir` · `wms_detectar_divergencias_estoque` / `wms_rebuild_linha_estoque` · `wms_refresh_curva_abc` / `wms_refresh_cobertura` (MVs `siso_curva_abc`, `siso_cobertura_estoque`) · `wms_truncate_operacional` (existe no DB mas **não é mais chamada pelo harness** — testes são isolados; wipe só via `seed:staging` manual).
 
 **Raio-X Fase 5 (atomicidade tudo-ou-nada, tudo idempotente):** `wms_aplicar_sessao_inventario` (aplica divergências aprovadas de uma sessão de inventário em bloco) · `wms_pick_parcial_atomico` (S + ajuste loc_zerou na mesma tx) · `wms_desmarcar_item_atomico` (estorna par S+L do pick; recria R clampada ao saldo livre, retorna `status_alerta`) · `wms_reverter_cutover_atomico` (estorna S do pedido + recria R + flipa `estoque_lancado=false`) · `wms_vender_baixa_direta_atomico` (baixa N S de venda manual; advisory lock por tripla) · `wms_cancelar_venda_atomico` (estorna S `venda_manual` + marca pedido cancelado) · `wms_aprovar_e_enfileirar` (transição de status + INSERT do job `lancar_estoque` na mesma tx; `p_marcadores` é `text[]`) · `wms_reconciliar_retroativo` (lock + idempotência + estorno parcial clampado ao disponível) · `wms_resolver_pedido_fantasma` (R viva de pedido forward → `saiu`: R→L+S · `cancelado`: R→L + pedido cancelado).
 

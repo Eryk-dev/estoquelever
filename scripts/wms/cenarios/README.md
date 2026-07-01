@@ -7,11 +7,15 @@ HTTP em `/api/wms/*` com dependências externas (Tiny, PrintNode, ML) stubadas.
 **Spec:** `docs/superpowers/specs/2026-05-21-sistematica-testes-estoque-design.md`
 **Plano:** `docs/superpowers/plans/2026-05-21-sistematica-testes-estoque.md`
 
+> ⚠️ **Staging é ambiente VIVO (pedidos reais).** A suite é **não-destrutiva**:
+> NUNCA trunca. Cada cenário é auto-contido e isolado — cria seus próprios
+> dados com id/SKU único (`ctx.skuUnico(...)`) e assere só nos próprios. Pode
+> rodar com operadores usando staging.
+
 ## Pré-requisitos
 
-1. Migration `wms_truncate_operacional` aplicada em staging.
-2. `.env.test` (commitado) configurado.
-3. `.env.test.local` (gitignored) com as chaves reais de staging:
+1. `.env.test` (commitado) configurado.
+2. `.env.test.local` (gitignored) com as chaves reais de staging:
    ```bash
    NEXT_PUBLIC_SUPABASE_ANON_KEY=<staging anon>
    SUPABASE_SERVICE_ROLE_KEY=<staging service role>
@@ -25,7 +29,7 @@ npm run scenarios
 
 O runner:
 1. Sobe Next dev server em `:3001`
-2. Trunca tabelas operacionais via `wms_truncate_operacional` (preserva catálogo)
+2. Garante fixtures compartilhados (idempotente, **sem truncate**)
 3. Faz seed inicial (empresas/galpões/locs/usuário `test-runner`)
 4. Loga como `test-runner` (PIN 9999)
 5. Executa todos os cenários em `catalogo/` (ordem alfabética)
@@ -44,8 +48,8 @@ Terminal 2 (após o dev server estar pronto):
 npx tsx scripts/wms/cenarios/catalogo/04-parcial-realocacao-cascateada.ts
 ```
 
-O script standalone reusa o `npm run dev`, faz truncate+seed, loga, e roda só
-esse cenário com os invariantes globais.
+O script standalone reusa o `npm run dev`, garante fixtures (sem truncate),
+loga, e roda só esse cenário com os invariantes globais.
 
 ## Adicionar cenário novo
 
@@ -104,14 +108,19 @@ manualmente.
 → Algum endpoint escreveu em `siso_estoque` fora do RPC
 `wms_inserir_movimentacao`. Cheque o diff no `detail.json`.
 
-**Suite poluiu staging e operadores estão com problemas**
-→ Era pra ter avisado. Rode `seedInicial` pra restaurar fixtures.
+**Cenário deixou lixo em staging**
+→ Cenário mal escrito não limpou o que criou. Todo cenário DEVE deletar seus
+próprios dados (pedidos/itens/movs por id único) ao fim. Corrija o cenário.
 
-## Premissa: não compartilhar staging
+## Contrato: auto-contido + isolado (staging é vivo)
 
-A suite faz `wms_truncate_operacional` ao iniciar — operadores em staging
-perdem qualquer trabalho em andamento. **Não rodar a suite enquanto alguém
-testa em staging manualmente.**
+A suite **NÃO trunca** — staging tem pedidos reais. Cada cenário:
+- cria dados com id/SKU único (`ctx.skuUnico(...)`, ids prefixados);
+- assere SÓ nos próprios dados (por id), nunca em contagens globais de tabela;
+- limpa o que criou ao fim (pedidos/itens/movs deletados por id).
+
+Pode rodar concorrente com operadores usando staging. O único wipe explícito é
+o tool manual `npm run seed:staging` (gated por `ALLOW_STAGING_WIPE=true`).
 
 ## Layout de arquivos
 
@@ -122,7 +131,7 @@ scripts/wms/cenarios/
   _harness/
     types.ts               # Ctx, Cenario, Results
     http.ts                # sisoFetch wrapper
-    seed.ts                # truncate + seed idempotente
+    seed.ts                # seed idempotente de fixtures (não-destrutivo)
     asserts.ts             # assertSaldo, assertMovsCount, etc.
     context.ts             # createContext (Ctx factory)
     dev-server.ts          # start/health/login

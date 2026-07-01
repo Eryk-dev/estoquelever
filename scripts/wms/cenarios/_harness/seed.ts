@@ -10,18 +10,10 @@ export function validarStaging() {
   }
 }
 
-export async function truncateOperacional(sb: SupabaseClient): Promise<void> {
-  // Trava de segurança (2026-06-11): o staging é ambiente VIVO — pedidos reais
-  // ficam nele. Qualquer wipe exige opt-in explícito por env var.
-  if (process.env.ALLOW_STAGING_WIPE !== "true") {
-    throw new Error(
-      "ABORT: truncate do staging bloqueado. Esse comando APAGA todos os pedidos/movs/estoque do staging. " +
-        "Se é isso mesmo que você quer, rode com ALLOW_STAGING_WIPE=true.",
-    );
-  }
-  const { error } = await sb.rpc("wms_truncate_operacional");
-  if (error) throw new Error(`wms_truncate_operacional: ${error.message}`);
-}
+// truncateOperacional REMOVIDO (2026-07-01): o staging é ambiente VIVO e os
+// testes agora são auto-contidos + isolados (cada um cria/limpa seus próprios
+// fixtures com id único). Nada de wipe no harness. O único wipe explícito
+// sobrevive no tool manual `npm run seed:staging` (gated por ALLOW_STAGING_WIPE).
 
 async function upsertGalpao(sb: SupabaseClient, nome: "CWB" | "SP") {
   const { data: existente } = await sb.from("siso_galpoes").select("id").eq("nome", nome).maybeSingle();

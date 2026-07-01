@@ -5,7 +5,7 @@ import { createServiceClient } from "../../../../src/lib/supabase-server";
 import type { Cenario } from "./types";
 import { createContext } from "./context";
 import { createHttp } from "./http";
-import { seedInicial, truncateOperacional } from "./seed";
+import { seedInicial } from "./seed";
 import { loginTestRunner, waitForHealth } from "./dev-server";
 import { rodarInvariantes } from "./invariantes";
 
@@ -22,8 +22,8 @@ export async function runStandalone(cenario: Cenario): Promise<void> {
   await waitForHealth(`${baseUrl}/api/auth/me`, { timeout_ms: 15_000 });
 
   const sb = createServiceClient();
-  console.log(`[standalone] truncate + seed`);
-  await truncateOperacional(sb);
+  // NÃO-DESTRUTIVO (staging vivo): só garante fixtures compartilhados.
+  console.log(`[standalone] garantir fixtures (sem truncate)`);
   const staging = await seedInicial(sb);
 
   console.log(`[standalone] login`);

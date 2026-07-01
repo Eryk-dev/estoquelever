@@ -37,7 +37,8 @@ export async function GET(request: NextRequest) {
     | "pendentes"
     | "em_separacao"
     | "baixados"
-    | "concluidos";
+    | "concluidos"
+    | "full";
 
   const vendedorParam = sp.get("vendedor_id");
   const marketplace = sp.get("marketplace");
@@ -82,10 +83,9 @@ export async function GET(request: NextRequest) {
       { count: "exact" },
     )
     .or("origem_pedido.eq.manual,nome_ecommerce.in.(\"Mercado Livre\",\"Shopee\")")
-    // Zero-regressão Full: pedidos Full (origem_pedido=manual, status=executando,
-    // status_separacao no fluxo normal) vazariam pras abas Pendentes/Em separação.
-    // A lane deles é /wms/separacao-full — excluir aqui.
-    .eq("separacao_full", false);
+    // Aba "Full" mostra os pedidos Full; as abas de STATUS excluem Full
+    // (zero-regressão — a lane de picking deles é /wms/separacao-full).
+    .eq("separacao_full", tab === "full");
 
   // Filtro por tab
   switch (tab) {
@@ -112,6 +112,10 @@ export async function GET(request: NextRequest) {
       break;
     case "concluidos":
       query = query.eq("status", "concluido");
+      break;
+    case "full":
+      // Aba Full: todos os pedidos Full, qualquer status (o base já filtra
+      // separacao_full=true). Sem filtro de status.
       break;
   }
 

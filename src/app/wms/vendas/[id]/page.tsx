@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { PageHeader, StatusBadge, Modal, Field, Icon } from "@/components/wms/ui/wms-ui";
+import { ProdutoCombo } from "@/components/wms/ui/modals";
+import type { Produto } from "@/lib/wms/types";
 import { formatRelativeTime, getMarketplaceName } from "@/lib/domain-helpers";
 
 interface PedidoDetalhe {
@@ -24,6 +26,8 @@ interface PedidoDetalhe {
   canal_venda: string | null;
   criado_em: string;
   marcadores: string[];
+  separacao_full: boolean;
+  fechado_em: string | null;
 }
 
 interface ItemDetalhe {
@@ -82,6 +86,10 @@ export default function VendaDetalhePage({
   const [reassignOpen, setReassignOpen] = useState(false);
   const [cancelarOpen, setCancelarOpen] = useState(false);
   const [cancelarMotivo, setCancelarMotivo] = useState("");
+  // Editor de itens do Full (só quando separacao_full && !fechado_em).
+  const [addProduto, setAddProduto] = useState<Produto | null>(null);
+  const [addQty, setAddQty] = useState(1);
+  const [editBusy, setEditBusy] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<DetalheResponse>({
     queryKey: ["venda-detalhe", id],
@@ -101,20 +109,22 @@ export default function VendaDetalhePage({
     }
     setCancelando(true);
     try {
-      const r = await sisoFetch(
-        `/api/wms/vendas/${encodeURIComponent(id)}/cancelar`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ motivo }),
-        },
-      );
+      // Full cancela pela rota própria (estorna S de nf_venda + libera R); a de
+      // venda só estorna venda_manual e não pegaria os picks do Full.
+      const cancelUrl = data?.pedido.separacao_full
+        ? `/api/wms/full/${encodeURIComponent(id)}/cancelar`
+        : `/api/wms/vendas/${encodeURIComponent(id)}/cancelar`;
+      const r = await sisoFetch(cancelUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo }),
+      });
       if (!r.ok) {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
         toast.error(j.error ?? `Erro HTTP ${r.status}`);
         return;
       }
-      toast.success("Venda cancelada");
+      toast.success(data?.pedido.separacao_full ? "Full cancelado" : "Venda cancelada");
       setCancelarOpen(false);
       setCancelarMotivo("");
       refetch();
@@ -126,6 +136,40 @@ export default function VendaDetalhePage({
     }
   };
 
+  // ── Editor de itens do Full ──────────────────────────────────────────────
+  async function editFull(method: string, path: string, body?: unknown, okMsg?: string): Promise<boolean> {
+    setEditBusy(true);
+    try {
+      const r = await sisoFetch(`/api/wms/full/${encodeURIComponent(id)}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: string };
+        toast.error(j.error ?? `Erro HTTP ${r.status}`);
+        return false;
+      }
+      if (okMsg) toast.success(okMsg);
+      await refetch();
+      qc.invalidateQueries({ queryKey: ["wms-estoque"] });
+      return true;
+    } finally {
+      setEditBusy(false);
+    }
+  }
+  const addItemFull = async () => {
+    if (!addProduto || addQty <= 0) return;
+    const ok = await editFull("POST", "/itens", { produto_id: addProduto.id, quantidade: addQty }, "Item adicionado");
+    if (ok) {
+      setAddProduto(null);
+      setAddQty(1);
+    }
+  };
+  const removeItemFull = (itemId: string) => editFull("DELETE", `/itens/${itemId}`, undefined, "Item removido");
+  const setQtyFull = (itemId: string, quantidade: number) =>
+    editFull("PATCH", `/itens/${itemId}`, { quantidade }, "Quantidade atualizada");
+
   if (isLoading) {
     return <div className="p-6 text-xs text-zinc-500">Carregando…</div>;
   }
@@ -134,6 +178,9 @@ export default function VendaDetalhePage({
   }
 
   const { pedido, itens, historico } = data;
+  // Editor de itens: só num Full aberto (não fechado, não cancelado) e com perm.
+  const fullEditavel =
+    pedido.separacao_full && !pedido.fechado_em && pedido.status !== "cancelado" && podeCancelar;
   const podeCancelarStatus = pedido.status !== "cancelado";
   const statusSeparacaoAtivo = ["em_separacao", "separado", "embalado", "conferido"].includes(
     pedido.status_separacao ?? "",
@@ -161,13 +208,15 @@ export default function VendaDetalhePage({
               setCancelarOpen(true);
             }}
             title={
-              statusSeparacaoAtivo
-                ? "Em separação ativa — backend exigirá voltar etapa antes (400 esperado)"
-                : "Cancelar venda · libera reservas e/ou estorna movs"
+              pedido.separacao_full
+                ? "Cancelar Full · estorna picks (S→E) e libera reservas"
+                : statusSeparacaoAtivo
+                  ? "Em separação ativa — backend exigirá voltar etapa antes (400 esperado)"
+                  : "Cancelar venda · libera reservas e/ou estorna movs"
             }
           >
             <Icon name="x" size={11} />
-            Cancelar venda
+            {pedido.separacao_full ? "Cancelar Full" : "Cancelar venda"}
           </button>
         )}
       </PageHeader>
@@ -195,7 +244,14 @@ export default function VendaDetalhePage({
 
         {/* Items */}
         <div>
-          <strong style={{ fontSize: 12 }}>Itens ({itens.length})</strong>
+          <div className="flex items-center justify-between">
+            <strong style={{ fontSize: 12 }}>Itens ({itens.length})</strong>
+            {pedido.separacao_full && pedido.fechado_em && (
+              <span className="text-[11px] text-zinc-400">
+                Full fechado — reabra na Separação Full pra editar
+              </span>
+            )}
+          </div>
           <table className="mt-2 w-full border-collapse text-xs">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
@@ -203,6 +259,7 @@ export default function VendaDetalhePage({
                 <th className="py-2 pr-3 font-medium">Descrição</th>
                 <th className="py-2 pr-3 font-medium text-right">Qty pedida</th>
                 <th className="py-2 pr-3 font-medium text-right">Qty bipada</th>
+                {fullEditavel && <th className="py-2 font-medium text-right">Ações</th>}
               </tr>
             </thead>
             <tbody>
@@ -210,7 +267,17 @@ export default function VendaDetalhePage({
                 <tr key={it.id} className="border-b border-zinc-100 dark:border-zinc-900">
                   <td className="py-2 pr-3 font-mono">{it.sku}</td>
                   <td className="py-2 pr-3">{it.descricao}</td>
-                  <td className="py-2 pr-3 text-right">{it.quantidade_pedida}</td>
+                  <td className="py-2 pr-3 text-right">
+                    {fullEditavel ? (
+                      <FullItemQtyCell
+                        value={it.quantidade_pedida}
+                        disabled={editBusy}
+                        onCommit={(q) => setQtyFull(it.id, q)}
+                      />
+                    ) : (
+                      it.quantidade_pedida
+                    )}
+                  </td>
                   <td className="py-2 pr-3 text-right">
                     {it.bipado_completo ? (
                       <span className="text-emerald-600">{it.quantidade_bipada}</span>
@@ -218,10 +285,49 @@ export default function VendaDetalhePage({
                       it.quantidade_bipada
                     )}
                   </td>
+                  {fullEditavel && (
+                    <td className="py-2 text-right">
+                      <button
+                        type="button"
+                        className="wms-btn-icon"
+                        disabled={editBusy}
+                        onClick={() => removeItemFull(it.id)}
+                        aria-label="Remover item"
+                        title="Remover item (estorna estoque já baixado)"
+                      >
+                        <Icon name="trash" size={12} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+
+          {fullEditavel && (
+            <div className="mt-3 flex items-end gap-2" style={{ maxWidth: 560 }}>
+              <div style={{ flex: 1 }}>
+                <ProdutoCombo value={addProduto} onChange={setAddProduto} />
+              </div>
+              <input
+                type="number"
+                min={1}
+                value={addQty}
+                onChange={(e) => setAddQty(parseInt(e.target.value, 10) || 0)}
+                className="wms-input"
+                style={{ width: 80 }}
+                placeholder="Qty"
+              />
+              <button
+                type="button"
+                className="wms-btn wms-btn-primary wms-btn-sm"
+                disabled={editBusy || !addProduto || addQty <= 0}
+                onClick={addItemFull}
+              >
+                <Icon name="plus" size={11} /> Adicionar
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Histórico */}
@@ -358,6 +464,50 @@ function InfoCell({ label, children }: { label: string; children: React.ReactNod
       <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
       <div className="text-xs text-zinc-900 dark:text-zinc-100">{children}</div>
     </div>
+  );
+}
+
+// Qty editável do item Full — commita no blur/Enter só quando muda pra valor
+// válido (>0); reverte input inválido. O PATCH atrás reconcilia estoque.
+function FullItemQtyCell({
+  value,
+  disabled,
+  onCommit,
+}: {
+  value: number;
+  disabled: boolean;
+  onCommit: (q: number) => void;
+}) {
+  // Sincroniza o input quando a prop muda (após refetch) sem useEffect — padrão
+  // React de "ajustar state no render" (evita set-state-in-effect).
+  const [v, setV] = useState(String(value));
+  const [prev, setPrev] = useState(value);
+  if (value !== prev) {
+    setPrev(value);
+    setV(String(value));
+  }
+  const commit = () => {
+    const q = parseInt(v, 10);
+    if (!Number.isFinite(q) || q <= 0) {
+      setV(String(value));
+      return;
+    }
+    if (q !== value) onCommit(q);
+  };
+  return (
+    <input
+      type="number"
+      min={1}
+      value={v}
+      disabled={disabled}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      className="wms-input"
+      style={{ width: 64, textAlign: "right" }}
+    />
   );
 }
 

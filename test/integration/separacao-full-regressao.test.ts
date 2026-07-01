@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { NextRequest } from "next/server";
 import { createServiceClient } from "../../src/lib/supabase-server";
 import { GET as vendasGET } from "../../src/app/api/wms/vendas/route";
+import { GET as vendasDetalheGET } from "../../src/app/api/wms/vendas/[id]/route";
 import { montarDashboardTarefas } from "../../src/lib/wms/dashboard-tarefas";
 
 /**
@@ -47,6 +48,12 @@ async function seedPedido(opts: { full: boolean; status_separacao: string }): Pr
 
 function vendas(qs: string) {
   return vendasGET(new NextRequest(`http://test/api/wms/vendas?${qs}`, { headers: { "X-Session-Id": sessId } }));
+}
+function vendasDetalhe(id: string) {
+  return vendasDetalheGET(
+    new NextRequest(`http://test/api/wms/vendas/${id}`, { headers: { "X-Session-Id": sessId } }),
+    { params: Promise.resolve({ id }) },
+  );
 }
 
 beforeAll(async () => {
@@ -99,5 +106,26 @@ describe("FULL-07 — dashboard-tarefas (home) exclui Full", () => {
     await sb.from("siso_pedidos").update({ separacao_full: false }).eq("id", id);
     const e2 = (await montarDashboardTarefas(sb, cwbId)).embalagem.count;
     expect(e2).toBe(e1 + 1);
+  });
+});
+
+describe("VF — aba Full em /api/wms/vendas + detalhe expõe campos", () => {
+  it("tab=full lista Full; abas de status seguem excluindo (VF-01/02)", async () => {
+    const fullId = await seedPedido({ full: true, status_separacao: "em_separacao" });
+    const normalId = await seedPedido({ full: false, status_separacao: "em_separacao" });
+
+    const idsFull = ((await (await vendas("tab=full")).json()).pedidos as Array<{ id: string }>).map((p) => p.id);
+    expect(idsFull).toContain(fullId);
+    expect(idsFull).not.toContain(normalId);
+
+    const idsSep = ((await (await vendas("tab=em_separacao")).json()).pedidos as Array<{ id: string }>).map((p) => p.id);
+    expect(idsSep).not.toContain(fullId); // regressão preservada
+  });
+
+  it("detalhe do Full expõe separacao_full=true + fechado_em (VF-06)", async () => {
+    const fullId = await seedPedido({ full: true, status_separacao: "aguardando_separacao" });
+    const j = await (await vendasDetalhe(fullId)).json();
+    expect(j.pedido.separacao_full).toBe(true);
+    expect(j.pedido).toHaveProperty("fechado_em");
   });
 });

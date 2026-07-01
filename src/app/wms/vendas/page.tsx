@@ -7,7 +7,7 @@ import { sisoFetch, useAuth } from "@/lib/auth-context";
 import { PageHeader, Icon, Pagination, StatusBadge } from "@/components/wms/ui/wms-ui";
 import { getMarketplaceName, formatRelativeTime } from "@/lib/domain-helpers";
 
-type Tab = "pendentes" | "em_separacao" | "baixados" | "concluidos";
+type Tab = "pendentes" | "em_separacao" | "baixados" | "concluidos" | "full";
 
 interface VendaPedido {
   id: string;
@@ -49,6 +49,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "em_separacao", label: "Em separação" },
   { id: "baixados", label: "Baixados" },
   { id: "concluidos", label: "Concluídos" },
+  { id: "full", label: "Full" },
 ];
 
 export default function VendasPage() {

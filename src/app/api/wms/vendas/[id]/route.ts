@@ -30,6 +30,7 @@ export async function GET(
        decisao_final, separacao_galpao_id, status_separacao, marcadores, criado_em,
        processado_em, embalagem_concluida_em, etiqueta_url, separacao_operador_id,
        separacao_iniciada_em, separacao_concluida_em, payload_original,
+       separacao_full, fechado_em,
        vendedor_id, vendedor_nome, origem_pedido, canal_venda`,
     )
     .eq("id", id)

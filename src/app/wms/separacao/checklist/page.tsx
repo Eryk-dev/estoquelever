@@ -76,6 +76,8 @@ interface ChecklistItem {
   parcial_motivo: string | null;
   parcial_em: string | null;
   realocacoes: Realocacao[];
+  /** Posição de inserção 1..N na lane Full — chave da ordenação "Ordem do pedido" (null fora do Full). */
+  ordem_full: number | null;
 }
 
 interface ConsolidatedProduct {
@@ -101,9 +103,11 @@ interface ConsolidatedProduct {
   disponivel: number;
   /** Nº de locs com saldo disponível no galpão — gate da flechinha de outras locs. */
   locs_disponiveis: number;
+  /** Menor ordem_full do bucket — chave da ordenação "Ordem do pedido" (null fora do Full). */
+  ordem_full: number | null;
 }
 
-type SortMode = "localizacao" | "sku" | "descricao";
+type SortMode = "localizacao" | "sku" | "descricao" | "ordem";
 
 type ScanFeedback = {
   text: string;
@@ -204,6 +208,10 @@ export function consolidar(items: ChecklistItem[]): {
       existing.quantidade_pega += Number(it.quantidade_pega ?? 0);
       existing.item_ids.push(itemId);
       if (!it.separacao_marcado) existing.all_marcado = false;
+      // Menor ordem_full do bucket vira a chave de ordem (mesmo SKU de N pedidos).
+      if (it.ordem_full != null && (existing.ordem_full == null || it.ordem_full < existing.ordem_full)) {
+        existing.ordem_full = it.ordem_full;
+      }
     } else {
       buckets.set(key, {
         key,
@@ -226,6 +234,7 @@ export function consolidar(items: ChecklistItem[]): {
         saldo: it.saldo,
         disponivel: it.disponivel,
         locs_disponiveis: it.locs_disponiveis ?? 0,
+        ordem_full: it.ordem_full ?? null,
       });
     }
   }
@@ -271,6 +280,12 @@ export function ordenar(
   copy.sort((a, b) => {
     if (sort === "sku") return a.sku.localeCompare(b.sku);
     if (sort === "descricao") return a.descricao.localeCompare(b.descricao);
+    // "Ordem do pedido": asc por ordem_full (posição de inserção 1..N). Itens
+    // sem ordem (null, fora do Full) vão pro fim. Sort do V8 é estável → empates
+    // preservam a ordem de entrada.
+    if (sort === "ordem") {
+      return (a.ordem_full ?? Infinity) - (b.ordem_full ?? Infinity);
+    }
     return naturalLocCompare(locOrdenacao(a), locOrdenacao(b));
   });
   return copy;
@@ -319,7 +334,9 @@ export default function WmsChecklistPage() {
   // Mantém presença ativa em "Separação" durante o wave picking.
   useTrackPresencaWms("separacao");
 
-  const [sort, setSort] = useState<SortMode>("localizacao");
+  // Full: default "Ordem do pedido" (operador insere a lista em ordem
+  // significativa); demais lanes seguem por localização.
+  const [sort, setSort] = useState<SortMode>(full ? "ordem" : "localizacao");
   // Congela a posição na ordenação por localização quando o operador troca a loc
   // de um item manualmente (ver handleTrocarLoc) — pra a linha não "pular" numa
   // lista de centenas de itens. Keyed por produto.key; vale pela sessão da página.
@@ -1317,6 +1334,9 @@ export default function WmsChecklistPage() {
           value={sort}
           onChange={(e) => setSort(e.target.value as SortMode)}
         >
+          {/* "Ordem do pedido" só faz sentido no Full (ordem_full 1..N); nas
+              demais lanes ordem_full é null e a opção não reordena nada. */}
+          {full && <option value="ordem">Ordenar: ordem do pedido</option>}
           <option value="localizacao">Ordenar: localização</option>
           <option value="sku">Ordenar: SKU</option>
           <option value="descricao">Ordenar: descrição</option>

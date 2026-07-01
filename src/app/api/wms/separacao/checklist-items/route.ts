@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
     const { data: items, error: itemsError } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status, quantidade_pega, separacao_parcial, parcial_motivo, parcial_em, produto_wms_substituto_id",
+        "id, pedido_id, produto_id, sku, gtin, descricao, quantidade_pedida, separacao_marcado, separacao_marcado_em, quantidade_bipada, bipado_completo, imagem_url, compra_status, quantidade_pega, separacao_parcial, parcial_motivo, parcial_em, produto_wms_substituto_id, ordem_full",
       )
       .in("pedido_id", pedido_ids);
 
@@ -583,6 +583,7 @@ export async function GET(request: NextRequest) {
         parcial_motivo: item.parcial_motivo ?? null,
         parcial_em: item.parcial_em ?? null,
         realocacoes: itemRealocacoes,
+        ordem_full: item.ordem_full ?? null,
       };
     });
 

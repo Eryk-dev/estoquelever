@@ -90,6 +90,9 @@ export async function GET(request: NextRequest) {
   // Ausente → fila NORMAL, que EXCLUI futura (senão um pedido futura cairia na
   // embalagem normal e geraria NF cedo).
   const futura = searchParams.get("futura") === "1";
+  // Lane Full (envio ao CDF do ML): ?full=1 → separacao_full=true. Ausente →
+  // exclui Full das lanes normal/futura (mesmo mecanismo do ?futura=1).
+  const full = searchParams.get("full") === "1";
   // Encaixotamento (pista futura): "0" = ainda não encaixotado (fila do que falta),
   // "1" = já encaixotado (encaixotado_em preenchido). Ausente = sem filtro.
   const encaixotado = searchParams.get("encaixotado");
@@ -205,7 +208,7 @@ export async function GET(request: NextRequest) {
             .from("siso_pedidos")
             .select("*", { count: "exact", head: true })
             .eq("status_separacao", status)
-            .eq("separacao_futura", futura);
+            .eq("separacao_futura", futura).eq("separacao_full", full);
           if (activeGalpaoId && status !== "aguardando_compra") q = q.eq("separacao_galpao_id", activeGalpaoId);
           if (empresaIds.length === 1) q = q.eq("empresa_origem_id", empresaIds[0]);
           else if (empresaIds.length > 1) q = q.in("empresa_origem_id", empresaIds);
@@ -234,6 +237,7 @@ export async function GET(request: NextRequest) {
           p_busca: busca ?? null,
           p_busca_pedido_ids: buscaItemPedidoIds,
           p_separacao_futura: futura,
+          p_separacao_full: full,
         });
 
     // 1b. Fetch distinct origin empresas inside the current separation context
@@ -241,7 +245,7 @@ export async function GET(request: NextRequest) {
       .from("siso_pedidos")
       .select("empresa_origem_id, siso_empresas(id, nome)")
       .not("status_separacao", "is", null)
-      .eq("separacao_futura", futura);
+      .eq("separacao_futura", futura).eq("separacao_full", full);
 
     if (activeGalpaoId) {
       empresasPromise = empresasPromise.eq("separacao_galpao_id", activeGalpaoId);
@@ -266,7 +270,7 @@ export async function GET(request: NextRequest) {
         // Defensivo: cancelados têm status_separacao=null, mas um pedido cancelado
         // que ficasse com status_separacao preenchido (bug) vazaria aqui.
         .neq("status", "cancelado")
-        .eq("separacao_futura", futura);
+        .eq("separacao_futura", futura).eq("separacao_full", full);
     }
 
     // aguardando_compra: skip galpão filter — post-filtered by supplier destination
@@ -325,7 +329,7 @@ export async function GET(request: NextRequest) {
       .from("siso_pedidos")
       .select("prazo_envio")
       .not("status_separacao", "is", null)
-      .eq("separacao_futura", futura)
+      .eq("separacao_futura", futura).eq("separacao_full", full)
       .limit(5000);
     if (activeGalpaoId && !isAguardandoCompraOnly) {
       diasQuery = diasQuery.eq("separacao_galpao_id", activeGalpaoId);
@@ -358,7 +362,7 @@ export async function GET(request: NextRequest) {
         .from("siso_pedidos")
         .select("id")
         .eq("status_separacao", "aguardando_compra")
-        .eq("separacao_futura", futura);
+        .eq("separacao_futura", futura).eq("separacao_full", full);
       if (empresaIds.length === 1) ocQ = ocQ.eq("empresa_origem_id", empresaIds[0]);
       else if (empresaIds.length > 1) ocQ = ocQ.in("empresa_origem_id", empresaIds);
       if (marketplaceFilter) ocQ = ocQ.ilike("nome_ecommerce", `%${marketplaceFilter}%`);

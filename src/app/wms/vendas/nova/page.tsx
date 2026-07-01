@@ -111,6 +111,10 @@ function NovaVendaBody() {
     [galpoes],
   );
 
+  // Full: envio de estoque ao CDF do ML, sem pedido-fantasma no Tiny. Esconde
+  // cliente/CPF/canal (não se aplica); força modo="separacao" (Full nunca faz
+  // baixa_direta — reconciliação de estoque é sempre via editor da lane Full).
+  const [isFull, setIsFull] = useState(false);
   const [clienteNome, setClienteNome] = useState("");
   const [clienteCpf, setClienteCpf] = useState("");
   const [canal, setCanal] = useState("Balcão");
@@ -158,15 +162,66 @@ function NovaVendaBody() {
   });
 
   const valido =
-    !!clienteNome.trim() &&
+    (isFull || !!clienteNome.trim()) &&
     !!empresaOrigemId &&
     !!galpaoId &&
     items.every((it) => !!it.produto && it.quantidade > 0);
+
+  const submitFull = async () => {
+    const payload = {
+      empresa_origem_id: empresaOrigemId,
+      galpao_id: galpaoId,
+      items: items.map((it) => ({
+        produto_id: it.produto!.id,
+        quantidade: it.quantidade,
+      })),
+      idempotency_key: crypto.randomUUID(),
+    };
+
+    const res = await sisoFetch("/api/wms/full/criar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { erro?: string };
+      toast.error(err.erro ?? "Erro ao criar Full");
+      return;
+    }
+
+    const data = (await res.json()) as {
+      pedido_id: string;
+      numero: string;
+      parcial?: boolean;
+      itens_parciais?: Array<{
+        sku: string;
+        quantidade_pedida: number;
+        quantidade_reservada: number;
+      }>;
+    };
+    if (data.parcial) {
+      const detalhe = (data.itens_parciais ?? [])
+        .map((i) => `${i.sku} (${i.quantidade_reservada}/${i.quantidade_pedida})`)
+        .join(", ");
+      toast.warning(`Full ${data.numero} criado com reserva parcial: ${detalhe}`, {
+        duration: 10000,
+      });
+    } else {
+      toast.success(`Full ${data.numero} criado e mandado pra separação`);
+    }
+    router.push("/wms/separacao-full");
+  };
 
   const submit = async () => {
     if (!valido || enviando) return;
     setEnviando(true);
     try {
+      if (isFull) {
+        await submitFull();
+        return;
+      }
+
       const payload: CriarVendaDiretaRequest & {
         vendedor_id_alvo?: string;
       } = {
@@ -245,48 +300,82 @@ function NovaVendaBody() {
         </p>
       ) : null}
 
+      {/* Tipo de pedido — Full esconde cliente/CPF/canal e envia ao CDF do ML
+          sem pedido-fantasma no Tiny (ver /wms/separacao-full). */}
+      <section className="wms-card" style={{ padding: 14 }}>
+        <Field label="Tipo de pedido">
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              onClick={() => setIsFull(false)}
+              className={`wms-btn ${!isFull ? "wms-btn-primary" : ""}`}
+              style={{ flex: 1 }}
+            >
+              Venda
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFull(true)}
+              className={`wms-btn ${isFull ? "wms-btn-primary" : ""}`}
+              style={{ flex: 1 }}
+            >
+              Full
+            </button>
+          </div>
+          <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
+            {isFull
+              ? "Envio de estoque ao CDF do Mercado Livre. Sem cliente, sem NF, sem Tiny."
+              : "Pedido de venda pra um cliente."}
+          </p>
+        </Field>
+      </section>
+
       {/* Cliente + canal */}
       <section className="wms-card" style={{ padding: 14, display: "grid", gap: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
-          <Field label="Cliente" required>
-            <input
-              value={clienteNome}
-              onChange={(e) => setClienteNome(e.target.value)}
-              className="wms-input"
-              placeholder="Nome do cliente"
-            />
-          </Field>
-          <Field label="CPF/CNPJ">
-            <input
-              value={clienteCpf}
-              onChange={(e) => setClienteCpf(e.target.value)}
-              className="wms-input"
-              placeholder="Opcional"
-            />
-          </Field>
-        </div>
+        {!isFull && (
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+            <Field label="Cliente" required>
+              <input
+                value={clienteNome}
+                onChange={(e) => setClienteNome(e.target.value)}
+                className="wms-input"
+                placeholder="Nome do cliente"
+              />
+            </Field>
+            <Field label="CPF/CNPJ">
+              <input
+                value={clienteCpf}
+                onChange={(e) => setClienteCpf(e.target.value)}
+                className="wms-input"
+                placeholder="Opcional"
+              />
+            </Field>
+          </div>
+        )}
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1.5fr 1fr",
+            gridTemplateColumns: isFull ? "1fr 1fr" : "1fr 1.5fr 1fr",
             gap: 10,
           }}
         >
-          <Field label="Canal">
-            <select
-              value={canal}
-              onChange={(e) => setCanal(e.target.value)}
-              className="wms-input"
-            >
-              {CANAIS.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Empresa que vende" required>
+          {!isFull && (
+            <Field label="Canal">
+              <select
+                value={canal}
+                onChange={(e) => setCanal(e.target.value)}
+                className="wms-input"
+              >
+                {CANAIS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <Field label={isFull ? "Conta ML" : "Empresa que vende"} required>
             <select
               value={empresaOrigemId}
               onChange={(e) => setEmpresaOrigemId(e.target.value)}
@@ -351,34 +440,37 @@ function NovaVendaBody() {
         )}
       </section>
 
-      {/* Modo */}
-      <section className="wms-card" style={{ padding: 14 }}>
-        <Field label="Como baixar do estoque">
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              type="button"
-              onClick={() => setModo("separacao")}
-              className={`wms-btn ${modo === "separacao" ? "wms-btn-primary" : ""}`}
-              style={{ flex: 1 }}
-            >
-              Mandar pra separação
-            </button>
-            <button
-              type="button"
-              onClick={() => setModo("baixa_direta")}
-              className={`wms-btn ${modo === "baixa_direta" ? "wms-btn-primary" : ""}`}
-              style={{ flex: 1 }}
-            >
-              Baixar estoque direto
-            </button>
-          </div>
-          <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
-            {modo === "separacao"
-              ? "Pedido vai pra fila de wave picking. Operador separa e embala."
-              : "Sistema baixa direto na loc sugerida. Se faltar saldo, cai pra separação automaticamente."}
-          </p>
-        </Field>
-      </section>
+      {/* Modo — Full não se aplica (sempre separação; editor da lane Full é
+          quem reconcilia estoque, nunca baixa_direta). */}
+      {!isFull && (
+        <section className="wms-card" style={{ padding: 14 }}>
+          <Field label="Como baixar do estoque">
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                type="button"
+                onClick={() => setModo("separacao")}
+                className={`wms-btn ${modo === "separacao" ? "wms-btn-primary" : ""}`}
+                style={{ flex: 1 }}
+              >
+                Mandar pra separação
+              </button>
+              <button
+                type="button"
+                onClick={() => setModo("baixa_direta")}
+                className={`wms-btn ${modo === "baixa_direta" ? "wms-btn-primary" : ""}`}
+                style={{ flex: 1 }}
+              >
+                Baixar estoque direto
+              </button>
+            </div>
+            <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
+              {modo === "separacao"
+                ? "Pedido vai pra fila de wave picking. Operador separa e embala."
+                : "Sistema baixa direto na loc sugerida. Se faltar saldo, cai pra separação automaticamente."}
+            </p>
+          </Field>
+        </section>
+      )}
 
       {/* Itens — overflow visible pra não clipar dropdown do ProdutoCombo */}
       <section className="wms-card" style={{ padding: 14, overflow: "visible" }}>
@@ -547,9 +639,11 @@ function NovaVendaBody() {
         >
           {enviando
             ? "Criando…"
-            : modo === "separacao"
-              ? "Criar e mandar pra separação"
-              : "Criar e baixar estoque agora"}
+            : isFull
+              ? "Criar Full e mandar pra separação"
+              : modo === "separacao"
+                ? "Criar e mandar pra separação"
+                : "Criar e baixar estoque agora"}
         </button>
       </div>
     </div>

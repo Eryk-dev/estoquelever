@@ -11,6 +11,7 @@ type TabId =
   | "em_separacao"
   | "separado"
   | "encaixotado"
+  | "fechado"
   | "embalado"
   | "conferido"
   | "pendente_realocacao"
@@ -31,6 +32,8 @@ interface TabsStatusSeparacaoProps {
     separado: number;
     /** Só usado na pista futura: pedidos já 100% encaixotados. */
     encaixotado: number;
+    /** Só usado na lane Full: pedidos separados e fechados. */
+    fechado: number;
     embalado: number;
     conferido: number;
     pendente_realocacao: number;
@@ -46,6 +49,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "em_separacao", label: "Em separação" },
   { id: "separado", label: "Separados" },
   { id: "encaixotado", label: "Encaixotados" },
+  { id: "fechado", label: "Fechados" },
   { id: "embalado", label: "Embalados" },
   { id: "conferido", label: "Conferidos" },
   { id: "cancelado", label: "Cancelados" },
@@ -58,11 +62,12 @@ function TabsStatusSeparacao({
   counts,
   visibleTabs,
 }: TabsStatusSeparacaoProps) {
-  // `encaixotado` é exclusivo da pista futura (entra via visibleTabs/FUTURA_TABS).
-  // O caminho default (separação normal) NÃO mostra essa aba.
+  // `encaixotado`/`fechado` são exclusivos das lanes futura/Full (entram via
+  // visibleTabs/FUTURA_TABS/FULL_TABS). O caminho default (separação normal)
+  // NÃO mostra essas abas.
   const tabs = visibleTabs
     ? TABS.filter((t) => visibleTabs.includes(t.id))
-    : TABS.filter((t) => t.id !== "encaixotado");
+    : TABS.filter((t) => t.id !== "encaixotado" && t.id !== "fechado");
   return (
     <div className="wms-stab" role="tablist">
       {tabs.map((t) => {

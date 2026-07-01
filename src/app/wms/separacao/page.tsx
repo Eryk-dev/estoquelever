@@ -120,8 +120,12 @@ interface SeparacaoPedido {
 }
 
 interface SeparacaoResponse {
-  // `encaixotado`/`cancelado` são chaves extras (não são status_separacao).
-  counts: Record<StatusServer, number> & { encaixotado?: number; cancelado?: number };
+  // `encaixotado`/`fechado`/`cancelado` são chaves extras (não são status_separacao).
+  counts: Record<StatusServer, number> & {
+    encaixotado?: number;
+    fechado?: number;
+    cancelado?: number;
+  };
   pedidos: SeparacaoPedido[];
   empresas: { id: string; nome: string }[]; // usado no filtro de empresa
   galpoes: { id: string; nome: string }[];
@@ -141,6 +145,9 @@ const TAB_TO_STATUS: Record<Tab, StatusServer[]> = {
   // Aba virtual da pista futura: mesmo status 'separado', diferenciado por
   // encaixotado_em (a rota filtra via ?encaixotado=1).
   encaixotado: ["separado"],
+  // Aba virtual da lane Full: mesmo status 'separado', diferenciado por
+  // fechado_em (a rota filtra via ?fechado=1).
+  fechado: ["separado"],
   embalado: ["embalado"],
   conferido: ["conferido"],
   pendente_realocacao: ["pendente_realocacao"],
@@ -173,6 +180,10 @@ const TAB_EMPTY: Record<Tab, { title: string; body: string }> = {
   encaixotado: {
     title: "Nenhum pedido encaixotado",
     body: "Pedidos da separação futura já distribuídos nas caixas do dia aparecem aqui.",
+  },
+  fechado: {
+    title: "Nenhum pedido fechado",
+    body: "Pedidos Full separados e fechados aparecem aqui.",
   },
   embalado: {
     title: "Nenhum pedido embalado",
@@ -856,9 +867,19 @@ export default function WmsSeparacaoPage() {
     "separado",
     "encaixotado",
   ];
+  // Separação Full: a MESMA tela, servida em /wms/separacao-full. Difere só em
+  // (a) filtrar separacao_full=true na API, (b) 4 abas só (sem compras/NF/
+  // embalagem/conferência — Full termina em `separado`/`fechado`).
+  const full = (pathname ?? "").startsWith("/wms/separacao-full");
+  const FULL_TABS: Tab[] = ["aguardando_separacao", "em_separacao", "separado", "fechado"];
   const rawTab = parseTab(searchParams?.get("tab"));
-  // Em futura, tab fora do conjunto visível cai pra "pra separar".
-  const tab = futura && !FUTURA_TABS.includes(rawTab) ? "aguardando_separacao" : rawTab;
+  // Em futura/full, tab fora do conjunto visível cai pra "pra separar".
+  const tab =
+    futura && !FUTURA_TABS.includes(rawTab)
+      ? "aguardando_separacao"
+      : full && !FULL_TABS.includes(rawTab)
+        ? "aguardando_separacao"
+        : rawTab;
   const busca = searchParams?.get("busca") ?? "";
   const marketplace = searchParams?.get("marketplace") ?? "";
   const tagFilter = searchParams?.get("tag") ?? "";
@@ -959,18 +980,19 @@ export default function WmsSeparacaoPage() {
     if (empresaFilter) params.set("empresa_origem_id", empresaFilter);
     if (sort && sort !== "data_pedido") params.set("sort", sort);
     if (futura) params.set("futura", "1");
+    if (full) params.set("full", "1");
     // Pista futura: a aba "Separados" mostra só o que FALTA encaixotar
     // (encaixotado_em IS NULL); a aba "Encaixotados" mostra os já feitos.
     if (tab === "encaixotado") params.set("encaixotado", "1");
     else if (futura && tab === "separado") params.set("encaixotado", "0");
     return params.toString();
-  }, [tab, busca, marketplace, tagFilter, empresaFilter, sort, futura]);
+  }, [tab, busca, marketplace, tagFilter, empresaFilter, sort, futura, full]);
 
   const { data, isLoading, isError, error, refetch } =
     useQuery<SeparacaoResponse>({
       queryKey: [
         "wms-separacao",
-        futura ? "futura" : "normal",
+        full ? "full" : futura ? "futura" : "normal",
         activeGalpaoId ?? "all",
         tab,
         busca,
@@ -1028,6 +1050,7 @@ export default function WmsSeparacaoPage() {
       em_separacao: data?.counts.em_separacao ?? 0,
       separado: data?.counts.separado ?? 0,
       encaixotado: data?.counts.encaixotado ?? 0,
+      fechado: data?.counts.fechado ?? 0,
       embalado: data?.counts.embalado ?? 0,
       conferido: data?.counts.conferido ?? 0,
       pendente_realocacao: data?.counts.pendente_realocacao ?? 0,
@@ -1433,11 +1456,13 @@ export default function WmsSeparacaoPage() {
   return (
     <>
       <PageHeader
-        title={futura ? "Separação futura" : "Separação"}
+        title={full ? "Separação Full" : futura ? "Separação futura" : "Separação"}
         subtitle={
-          futura
-            ? "Vendas com etiqueta segurada (ML) — reserva e separa cedo, sem NF até a etiqueta liberar"
-            : "Wave picking, embalagem e expedição"
+          full
+            ? "Envio de estoque ao CDF do Mercado Livre — sem NF, sem Tiny"
+            : futura
+              ? "Vendas com etiqueta segurada (ML) — reserva e separa cedo, sem NF até a etiqueta liberar"
+              : "Wave picking, embalagem e expedição"
         }
         backHref="/wms"
         backLabel="Voltar ao WMS"
@@ -1446,7 +1471,7 @@ export default function WmsSeparacaoPage() {
       <TabsStatusSeparacao
         active={tab}
         counts={counts}
-        visibleTabs={futura ? FUTURA_TABS : undefined}
+        visibleTabs={full ? FULL_TABS : futura ? FUTURA_TABS : undefined}
         onChange={(next) => {
           // BATCH em uma só chamada — chamadas consecutivas de updateParam
           // levavam searchParams stale e reverter mudanças (bug das tabs zeradas).

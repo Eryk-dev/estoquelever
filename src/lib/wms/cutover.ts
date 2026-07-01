@@ -61,7 +61,7 @@ export async function dispararCutoverSePronto(pedidoId: string): Promise<Dispara
   const { data: pedido, error } = await sb
     .from("siso_pedidos")
     .select(
-      "id, status_separacao, nota_fiscal_id, estoque_lancado, decisao_final, empresa_origem_id",
+      "id, status_separacao, nota_fiscal_id, estoque_lancado, decisao_final, empresa_origem_id, separacao_full",
     )
     .eq("id", pedidoId)
     .maybeSingle();
@@ -72,6 +72,14 @@ export async function dispararCutoverSePronto(pedidoId: string): Promise<Dispara
       error: error?.message,
     });
     return { enqueued: false, motivo: "pedido_not_found" };
+  }
+
+  // Full BYPASSA o cutover: o envio ao CDF do ML dá baixa (S) no próprio pick,
+  // sem NF e sem lancar_estoque_pos_nf. estoque_lancado fica false → o editor
+  // de itens é o dono ÚNICO da reconciliação de estoque, e um retrocesso
+  // separado→em_separacao no editor não dispara reverterCutover (no-op).
+  if (pedido.separacao_full) {
+    return { enqueued: false, motivo: "full_bypass" };
   }
 
   if (pedido.estoque_lancado) {

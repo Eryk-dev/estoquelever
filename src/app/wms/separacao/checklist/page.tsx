@@ -307,7 +307,14 @@ export default function WmsChecklistPage() {
   // Pista futura (ML buffered): o checklist é o mesmo (iniciar/marcar/concluir),
   // mas o pick PARA em `separado` (sem embalagem) e a volta é pra /separacao-futura.
   const futura = sp?.get("futura") === "1";
-  const filaHref = futura ? "/wms/separacao-futura" : "/wms/separacao";
+  // Lane Full (envio ao CDF do ML): mesmo checklist, PARA em `separado` (sem
+  // embalagem/NF), e a volta é pra /separacao-full.
+  const full = sp?.get("full") === "1";
+  const filaHref = full
+    ? "/wms/separacao-full"
+    : futura
+      ? "/wms/separacao-futura"
+      : "/wms/separacao";
 
   // Mantém presença ativa em "Separação" durante o wave picking.
   useTrackPresencaWms("separacao");

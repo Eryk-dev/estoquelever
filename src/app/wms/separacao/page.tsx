@@ -1398,6 +1398,7 @@ export default function WmsSeparacaoPage() {
         qs.set("pedidos", effectiveIds.join(","));
         if (modo) qs.set("modo", modo);
         if (futura) qs.set("futura", "1");
+        if (full) qs.set("full", "1");
         router.push(`/wms/separacao/checklist?${qs.toString()}`);
       },
     });

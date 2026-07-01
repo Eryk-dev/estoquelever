@@ -106,6 +106,17 @@ Separação: iniciar → em_separacao → marcar-item (L+S atômico no pick) →
             pedido pronto da fila "Separados" (= encaixotado_em IS NULL) pra não poluir o que falta]
 ```
 
+### Lane Separação Full (2026-07-01 — spec `.specs/features/separacao-full`)
+
+Fluxo interno pra dar baixa de estoque e mandar ao CDF do **Mercado Livre (envio Full)** SEM criar pedido-fantasma no Tiny. Clona a arquitetura da `separacao-futura`: mesma tela/checklist, terminal diferente. Discriminador = coluna `siso_pedidos.separacao_full boolean` (+ `marcadores` contém "FULL"). **4 etapas:** `aguardando_separacao → em_separacao → separado → fechado`.
+
+- **Criar:** toggle "Full" na Nova venda (esconde cliente/CPF/canal) → `POST /api/wms/full/criar` (rota isolada de `/vendas/criar`). id `FULL-…`, `origem_pedido=manual`, `decisao_final=propria`, `cliente_nome` sentinela (`FULL — {empresa}`), reserva PARCIAL (o que der; resto pendente). **Sem NF, sem Tiny, sem job na fila.** `empresa_origem_id` = a conta ML do envio.
+- **Separar:** reusa `checklist/page.tsx` com `?full=1` (`filaHref=/wms/separacao-full`). Pick idêntico (`wms_pick_item_atomico`, R→L+S), para em `separado`. Nova ordenação **"Ordem do pedido"** (`ordem_full` 1..N, default no Full).
+- **Fechar:** `POST /api/wms/separacao/full/fechar {pedido_ids, reabrir?}` só grava `fechado_em`/`fechado_por` (status segue `separado`). Aba **Fechados** = virtual (`separado` + `fechado_em IS NOT NULL`, espelha `encaixotado`). Reabrir = admin (`separacao.administrar`).
+- **Editor de itens em separação** (o núcleo de risco) — `POST/DELETE/PATCH /api/wms/full/[id]/itens[/itemId]` + helpers em `src/lib/wms/full-editor.ts`. Add (reserva parcial, reabre se separado), remove (picado → desmarca S→E + libera R; delete linha), set_qty. **Regra de reserva:** a R é all-or-nothing por mov e `reservarAtomico` é idempotente por tripla → mexer no reservado = **liberar TODAS as R + re-reservar o alvo** (`novaQty − picado`), nunca "somar". Qty↓ abaixo do picado = `desmarcarItemFull` (S→E devolve saldo) + re-reserva. Guard `fechado_em` → 400.
+- **Cancelar** (P2): `POST /api/wms/full/[id]/cancelar` — desmarca picados (estorna S) + libera R + `status=cancelado` (`cancelado_origem=operador`); aba Cancelados.
+- **Zero-regressão:** Full tem `status_separacao` que COLIDE com o normal → toda query de fila fora da lane Full exclui com `.eq("separacao_full", false)` (vendas, home/dashboard-tarefas, /wms/pedidos, tracking, produto-esgotado, cancelados). Processadores backend (worker/cutover/reconciliador-OC/webhook) são naturalmente imunes (Full não tem NF/job/webhook e é `executando`).
+
 **`webhook-processor.ts` e `execution-worker.ts` são shells finos** — sempre delegam pros `-wms`. **Não existe mais flag `WMS_AS_SOURCE` / `flags.ts`**: o caminho WMS-as-source é permanente. A lógica legada de tier/multi-empresa nos arquivos base está dormante.
 
 ---
@@ -303,6 +314,8 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 12. **Comentário stale em `lib/wms/types.ts`** chama o custo de `siso_produto_custo_medio` — a tabela real é `siso_custo_medio`. Confiar na migration, não no comentário.
 13. **Shape de erro 401 inconsistente** pela API (`{error:"unauthorized"}` vs `{error:"sessao_invalida"}` vs `{erro:"..."}`) — não assumir uma chave única.
 14. **Rotas Tiny/ML de conexão+OAuth não têm session check** (`tiny/connections`, `tiny/stock/ajustar`, `ml/anuncios` etc.) — gap conhecido. `webhook/tiny` é público por design (valida por CNPJ + dedup).
+15. **Full BYPASSA o cutover** — `dispararCutoverSePronto` faz early-return `full_bypass` se `separacao_full=true`. `estoque_lancado` fica `false` pra sempre; nenhum job `lancar_estoque_pos_nf`; o editor de itens é o dono ÚNICO da reconciliação de estoque. Não esperar que um Full em `separado` dispare lançamento. Ver seção "Lane Separação Full".
+16. **No editor Full, NUNCA "somar" ao reservado reservando o delta** — `reservarAtomico` é idempotente por tripla (retorna a R existente sem somar). Ajustar qty = **liberar todas as R + re-reservar o alvo** (`full-editor.ts`). Reservar o delta na mesma loc é no-op silencioso.
 
 ---
 

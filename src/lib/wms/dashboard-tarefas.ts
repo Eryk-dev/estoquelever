@@ -875,7 +875,8 @@ export async function montarDashboardTarefas(
           "em_separacao",
           "pendente_realocacao",
           "validacao_oc",
-        ]);
+        ])
+        .eq("separacao_full", false); // Full tem lane própria — fora da home
       if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
       return q;
     })(),
@@ -887,7 +888,8 @@ export async function montarDashboardTarefas(
       let q = sb
         .from("siso_pedidos")
         .select("id, embalagem_operador_id")
-        .eq("status_separacao", "separado");
+        .eq("status_separacao", "separado")
+        .eq("separacao_full", false); // Full separado não vai pra embalagem
       if (galpao_id) q = q.eq("separacao_galpao_id", galpao_id);
       return q;
     })(),

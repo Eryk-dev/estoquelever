@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
       T extends {
         gte: (col: string, val: string) => T;
         lte: (col: string, val: string) => T;
-        eq: (col: string, val: string) => T;
+        eq: (col: string, val: string | boolean) => T;
         in: (col: string, vals: string[]) => T;
         ilike: (col: string, val: string) => T;
         or: (filter: string) => T;
@@ -119,6 +119,10 @@ export async function GET(request: NextRequest) {
     >(q: T, empresaIds?: string[]): T {
       // Date range
       q = q.gte("data", dataInicio).lte("data", dataFim);
+
+      // Zero-regressão Full: rastreamento é das vendas/OC normais; Full tem
+      // lane própria e não emite NF/etiqueta.
+      q = q.eq("separacao_full", false);
 
       // Role-based filtering
       if (isComprador) {

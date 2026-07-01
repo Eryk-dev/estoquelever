@@ -193,7 +193,8 @@ export async function GET(request: Request) {
     let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .in("status", statuses);
+      .in("status", statuses)
+      .eq("separacao_full", false); // Full tem lane própria (/wms/separacao-full)
     if (galpaoOrClause) q = q.or(galpaoOrClause);
     const { data: pedidos, error } = await q
       .order("criado_em", { ascending: false })
@@ -215,7 +216,8 @@ export async function GET(request: Request) {
     let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .in("status", activeStatuses);
+      .in("status", activeStatuses)
+      .eq("separacao_full", false);
     if (galpaoOrClause) q = q.or(galpaoOrClause);
     return q.order("criado_em", { ascending: false });
   }
@@ -224,7 +226,8 @@ export async function GET(request: Request) {
     let q = supabase
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
-      .eq("status_separacao", "pendente_realocacao");
+      .eq("status_separacao", "pendente_realocacao")
+      .eq("separacao_full", false);
     if (galpaoOrClause) q = q.or(galpaoOrClause);
     return q.order("criado_em", { ascending: false });
   }
@@ -234,7 +237,8 @@ export async function GET(request: Request) {
       .from("siso_pedidos")
       .select("*, siso_empresas(nome)")
       .not("status", "in", `(${activeStatuses.join(",")})`)
-      .neq("status_separacao", "pendente_realocacao");
+      .neq("status_separacao", "pendente_realocacao")
+      .eq("separacao_full", false);
     if (galpaoOrClause) q = q.or(galpaoOrClause);
     return q.order("criado_em", { ascending: false }).limit(150);
   }

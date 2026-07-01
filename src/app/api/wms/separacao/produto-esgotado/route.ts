@@ -87,7 +87,9 @@ export async function POST(request: NextRequest) {
       .select("id, empresa_origem_id, separacao_galpao_id")
       .in("status_separacao", ACTIVE_STATUSES)
       // P2-SEP-01: restringe ao galpão do operador — nunca toca pedidos de outro.
-      .eq("separacao_galpao_id", galpao);
+      .eq("separacao_galpao_id", galpao)
+      // Full tem lane própria — não entra no recompute de "produto esgotado" da normal.
+      .eq("separacao_full", false);
 
     if (pedidosErr) {
       logger.error("produto-esgotado", "Erro ao buscar pedidos ativos", {

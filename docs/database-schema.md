@@ -58,6 +58,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `separacao_tags` | text[] | YES | `{}` | User-created tags in separation module |
 | `separacao_futura` | boolean | NO | false | Pista de separação futura (ML buffered): reserva/separa/compra sem NF até a etiqueta liberar. Tela `/wms/separacao-futura` filtra por isto; a fila normal exclui. Promoção (etiqueta liberou) flipa pra false. Índice parcial `idx_pedidos_separacao_futura`. |
 | `encaixotado_em` | timestamptz | YES | | Quando o pedido futura ficou 100% encaixotado (todos os itens depositados na caixa do dia). Etapa `/wms/encaixotamento`. NÃO muda `status_separacao` (fica `separado`). |
+| `separacao_full` | boolean | NO | false | Lane **Separação Full** (envio de estoque ao CDF do ML, sem NF/Tiny). Tela `/wms/separacao-full` filtra por isto; TODA fila fora dela exclui com `.eq("separacao_full", false)`. Índice parcial `idx_pedidos_separacao_full`. Ver migration `20260701_separacao_full.sql`. |
+| `fechado_em` | timestamptz | YES | | Etapa terminal `fechado` da lane Full (aba virtual = `separado` + `fechado_em IS NOT NULL`, espelha `encaixotado_em`). NÃO muda `status_separacao`. Reversível por admin. |
+| `fechado_por` | text | YES | | Usuário que fechou o Full (`fechar`/`reabrir` em `/api/wms/separacao/full/fechar`). |
 | `erro` | text | YES | | Error message if status = 'erro' |
 | `estoque_lancado` | boolean | NO | false | Flag: stock already deducted in Tiny |
 | `compra_estoque_lancado_alerta` | boolean | NO | false | Flag: alert if stock entered before cancellation |
@@ -195,6 +198,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `separacao_parcial` | boolean | NO | false | Flag: short pick **com `loc_zerou=true`** (cascade/encaminhar/OC; item fica marcado). **NÃO** é setado no caso "prateleira ainda tem" (Fase 3 #3): lá o item fica aberto (flag=false) pra poder ser re-pickado — `marcar-item`/`parcial`/`bipar-checklist` rejeitam `separacao_parcial=true`. O badge "Parcial X/Y" do checklist deriva de `quantidade_pega` (0 < pega < pedida && !marcado), não do flag. |
 | `parcial_motivo` | text | YES | null | Reason: `loc_zerou` (cascade/encaminhar/OC). |
 | `parcial_em` | timestamptz | YES | null | When the short pick was registered |
+| `ordem_full` | integer | YES | null | Posição de inserção (1..N) na lane Full — chave da ordenação "Ordem do pedido" no checklist (default no Full). NULL fora do Full. Migration `20260701_separacao_full.sql`. |
 | `parcial_por` | uuid | YES | FK | User who registered the short pick |
 | `mov_saida_id` | uuid | YES | FK | WMS movement ID for the saida created on mark/parcial |
 | `mov_ajuste_loc_zerou_id` | uuid | YES | FK | WMS movement ID for loc_zerou physical adjustment |

@@ -3274,6 +3274,54 @@ Atalho "encaixotar dia inteiro" — fecha um DIA todo de uma vez, sem bipar (ond
 
 ---
 
+## Separação Full API
+
+Lane interna pra dar baixa de estoque e mandar ao CDF do Mercado Livre (envio Full), sem NF/Tiny. Ver seção "Lane Separação Full" no `CLAUDE.md`. Discriminador `siso_pedidos.separacao_full`. Todas gated (`separacao.executar`, exceto criar = `vendas.criar` e reabrir = `separacao.administrar`).
+
+### POST /api/wms/full/criar
+
+Cria um pedido Full. Rota isolada de `/vendas/criar`. Reserva PARCIAL (o que der; resto pendente). **Não** emite NF nem chama Tiny.
+
+**Body:** `{ empresa_origem_id, galpao_id, items: [{ produto_id (uuid WMS), quantidade }], idempotency_key? }`
+**Resposta 200:** `{ pedido_id: "FULL-…", numero, status: "executando", status_separacao: "aguardando_separacao", parcial, itens_parciais }`
+**Erros:** `400` validação/produto não mapeado · `409` falha de reserva (rollback total) · `403` sem `vendas.criar`
+
+### POST /api/wms/full/[id]/itens
+
+Adiciona um item a um Full em separação (`ordem_full` no fim, reserva parcial, reabre `separado→em_separacao`). Bloqueia SKU duplicado.
+
+**Body:** `{ produto_id (uuid WMS), quantidade }`
+**Resposta 200:** `{ ok, item_id, ordem_full, quantidade, reservado, parcial, reaberto }`
+**Erros:** `400` Full fechado/inválido · `409` produto já no pedido / falha de reserva
+
+### DELETE /api/wms/full/[id]/itens/[itemId]
+
+Remove um item. Picado → desmarca (S→E devolve saldo) + libera R; não-picado → só libera R. Depois apaga a linha.
+
+**Resposta 200:** `{ ok, item_id, picado }` · **Erros:** `400` fechado · `404` item · `409` reconciliação
+
+### PATCH /api/wms/full/[id]/itens/[itemId]
+
+Muda a qty pedida. ↑ e ↓≥picado: libera todas R + re-reserva (`novaQty − picado`), picks S intactos. ↓<picado: desmarca tudo (S→E) + re-reserva + reabre.
+
+**Body:** `{ quantidade }` · **Resposta 200:** `{ ok, item_id, quantidade }` · **Erros:** `400` fechado/inválida · `409` reconciliação
+
+### POST /api/wms/full/[id]/cancelar
+
+Cancela o Full (P2): desmarca picados (estorna S) + libera R + `status=cancelado`, `status_separacao=null`, `cancelado_origem=operador`. Itens ficam (histórico). Aba Cancelados.
+
+**Body:** `{ motivo? }` · **Resposta 200:** `{ ok, pedido_id, status: "cancelado" }`
+
+### POST /api/wms/separacao/full/fechar
+
+Etapa terminal "Fechar" (grava `fechado_em`/`fechado_por`, status segue `separado`). Idempotente. `reabrir=true` limpa `fechado_em` (gated `separacao.administrar`).
+
+**Body:** `{ pedido_ids: string[], reabrir?: boolean }` · **Resposta 200:** `{ ok, atualizados, ja_no_estado }`
+
+> A **listagem** da lane Full reusa `GET /api/wms/separacao?full=1` (4 abas; `?fechado=0|1` split da aba Separado/Fechados). `GET /api/wms/separacao/checklist-items` inclui `ordem_full`.
+
+---
+
 ## Compras API
 
 ### GET /api/wms/compras

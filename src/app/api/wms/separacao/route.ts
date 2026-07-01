@@ -266,8 +266,10 @@ export async function GET(request: NextRequest) {
          encaminhado_de, motivo_cancelamento, cancelado_origem, cancelado_em, siso_empresas(nome)`,
       );
     if (cancelado) {
-      // Aba Cancelados: independe de status_separacao (sempre null) e de futura.
-      pedidosQuery = pedidosQuery.eq("status", "cancelado");
+      // Aba Cancelados: independe de status_separacao (sempre null) e de futura,
+      // MAS respeita a lane Full — um Full cancelado só aparece na aba Cancelados
+      // da Separação Full, nunca na normal (zero-regressão).
+      pedidosQuery = pedidosQuery.eq("status", "cancelado").eq("separacao_full", full);
     } else {
       pedidosQuery = pedidosQuery
         .not("status_separacao", "is", null)
@@ -528,7 +530,8 @@ export async function GET(request: NextRequest) {
       let cq = supabase
         .from("siso_pedidos")
         .select("*", { count: "exact", head: true })
-        .eq("status", "cancelado");
+        .eq("status", "cancelado")
+        .eq("separacao_full", full); // count da aba Cancelados respeita a lane
       if (activeGalpaoId) cq = cq.eq("separacao_galpao_id", activeGalpaoId);
       if (empresaIds.length === 1) cq = cq.eq("empresa_origem_id", empresaIds[0]);
       else if (empresaIds.length > 1) cq = cq.in("empresa_origem_id", empresaIds);

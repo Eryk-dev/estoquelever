@@ -7547,3 +7547,69 @@ erros:
       - src/app/api/wms/vendas/criar/route.ts
       - src/app/api/wms/separacao/checklist-items/route.ts
     tags: [venda-manual, imagem, foto, separacao, checklist-items, business_logic]
+
+  - id: full-criar-cliente-nome-not-null
+    date: "2026-07-01"
+    source: src/app/api/wms/full/criar/route.ts
+    category: database
+    message: >
+      A criação de um pedido Full (POST /api/wms/full/criar) falharia no primeiro
+      uso real: o INSERT em siso_pedidos omitia cliente_nome, que é NOT NULL sem
+      default no schema. Pego pelo teste de integração isolado (separacao-full-lane)
+      que também passava cliente_nome=null e não checava o erro do insert.
+    cause: >
+      Full não tem cliente (é envio interno ao CDF do ML), então a rota nasceu sem
+      setar cliente_nome — mas a coluna é NOT NULL. A venda manual (/vendas/criar)
+      EXIGE cliente_nome do usuário, então nunca esbarrou nisso.
+    fix: >
+      Seta um sentinela amarrado à conta ML: cliente_nome = `FULL — ${empresa.nome}`.
+      No teste, seedPedido passa cliente_nome=id e checa o error do insert (falha
+      alta em vez de silenciosa).
+    files:
+      - src/app/api/wms/full/criar/route.ts
+      - test/integration/separacao-full-lane.test.ts
+    tags: [full, cliente_nome, not-null, criacao, database]
+
+  - id: full-editor-qty-up-reservar-atomico-idempotente
+    date: "2026-07-01"
+    source: src/app/api/wms/full/[id]/itens/[itemId]/route.ts
+    category: business_logic
+    message: >
+      No editor de itens Full, aumentar a qty (ex.: 5→7) reservando só o delta (+2)
+      na MESMA loc que já tinha R deixava o reservado em 5, não 7 — a reserva do
+      delta era pulada ("R viva já existe — skip idempotente").
+    cause: >
+      reservarAtomico é idempotente por tripla (produto,galpao,loc)+pedido: se já
+      existe R viva na tripla, retorna a existente sem SOMAR. Então não dá pra
+      "adicionar" ao reservado reservando o delta na mesma loc.
+    fix: >
+      Unifica os ramos ↑ e ↓≥picado: libera TODAS as R vivas do item e re-reserva o
+      remanescente (novaQty − picado) do zero. Após liberar não há R viva na tripla,
+      então reservarAtomico cria a fresh. Os picks (S) ficam intactos.
+    files:
+      - src/app/api/wms/full/[id]/itens/[itemId]/route.ts
+      - src/lib/wms/full-editor.ts
+    tags: [full, editor, reserva, reservarAtomico, idempotencia, business_logic]
+
+  - id: test-cleanup-custo-medio-ultima-mov-fk
+    date: "2026-07-01"
+    source: test/integration/separacao-full-editor.test.ts
+    category: infrastructure
+    message: >
+      Cleanup de teste que deletava siso_movimentacoes ANTES de siso_custo_medio
+      falhava (silenciosamente, no client Supabase) e deixava produtos/movs de teste
+      vazando no catálogo do staging. O DELETE puro em SQL funcionava — o do client
+      não, escondendo o erro real.
+    cause: >
+      siso_custo_medio tem DUAS FKs: produto_id→siso_produtos E
+      ultima_movimentacao_id→siso_movimentacoes. Deletar a mov referenciada por
+      custo_medio.ultima_movimentacao_id viola custo_medio_ultima_movimentacao_id_fkey.
+      A ordem do cleanup (movs antes de custo_medio) violava isso.
+    fix: >
+      No afterAll: deletar siso_custo_medio ANTES de siso_movimentacoes (e antes de
+      produtos). Movs em duas passadas (estornos com estorno_de setado primeiro, pra
+      não esbarrar no self-FK estorno_de). Diagnóstico: surfaçar o .error do client
+      (que estava sendo ignorado) revelou a FK exata.
+    files:
+      - test/integration/separacao-full-editor.test.ts
+    tags: [teste, cleanup, custo-medio, foreign-key, staging, infrastructure]

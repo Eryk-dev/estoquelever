@@ -81,7 +81,11 @@ export async function GET(request: NextRequest) {
        vendedor_id, vendedor_nome, origem_pedido, canal_venda`,
       { count: "exact" },
     )
-    .or("origem_pedido.eq.manual,nome_ecommerce.in.(\"Mercado Livre\",\"Shopee\")");
+    .or("origem_pedido.eq.manual,nome_ecommerce.in.(\"Mercado Livre\",\"Shopee\")")
+    // Zero-regressão Full: pedidos Full (origem_pedido=manual, status=executando,
+    // status_separacao no fluxo normal) vazariam pras abas Pendentes/Em separação.
+    // A lane deles é /wms/separacao-full — excluir aqui.
+    .eq("separacao_full", false);
 
   // Filtro por tab
   switch (tab) {

@@ -4,6 +4,7 @@ import { createServiceClient } from "../../src/lib/supabase-server";
 import { POST as criarPOST } from "../../src/app/api/wms/full/criar/route";
 import { POST as addPOST } from "../../src/app/api/wms/full/[id]/itens/route";
 import { DELETE as itemDELETE, PATCH as itemPATCH } from "../../src/app/api/wms/full/[id]/itens/[itemId]/route";
+import { POST as cancelarPOST } from "../../src/app/api/wms/full/[id]/cancelar/route";
 import { POST as iniciarPOST } from "../../src/app/api/wms/separacao/iniciar/route";
 import { POST as marcarPOST } from "../../src/app/api/wms/separacao/marcar-item/route";
 
@@ -114,6 +115,11 @@ function removeItem(pedidoId: string, itemId: number) {
 function patchQty(pedidoId: string, itemId: number, quantidade: number) {
   return itemPATCH(req(`/api/wms/full/${pedidoId}/itens/${itemId}`, "PATCH", { quantidade }), {
     params: Promise.resolve({ id: pedidoId, itemId: String(itemId) }),
+  });
+}
+function cancelarFull(pedidoId: string) {
+  return cancelarPOST(req(`/api/wms/full/${pedidoId}/cancelar`, "POST", { motivo: "teste" }), {
+    params: Promise.resolve({ id: pedidoId }),
   });
 }
 
@@ -291,5 +297,33 @@ describe("editor Full — guards", () => {
 
     // Estado consistente: saldo devolvido uma única vez.
     expect((await estoque(p.wms)).saldo).toBe(100);
+  });
+});
+
+describe("editor Full — cancelar (FULL-08)", () => {
+  it("cancela Full com item picado: estorna S (saldo volta), libera R, marca cancelado", async () => {
+    const p = await novoProduto();
+    const { pedidoId, itemId } = await criarFull(p.wms, 6);
+    await iniciarEPicar(pedidoId, itemId);
+    expect((await estoque(p.wms)).saldo).toBe(94); // 6 picados
+
+    const res = await cancelarFull(pedidoId);
+    expect(res.status).toBe(200);
+
+    const st = await estoque(p.wms);
+    expect(st.saldo).toBe(100); // S estornada
+    expect(st.reservado).toBe(0); // R liberada
+    const { data: ped } = await sb
+      .from("siso_pedidos")
+      .select("status, status_separacao, cancelado_origem, cancelado_em")
+      .eq("id", pedidoId)
+      .single();
+    expect(ped?.status).toBe("cancelado");
+    expect(ped?.status_separacao).toBeNull(); // aba Cancelados = status='cancelado'
+    expect(ped?.cancelado_origem).toBe("operador");
+    expect(ped?.cancelado_em).not.toBeNull();
+    // item permanece (histórico), sem pick
+    const { data: it } = await sb.from("siso_pedido_itens").select("quantidade_pega").eq("id", itemId).single();
+    expect(it?.quantidade_pega).toBeNull();
   });
 });

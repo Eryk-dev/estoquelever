@@ -114,6 +114,7 @@ export type EventoPedido =
   | "troca_substituto_alterado"
   | "troca_desfeita"
   | "full_criado"
+  | "full_editado"
   | "full_fechado"
   | "full_reaberto";
 

@@ -60,6 +60,22 @@ describe("wms_cancelar_venda_atomico", () => {
   });
 });
 
+describe("cancelarVendaManual modo separação (caminho aguardando_separacao → RPC)", () => {
+  it("tira o pedido da separação: status cancelado + status_separacao NULL", async () => {
+    const pedidoId = "MAN-cancel-sep1";
+    await sb.from("siso_pedidos").insert({
+      id: pedidoId, status: "executando", status_separacao: "aguardando_separacao",
+      numero: pedidoId, data: "2026-06-24", filial_origem: "CWB", cliente_nome: "Cli",
+    });
+    await cancelarVendaManual({ pedido_id: pedidoId, usuario_id: userId, motivo: "cancela sep" });
+    const { data: ped } = await sb.from("siso_pedidos")
+      .select("status, status_separacao").eq("id", pedidoId).single();
+    expect((ped as { status: string }).status).toBe("cancelado");
+    // BUG fix: antes ficava 'aguardando_separacao' → pedido travado na fila.
+    expect((ped as { status_separacao: string | null }).status_separacao).toBeNull();
+  });
+});
+
 describe("cancelarVendaManual baixa_direta (wrapper → RPC)", () => {
   it("estorna via RPC (marker distintivo) + marca cancelado", async () => {
     const pedidoId = "MAN-cancel-w1";

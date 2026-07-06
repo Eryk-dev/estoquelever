@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { History } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -34,7 +36,14 @@ export default function ReceberPage() {
         subtitle="Registra a entrada e gera a rota de guarda — a guarda física é feita depois, no tablet."
         backHref="/wms/receber"
         backLabel="Recebimento"
-      />
+      >
+        <Link
+          href="/wms/receber/avulso/historico"
+          className="wms-btn wms-btn-ghost"
+        >
+          <History size={13} /> Histórico
+        </Link>
+      </PageHeader>
       <Suspense fallback={null}>
         <ReceberBody />
       </Suspense>

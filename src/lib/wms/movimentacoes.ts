@@ -98,6 +98,10 @@ export async function receberEstoque(
   const loteId = crypto.randomUUID();
 
   const origemDetalhesBase: Record<string, unknown> = {
+    // Discriminador do fluxo de recebimento avulso — outros fluxos (OC,
+    // compra manual, ajuste) reusam os mesmos origem_tipos; o histórico
+    // (/api/wms/receber/historico) filtra por essa tag.
+    fluxo: "avulso",
     nf_referencia: input.nf_referencia,
   };
   if (input.data_recebimento) {

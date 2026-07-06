@@ -4592,6 +4592,16 @@ Etapa terminal "Fechar" (grava `fechado_em`/`fechado_por`, status segue `separad
 
 ---
 
+### UI — /wms/receber/avulso/historico
+
+**File:** `src/app/wms/receber/avulso/historico/page.tsx`
+
+**Purpose:** Histórico dos recebimentos avulsos — 1 card por lote confirmado em `/wms/receber/avulso` (data/hora, badge de origem, entrada direta, galpão, operador, fornecedor, compradora, NF, motivo + tabela de itens com qty/custo/subtotal/loc de entrada e badge "estornado"). Filtro por galpão. Acessível pelo botão "Histórico" no header da tela avulsa. Consome `GET /api/wms/receber/historico`.
+
+**Auth:** sessão válida (`requireAuth` no endpoint).
+
+---
+
 ### UI — /wms/receber/transferencia/[id]
 
 **File:** `src/app/wms/receber/transferencia/[id]/page.tsx`
@@ -5837,6 +5847,48 @@ Sugere localização de putaway. Heurística: SKU já com saldo no galpão → e
 **Query params:** `produto_id`, `empresa_id`, `galpao_id` (todos obrigatórios).
 
 **Response 200:** `{ localizacao_id, codigo?, razao, locaisExistentes }`.
+
+### GET /api/wms/receber/historico
+
+**File:** `src/app/api/wms/receber/historico/route.ts`
+
+Histórico de recebimentos avulsos — movs `E` de `POST /api/wms/receber` agrupadas por lote (`origem_id` = `lote_id` do `receberEstoque`), mais recentes primeiro. Consumido por `/wms/receber/avulso/historico`.
+
+**Auth:** X-Session-Id (`requireAuth`).
+
+**Query params:** `galpao_id` (opcional) · `limit` (movs lidas, default 500, max 2000).
+
+**Filtro:** `tipo='E'` + `origem_tipo IN (nf_compra, ajuste_manual, devolucao_cliente_integra, lancamento_retroativo)` + `origem_id IS NOT NULL`. Movs novas (≥2026-07-06) carregam `origem_detalhes.fluxo='avulso'` (carimbo em `receberEstoque`); linhas legadas entram por exclusão — descarta movs com marcadores de outros fluxos em `origem_detalhes` (`ordem_compra_id`, `origem`, `item_id`, `pedido_item_id`, `direcao`, `contexto`) e exige `fornecedor_id` (o avulso sempre tem).
+
+**Response 200:** `{ lotes: Lote[], limite_atingido }` onde
+```ts
+Lote = {
+  lote_id: string;            // origem_id compartilhado do lote
+  criado_em: string;
+  origem_tipo: string;
+  entrada_direta: boolean;
+  nf_referencia: string | null;
+  data_recebimento: string | null;  // quando retroativo
+  motivo: string | null;
+  galpao: string | null;      // nomes resolvidos via join
+  fornecedor: string | null;
+  compradora: string | null;
+  usuario: string | null;
+  itens: {
+    mov_id: string;
+    sku: string | null;
+    descricao: string | null;
+    qty: number;
+    custo_unitario: number | null;
+    localizacao: string | null;   // loc de entrada (dock RECEBIMENTO ou destino em entrada_direta)
+    estornado: boolean;           // existe mov com estorno_de = mov_id
+  }[];
+  total_qty: number;          // exclui itens estornados
+  total_valor: number;
+}
+```
+
+`limite_atingido=true` = janela de `limit` movs cheia; lotes mais antigos existem além dela (o lote mais antigo retornado pode vir truncado).
 
 ### GET /api/wms/saldo-recebimento-orfao
 

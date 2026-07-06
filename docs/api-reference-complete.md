@@ -6026,6 +6026,14 @@ Em ambos os modos, agrupa por `galpao_id` e dispara 1 print job por galpão (imp
 
 **Response 200:** `{ ok: true, ignorados, jobs: [{ galpaoId, jobId, totalEtiquetas, totalFolhas, fallbackEnvelope }], erros: [{ galpaoId, error }], totalEtiquetas, totalFolhas, fallbackEnvelope }`. **502** se todos os jobs falharem. **400** se body inválido ou nenhum galpão pra imprimir.
 
+### POST /api/wms/etiquetas/excesso
+
+Imprime **UMA** etiqueta de excesso 10×15 cm (paisagem, ZPL rotacionado — `zpl-excesso.ts`) pra marcar caixa de overstock: descrição, SKU em destaque, QR + CODE128 (ambos com o SKU) e a **quantidade estampada gigante**. Diferente da etiqueta de produto pequena (N vias de 1 unidade), aqui `qty` é o número IMPRESSO na etiqueta, não o nº de vias. Sai na impressora de **envio** do galpão (`resolverImpressora` — é a que tem mídia 10×15), não na de produto. Acessível pelo modal "Imprimir etiquetas" (tipo "Excesso") em `/wms/estoque`.
+
+**Body:** `{ produto_id: "uuid", galpao_id: "uuid", qty: number, localizacao_id?: "uuid" }`. `qty` inteiro 1..99999. `localizacao_id` opcional — sem ela a etiqueta sai com `—`.
+
+**Response 200:** `{ ok: true, jobId, printerNome }`. **400** body inválido · **404** produto/galpão não encontrado · **502** PrintNode falhou ou nenhuma impressora de envio configurada. Log em `siso_impressoes_log` com `contexto='excesso'`.
+
 ### POST /api/wms/transferir-galpao
 
 Transferência inter-galpão **neutra em empresa** (3D — refactor 2026-05-20). Galpões devem ser diferentes (caso contrário use `replenishment`).

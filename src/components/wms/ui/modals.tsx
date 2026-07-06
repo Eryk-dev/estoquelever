@@ -2003,6 +2003,9 @@ export function EtiquetasModal({
   const [qty, setQty] = useState("1");
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
+  // padrao = N etiquetas pequenas (1/unidade) · excesso = 1 etiqueta 10×15
+  // paisagem com a qty ESTAMPADA (marca caixa de overstock).
+  const [tipo, setTipo] = useState<"padrao" | "excesso">("padrao");
 
   // Galpão decide a impressora: escolha manual > galpão ativo da sidebar > 1º.
   const galpaoId =
@@ -2030,30 +2033,51 @@ export function EtiquetasModal({
 
   const mut = useMutation({
     mutationFn: async () => {
-      const r = await sisoFetch("/api/wms/guarda/imprimir-lote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          linhas: [
-            {
+      const url =
+        tipo === "excesso"
+          ? "/api/wms/etiquetas/excesso"
+          : "/api/wms/guarda/imprimir-lote";
+      const payload =
+        tipo === "excesso"
+          ? {
               produto_id: pid!.id,
               galpao_id: galpaoId,
               qty: qtyNum,
               ...(locId ? { localizacao_id: locId } : {}),
-            },
-          ],
-        }),
+            }
+          : {
+              linhas: [
+                {
+                  produto_id: pid!.id,
+                  galpao_id: galpaoId,
+                  qty: qtyNum,
+                  ...(locId ? { localizacao_id: locId } : {}),
+                },
+              ],
+            };
+      const r = await sisoFetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
       const body = (await r.json().catch(() => ({}))) as {
         error?: string;
         totalEtiquetas?: number;
         totalFolhas?: number;
         fallbackEnvelope?: boolean;
+        printerNome?: string;
       };
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       return body;
     },
     onSuccess: (body) => {
+      if (tipo === "excesso") {
+        toast.success(
+          `Etiqueta de excesso (${fmtNum(qtyNum)} un) enviada pra impressão`,
+        );
+        onClose();
+        return;
+      }
       toast.success(
         `${fmtNum(body.totalEtiquetas ?? qtyNum)} etiquetas (${fmtNum(
           body.totalFolhas ?? folhas,
@@ -2075,7 +2099,11 @@ export function EtiquetasModal({
   return (
     <Modal
       title="Imprimir etiquetas de produto"
-      subtitle="1 etiqueta por unidade, 2 por folha. Vai pra impressora de produto do galpão."
+      subtitle={
+        tipo === "excesso"
+          ? "1 etiqueta 10×15 (paisagem) com a quantidade estampada. Vai pra impressora de envio do galpão."
+          : "1 etiqueta por unidade, 2 por folha. Vai pra impressora de produto do galpão."
+      }
       onClose={onClose}
       footer={
         <>
@@ -2090,11 +2118,32 @@ export function EtiquetasModal({
             <Icon name="printer" size={11} />
             {mut.isPending
               ? "Enviando…"
-              : `Imprimir${qtyNum > 0 ? ` ${fmtNum(qtyNum)}` : ""}`}
+              : tipo === "excesso"
+                ? "Imprimir etiqueta"
+                : `Imprimir${qtyNum > 0 ? ` ${fmtNum(qtyNum)}` : ""}`}
           </button>
         </>
       }
     >
+      <Field label="Tipo de etiqueta">
+        <div className="wms-seg wms-seg-full">
+          <button
+            type="button"
+            className={`wms-seg-btn ${tipo === "padrao" ? "is-active" : ""}`}
+            onClick={() => setTipo("padrao")}
+          >
+            Padrão (por unidade)
+          </button>
+          <button
+            type="button"
+            className={`wms-seg-btn ${tipo === "excesso" ? "is-active" : ""}`}
+            onClick={() => setTipo("excesso")}
+          >
+            Excesso (10×15)
+          </button>
+        </div>
+      </Field>
+
       <Field label="Produto" required>
         <ProdutoCombo
           value={pid}
@@ -2126,7 +2175,13 @@ export function EtiquetasModal({
         <Field
           label="Quantidade"
           required
-          hint={folhas > 0 ? `${fmtNum(folhas)} folha${folhas > 1 ? "s" : ""}` : undefined}
+          hint={
+            tipo === "excesso"
+              ? "sai estampada na etiqueta"
+              : folhas > 0
+                ? `${fmtNum(folhas)} folha${folhas > 1 ? "s" : ""}`
+                : undefined
+          }
         >
           <input
             className="wms-input"

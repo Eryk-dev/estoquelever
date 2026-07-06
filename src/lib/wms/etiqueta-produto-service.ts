@@ -11,6 +11,7 @@
 import { createHash } from "node:crypto";
 import {
   enviarImpressaoZpl,
+  resolverImpressora,
   resolverImpressoraProduto,
 } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
@@ -21,6 +22,7 @@ import {
   contarFolhas,
   type EtiquetaProdutoInput,
 } from "./zpl-produto";
+import { gerarZplExcesso, type EtiquetaExcessoInput } from "./zpl-excesso";
 
 const LOG_SOURCE = "wms.etiqueta-produto";
 
@@ -179,6 +181,123 @@ export async function imprimirEtiquetasProduto(
       metadata: {
         printerId: printer.printerId,
         totalEtiquetas,
+        galpaoId: input.galpaoId,
+        impressao_log_id: logId,
+      },
+    });
+    return { ok: false, error: msg };
+  }
+}
+
+export interface ImprimirEtiquetaExcessoInput {
+  usuarioId: string;
+  galpaoId: string;
+  etiqueta: EtiquetaExcessoInput;
+  /** Título do print job (aparece no PrintNode). */
+  titulo: string;
+  /** ID de referência do contexto (ex: produto_id). */
+  contextoRefId?: string;
+}
+
+/**
+ * Imprime UMA etiqueta de excesso 10×15 (paisagem, qty estampada).
+ *
+ * Diferente da etiqueta de produto pequena: vai pra impressora de ENVIO do
+ * galpão (`resolverImpressora`) — é a que tem mídia 10×15. Mesmo contrato de
+ * erro do imprimirEtiquetasProduto: não lança, devolve `{ok: false, error}`.
+ */
+export async function imprimirEtiquetaExcesso(
+  input: ImprimirEtiquetaExcessoInput,
+): Promise<ImprimirEtiquetasResult> {
+  const printer = await resolverImpressora(input.usuarioId, input.galpaoId);
+
+  if (!printer) {
+    logger.warn(LOG_SOURCE, "nenhuma impressora de envio configurada (excesso)", {
+      usuarioId: input.usuarioId,
+      galpaoId: input.galpaoId,
+    });
+    return { ok: false, error: "Nenhuma impressora de envio configurada (mídia 10×15)" };
+  }
+
+  const zpl = gerarZplExcesso(input.etiqueta);
+
+  const sb = createServiceClient();
+  const payloadHash = createHash("sha256").update(zpl).digest("hex");
+  let logId: string | null = null;
+  try {
+    const { data: logRow } = await sb
+      .from("siso_impressoes_log")
+      .insert({
+        printer_id: printer.printerId,
+        printer_nome: printer.printerNome,
+        payload_zpl: zpl,
+        payload_hash: payloadHash,
+        contexto: "excesso",
+        contexto_ref_id: input.contextoRefId ?? null,
+        total_etiquetas: 1,
+        status: "enviado",
+        usuario_id: input.usuarioId,
+        galpao_id: input.galpaoId,
+      })
+      .select("id")
+      .single();
+    logId = (logRow as { id: string } | null)?.id ?? null;
+  } catch (e) {
+    logger.warn(LOG_SOURCE, "falha ao inserir siso_impressoes_log (insert)", {
+      e: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  try {
+    const { jobId } = await enviarImpressaoZpl({
+      apiKey: printer.apiKey,
+      printerId: printer.printerId,
+      zpl,
+      titulo: input.titulo,
+    });
+    if (logId) {
+      await sb
+        .from("siso_impressoes_log")
+        .update({
+          printnode_job_id: jobId,
+          status: "sucesso",
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", logId);
+    }
+    logger.info(LOG_SOURCE, "etiqueta de excesso impressa", {
+      jobId: String(jobId),
+      sku: input.etiqueta.sku,
+      qty: String(input.etiqueta.qty),
+      printerId: String(printer.printerId),
+    });
+    return {
+      ok: true,
+      jobId,
+      totalEtiquetas: 1,
+      totalFolhas: 1,
+      printerId: printer.printerId,
+      printerNome: printer.printerNome,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (logId) {
+      await sb
+        .from("siso_impressoes_log")
+        .update({
+          status: "erro",
+          erro_msg: msg,
+          atualizado_em: new Date().toISOString(),
+        })
+        .eq("id", logId);
+    }
+    logger.logError({
+      error: err,
+      source: LOG_SOURCE,
+      message: "falha ao enviar etiqueta de excesso pro PrintNode",
+      category: "external_api",
+      metadata: {
+        printerId: printer.printerId,
         galpaoId: input.galpaoId,
         impressao_log_id: logId,
       },

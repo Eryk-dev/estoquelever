@@ -7613,3 +7613,38 @@ erros:
     files:
       - test/integration/separacao-full-editor.test.ts
     tags: [teste, cleanup, custo-medio, foreign-key, staging, infrastructure]
+
+  - id: pick-atomico-l-qty-cheia-vs-r-parcial-lane-full
+    date: "2026-07-06"
+    source: supabase/migrations/20260528_wms_pick_item_atomico.sql
+    category: business_logic
+    message: >
+      "falha_baixa_estoque: pick atômico falhou: liberação excede reservado:
+      1 - 6 < 0" — item Full impossível de pickar mesmo após adicionar estoque
+      (pedido FULL-d6b39e3b, SKU 027158, item qty=6 com R=1).
+    cause: >
+      Regressão da classe wms-fase3-2-reserva-parcial-quebra-pick: a lane Full
+      (2026-07-01) reintroduziu R PARCIAL by design (criar reserva "o que der";
+      wms_desmarcar_item_atomico também recria R clampada ao saldo livre), mas
+      wms_pick_item_atomico continuava emitindo a L com p_qty CHEIO do item em
+      vez da qty da R → guard 'liberação excede reservado' do
+      wms_inserir_movimentacao estoura → 409 permanente (estoque que entra
+      depois não re-reserva pro pedido). marcar-realocacao tinha a variante:
+      L com qty da realoc (não da R cascade) — mesmo overflow, ou remainder
+      órfão quando R > realoc (qualquer L marca a R como consumida pro
+      buscarReservaPendente).
+    fix: >
+      Migration 20260706_pick_item_atomico_r_parcial: (a) L âncora usa
+      v_r.quantidade, não p_qty; (b) após a âncora, libera TODAS as demais R
+      vivas do mesmo (pedido, produto, galpão), cada L com a qty da própria R
+      (reserva multi-loc da lane Full não vira órfã); (c) S segue com p_qty —
+      falta física continua falhando loud ('saldo insuficiente'). Lane normal
+      (R == qty, única) idêntica ao anterior. marcar-realocacao passou a
+      liberar a R inteira (qty da R). Regra geral: L SEMPRE pareia com a qty
+      da própria R (all-or-nothing por mov) — nunca com a qty do item/realoc.
+      Verificado em staging com fixtures TEST isolados (R parcial, multi-loc,
+      regressão, double-tap, rollback em saldo insuficiente).
+    files:
+      - supabase/migrations/20260706_pick_item_atomico_r_parcial.sql
+      - src/app/api/wms/separacao/marcar-realocacao/route.ts
+    tags: [separacao, full, pick, reserva-parcial, ledger, liberacao, p1]

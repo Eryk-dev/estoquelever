@@ -949,6 +949,14 @@ nada". `marcar-item` retorna 409 e NÃO marca o item se isto lançar. Dois modos
 `p_reserva_id != NULL` → loc derivada da R viva, L+S pareados; `p_reserva_id = NULL`
 → S-only na tripla passada (item sem reserva). Migration: `20260528_wms_pick_item_atomico`.
 
+**R parcial / multi-loc (`20260706_pick_item_atomico_r_parcial`):** a L âncora usa a
+qty da **própria R** (não `p_qty`) — a R pode ser parcial (lane Full reserva "o que
+der"; `wms_desmarcar_item_atomico` recria R clampada). Após a âncora, libera todas as
+demais R vivas do mesmo `(pedido, produto, galpão)` (`mov_l_extra_ids` no retorno),
+cada L com a qty da própria R — reserva espalhada em N locs não vira órfã. A S segue
+com `p_qty` (falta física continua falhando loud). Regra: **L sempre pareia com a qty
+da própria R**, nunca com a qty do item.
+
 ---
 
 ### RPC `wms_trocar_reserva_localizacao_atomico` (2026-06-18)
@@ -2008,6 +2016,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-22 | `20260622_fornecedor_razao_social.sql` | `siso_fornecedores` +`razao_social text` (nullable) — nome jurídico, separado do `nome` (que é o CÓDIGO CURTO usado como chave de match: prefix map `sku-fornecedor.ts`, seed, `fornecedor_oc`, `.ilike("nome",...)` nas rotas de compra/recebimento — não renomear). |
 | 2026-06-23 | `20260623_pick_parcial_idempotency.sql` | **BUG-09 — `/parcial` idempotente.** `wms_pick_parcial_atomico` +`p_idempotency_key uuid` (drop do overload de 10 args): top-check retorna `ja_aplicado=true` se a key já existe; a S de venda (ou o ajuste quando `qty_pega=0`) carrega a key → `wms_inserir_movimentacao` deduplica no ledger (UNIQUE parcial). Fecha o reenvio do MESMO request (timeout/duplo-clique de rede) que dobrava a S e inflava `quantidade_pega` no ramo residual (`loc_zerou=false`, item aberto). Route (`parcial/route.ts`) guarda a key no topo (item+realoc) e o caminho realocação passou a usar a MESMA RPC (antes 2 `inserirMovimentacao` diretos). |
 | 2026-06-23 | `20260623b_desfazer_troca_aplicada.sql` | **BUG-A — desfazer troca aplicada.** `siso_trocas_equivalencia.status` CHECK +`desfeita`. Nova RPC `wms_desfazer_troca_aplicada_atomico(p_pedido_item_id, p_usuario_id)`: num item reaberto e não-picado, libera a R `reserva_pedido` do substituto, limpa `produto_wms_substituto_id`/`troca_equivalencia_id` e fecha a troca `desfeita` — tudo-ou-nada. Endpoint `POST /api/wms/trocas/[id]/desfazer`. |
+| 2026-07-06 | `20260706_pick_item_atomico_r_parcial.sql` | **`wms_pick_item_atomico` suporta R parcial/multi-loc.** L âncora com a qty da PRÓPRIA R (não `p_qty`) + libera as demais R vivas do mesmo `(pedido, produto, galpão)` (`mov_l_extra_ids`). Fecha "liberação excede reservado: 1 - 6 < 0" da lane Full (R parcial by design) e de R clampada pós-desmarca — item ficava impickável pra sempre. S segue `p_qty` (falta física falha loud). Ver erros-conhecidos `pick-atomico-l-qty-cheia-vs-r-parcial-lane-full`. |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

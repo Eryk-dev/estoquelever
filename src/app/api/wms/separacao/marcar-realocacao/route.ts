@@ -93,9 +93,12 @@ export async function POST(request: NextRequest) {
     });
     let movLiberacaoId: string | null = null;
     if (reserva) {
+      // qty = a da PRÓPRIA R (não da realoc): R parcial (clampada/Full) com a
+      // qty da realoc estoura 'liberação excede reservado'; R maior deixaria
+      // remainder órfão (qualquer L marca a R como consumida pro buscarReservaPendente).
       const movL = await liberarReservaPicking({
         reserva,
-        qty: Number(realoc.quantidade),
+        qty: Number(reserva.quantidade),
         pedido_id: String(pedido.id),
         motivo: `Picking pedido #${pedido.numero} — libera R cascade`,
         usuario_id: session.id,

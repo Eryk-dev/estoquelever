@@ -199,6 +199,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `parcial_motivo` | text | YES | null | Reason: `loc_zerou` (cascade/encaminhar/OC). |
 | `parcial_em` | timestamptz | YES | null | When the short pick was registered |
 | `ordem_full` | integer | YES | null | Posição de inserção (1..N) na lane Full — chave da ordenação "Ordem do pedido" no checklist (default no Full). NULL fora do Full. Migration `20260701_separacao_full.sql`. |
+| `linha` | smallint | NO | 1 | Ocorrência do produto no pedido (1..N). Só passa de 1 na lane Full com `preservar_linhas` ("Separar na ordem da lista"): 2 linhas do mesmo SKU = 2 rows. Compõe o índice único `(pedido_id, produto_id, linha)`. Migration `20260707_pedido_itens_linha.sql`. |
 | `parcial_por` | uuid | YES | FK | User who registered the short pick |
 | `mov_saida_id` | uuid | YES | FK | WMS movement ID for the saida created on mark/parcial |
 | `mov_ajuste_loc_zerou_id` | uuid | YES | FK | WMS movement ID for loc_zerou physical adjustment |
@@ -234,6 +235,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 - `idx_pedido_itens_compra_equivalente_sku` (compra_equivalente_sku) WHERE compra_equivalente_sku IS NOT NULL
 - `idx_pedido_itens_compra_cancelado` (pedido_id) WHERE compra_status = 'cancelado'
 - `idx_pedido_itens_compra_solicitada_em` (compra_solicitada_em) WHERE compra_status IS NOT NULL
+- `idx_siso_pedido_itens_pedido_produto_linha` UNIQUE (pedido_id, produto_id, linha) — substitui a antiga `(pedido_id, produto_id)`; webhook upserta com `onConflict: "pedido_id,produto_id,linha"` (2026-07-07)
 
 **Notes:**
 - Unique constraint (pedido_id, produto_id) is implicit because each product appears once per order

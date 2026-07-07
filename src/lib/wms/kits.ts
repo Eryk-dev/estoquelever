@@ -5,6 +5,7 @@
 // `wms_kit_disponivel` no Postgres.
 
 import { createServiceClient } from "@/lib/supabase-server";
+import { logger } from "@/lib/logger";
 import type { Produto, ProdutoKitComposicao } from "@/lib/wms/types";
 
 export interface KitDisponivelPorGalpao {
@@ -357,6 +358,77 @@ export async function calcularDisponivel(
     gargalo_disponivel,
     por_galpao,
   };
+}
+
+/**
+ * Expande uma lista de itens de venda (produto WMS + qty) desmembrando kits
+ * em seus componentes, PRESERVANDO a ordem das linhas — o componente entra na
+ * posição da linha do kit. Usado por /vendas/criar e /full/criar pra que a
+ * separação sempre veja itens físicos (kit pai não tem saldo em siso_estoque).
+ *
+ * Espelha o `expandirKits` do webhook (webhook-processor-wms.ts), mas opera só
+ * em uuid WMS + qty — a resolução de tiny_produto_id/sku segue nas rotas.
+ * Kit sem composição cadastrada: mantém a linha original + warn (mesmo
+ * comportamento do webhook; vai render reserva 0 / OC).
+ */
+export async function expandirItensVenda(
+  items: Array<{ produto_id: string; quantidade: number }>,
+): Promise<Array<{ produto_id: string; quantidade: number }>> {
+  if (items.length === 0) return items;
+  const sb = createServiceClient();
+
+  const ids = Array.from(new Set(items.map((i) => i.produto_id)));
+  const { data: prods, error: prodErr } = await sb
+    .from("siso_produtos")
+    .select("id, sku, eh_kit")
+    .in("id", ids);
+  if (prodErr) throw prodErr;
+
+  const kitIds = (prods ?? []).filter((p) => p.eh_kit === true).map((p) => String(p.id));
+  if (kitIds.length === 0) return items;
+  const skuById = new Map((prods ?? []).map((p) => [String(p.id), p.sku as string]));
+
+  const { data: composicoes, error: compErr } = await sb
+    .from("siso_produto_kits")
+    .select("kit_produto_id, componente_produto_id, quantidade")
+    .in("kit_produto_id", kitIds)
+    .order("criado_em", { ascending: true });
+  if (compErr) throw compErr;
+
+  const porKit = new Map<string, Array<{ componente_produto_id: string; quantidade: number }>>();
+  for (const c of composicoes ?? []) {
+    const arr = porKit.get(String(c.kit_produto_id)) ?? [];
+    arr.push({
+      componente_produto_id: String(c.componente_produto_id),
+      quantidade: Number(c.quantidade),
+    });
+    porKit.set(String(c.kit_produto_id), arr);
+  }
+
+  const kitIdSet = new Set(kitIds);
+  const expandido: Array<{ produto_id: string; quantidade: number }> = [];
+  for (const item of items) {
+    if (!kitIdSet.has(item.produto_id)) {
+      expandido.push(item);
+      continue;
+    }
+    const comps = porKit.get(item.produto_id) ?? [];
+    if (comps.length === 0) {
+      logger.warn("wms.kits", "kit sem composição cadastrada — mantém como item único", {
+        kitSku: skuById.get(item.produto_id) ?? item.produto_id,
+        kitProdutoId: item.produto_id,
+      });
+      expandido.push(item);
+      continue;
+    }
+    for (const c of comps) {
+      expandido.push({
+        produto_id: c.componente_produto_id,
+        quantidade: c.quantidade * item.quantidade,
+      });
+    }
+  }
+  return expandido;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   type DisponibilidadeSugestao,
 } from "@/lib/wms/vendas-disponibilidade";
 import { MARCADOR_FULL } from "@/lib/wms/separacao-full";
+import { expandirItensVenda } from "@/lib/wms/kits";
 
 interface CriarFullRequestItem {
   produto_id: string;
@@ -34,6 +35,13 @@ interface CriarFullRequest {
   galpao_id: string;
   items: CriarFullRequestItem[];
   idempotency_key?: string;
+  /**
+   * "Separar na ordem da lista": preserva cada linha como digitada — 2 linhas
+   * do MESMO produto viram 2 rows em siso_pedido_itens (coluna `linha` 1..N
+   * por produto), espelhando a lista do envio Full do ML no checklist.
+   * Default false = soma duplicatas numa linha só (comportamento clássico).
+   */
+  preservar_linhas?: boolean;
 }
 
 interface ItemResolvido {
@@ -64,6 +72,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { empresa_origem_id, galpao_id, items, idempotency_key } = body;
+  const preservarLinhas = body.preservar_linhas === true;
 
   if (!empresa_origem_id) {
     return NextResponse.json({ erro: "empresa_origem_id é obrigatório" }, { status: 400 });
@@ -83,10 +92,15 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Dedupe por produto_id somando a qty (mesmo motivo do venda manual: índice
-  // único pedido_id+produto_id rejeitaria duas linhas do mesmo SKU).
+  // Desmembra kits ANTES de qualquer dedupe: linha de kit vira N linhas de
+  // componente na posição da linha original (kit pai não tem saldo em
+  // siso_estoque). Kit sem composição mantém a linha (warn no helper).
+  const itemsExpandidos = await expandirItensVenda(items);
+
+  // Agregado por produto — SEMPRE usado pra resolução e reserva (a R vive por
+  // tripla (pedido, produto, galpão, loc), nunca por linha — gotcha #16).
   const itemsDeduped = Array.from(
-    items
+    itemsExpandidos
       .reduce((acc, it) => {
         const prev = acc.get(it.produto_id);
         acc.set(it.produto_id, {
@@ -97,6 +111,11 @@ export async function POST(request: NextRequest) {
       }, new Map<string, { produto_id: string; quantidade: number }>())
       .values(),
   );
+
+  // Linhas que viram rows em siso_pedido_itens: com preservar_linhas cada
+  // linha digitada sobrevive (2 itens iguais = 2 rows, `linha` 1..N por
+  // produto); sem, o agregado (comportamento clássico, linha=1).
+  const itemsLinhas = preservarLinhas ? itemsExpandidos : itemsDeduped;
 
   const supabase = createServiceClient();
 
@@ -251,7 +270,10 @@ export async function POST(request: NextRequest) {
   const numero = pedidoId;
   const agora = new Date().toISOString();
 
-  const payloadBase: Record<string, unknown> = { full: true };
+  const payloadBase: Record<string, unknown> = {
+    full: true,
+    ...(preservarLinhas ? { preservar_linhas: true } : {}),
+  };
 
   const pedidoRow = {
     id: pedidoId,
@@ -286,16 +308,26 @@ export async function POST(request: NextRequest) {
   }
 
   // Itens gravam ordem_full sequencial (1..N) pela ordem de inserção — o
-  // checklist ordena por isso por default na lane Full.
-  const itensRows = itensResolvidos.map((i, idx) => ({
-    pedido_id: pedidoId,
-    produto_id: i.tiny_produto_id,
-    sku: i.sku,
-    descricao: i.descricao,
-    imagem_url: i.imagem_url,
-    quantidade_pedida: i.quantidade,
-    ordem_full: idx + 1,
-  }));
+  // checklist ordena por isso por default na lane Full. `linha` conta a
+  // ocorrência do produto (1..N) — só passa de 1 com preservar_linhas, e é o
+  // que satisfaz o índice único (pedido_id, produto_id, linha).
+  const resolvidoPorProduto = new Map(itensResolvidos.map((i) => [i.produto_id, i]));
+  const linhaPorProduto = new Map<string, number>();
+  const itensRows = itemsLinhas.map((l, idx) => {
+    const i = resolvidoPorProduto.get(l.produto_id)!;
+    const linha = (linhaPorProduto.get(l.produto_id) ?? 0) + 1;
+    linhaPorProduto.set(l.produto_id, linha);
+    return {
+      pedido_id: pedidoId,
+      produto_id: i.tiny_produto_id,
+      sku: i.sku,
+      descricao: i.descricao,
+      imagem_url: i.imagem_url,
+      quantidade_pedida: l.quantidade,
+      ordem_full: idx + 1,
+      linha,
+    };
+  });
 
   const { error: itensErr } = await supabase.from("siso_pedido_itens").insert(itensRows);
   if (itensErr) {

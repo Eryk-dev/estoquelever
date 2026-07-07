@@ -16,6 +16,7 @@ import {
   reabrirSeSeparado,
   logEditor,
 } from "@/lib/wms/full-editor";
+import { expandirItensVenda } from "@/lib/wms/kits";
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser(request);
@@ -42,36 +43,69 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   }
 
   const sb = createServiceClient();
+  const preservarLinhas = pedido.payload_original?.preservar_linhas === true;
+
+  // Kit desmembra em componentes (kit pai não tem saldo em siso_estoque; kit
+  // sem composição mantém a linha — mesmo padrão do criar).
+  const linhasAdd = await expandirItensVenda([{ produto_id: produtoWms, quantidade }]);
+  const produtoIdsAdd = linhasAdd.map((l) => l.produto_id);
 
   // Resolve tiny_produto_id (coluna do item é o tiny id — gotcha #1) + display.
-  const { data: mapeamento } = await sb
+  const { data: mapeamentos } = await sb
     .from("siso_produto_empresas")
-    .select("tiny_produto_id")
+    .select("produto_id, tiny_produto_id")
     .eq("empresa_id", pedido.empresa_origem_id)
-    .eq("produto_id", produtoWms)
-    .maybeSingle();
-  if (!mapeamento) {
-    return NextResponse.json({ error: "produto não mapeado na conta ML do Full" }, { status: 400 });
-  }
-  const { data: prod } = await sb
+    .in("produto_id", produtoIdsAdd);
+  const tinyPorProduto = new Map(
+    (mapeamentos ?? []).map((m) => [String(m.produto_id), Number(m.tiny_produto_id)]),
+  );
+  const { data: prods } = await sb
     .from("siso_produtos")
-    .select("sku, descricao, imagem_url")
-    .eq("id", produtoWms)
-    .maybeSingle();
-  if (!prod) return NextResponse.json({ error: "produto não encontrado no catálogo" }, { status: 400 });
+    .select("id, sku, descricao, imagem_url")
+    .in("id", produtoIdsAdd);
+  const prodPorId = new Map((prods ?? []).map((p) => [String(p.id), p]));
 
-  // Bloqueia SKU duplicado (índice único pedido_id+produto_id; editar qty é a via).
-  const { data: existente } = await sb
+  for (const l of linhasAdd) {
+    if (!prodPorId.get(l.produto_id)) {
+      return NextResponse.json({ error: "produto não encontrado no catálogo" }, { status: 400 });
+    }
+    if (!tinyPorProduto.get(l.produto_id)) {
+      const sku = prodPorId.get(l.produto_id)?.sku;
+      return NextResponse.json(
+        { error: `produto ${sku ?? l.produto_id} não mapeado na conta ML do Full` },
+        { status: 400 },
+      );
+    }
+  }
+
+  // Linhas existentes dos mesmos produtos: sem preservar_linhas, duplicata é
+  // bloqueada (editar qty é a via); com, o add vira linha nova (linha=max+1).
+  const tinyIdsAdd = linhasAdd.map((l) => tinyPorProduto.get(l.produto_id)!);
+  const { data: existentes } = await sb
     .from("siso_pedido_itens")
-    .select("id")
+    .select("id, produto_id, linha")
     .eq("pedido_id", pedidoId)
-    .eq("produto_id", mapeamento.tiny_produto_id)
-    .maybeSingle();
-  if (existente) {
-    return NextResponse.json(
-      { error: "produto já está no pedido — edite a quantidade", item_id: existente.id },
-      { status: 409 },
-    );
+    .in("produto_id", tinyIdsAdd);
+  const existentesPorTiny = new Map<number, { id: number; linhaMax: number }>();
+  for (const e of existentes ?? []) {
+    const tiny = Number(e.produto_id);
+    const prev = existentesPorTiny.get(tiny);
+    existentesPorTiny.set(tiny, {
+      id: prev ? Math.min(prev.id, Number(e.id)) : Number(e.id),
+      linhaMax: Math.max(prev?.linhaMax ?? 0, Number(e.linha ?? 1)),
+    });
+  }
+  if (!preservarLinhas) {
+    for (const l of linhasAdd) {
+      const dup = existentesPorTiny.get(tinyPorProduto.get(l.produto_id)!);
+      if (dup) {
+        const sku = prodPorId.get(l.produto_id)?.sku;
+        return NextResponse.json(
+          { error: `produto ${sku ?? ""} já está no pedido — edite a quantidade`, item_id: dup.id },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   // ordem_full no fim (max+1).
@@ -81,58 +115,84 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     .eq("pedido_id", pedidoId)
     .order("ordem_full", { ascending: false })
     .limit(1);
-  const proximaOrdem = Number(ordens?.[0]?.ordem_full ?? 0) + 1;
+  const primeiraOrdem = Number(ordens?.[0]?.ordem_full ?? 0) + 1;
 
-  const { data: novoItem, error: insErr } = await sb
-    .from("siso_pedido_itens")
-    .insert({
+  const linhaPorTiny = new Map<number, number>();
+  const rows = linhasAdd.map((l, idx) => {
+    const tiny = tinyPorProduto.get(l.produto_id)!;
+    const prod = prodPorId.get(l.produto_id)!;
+    const linha =
+      (linhaPorTiny.get(tiny) ?? existentesPorTiny.get(tiny)?.linhaMax ?? 0) + 1;
+    linhaPorTiny.set(tiny, linha);
+    return {
       pedido_id: pedidoId,
-      produto_id: mapeamento.tiny_produto_id,
+      produto_id: tiny,
       sku: prod.sku,
       descricao: prod.descricao,
       imagem_url: prod.imagem_url,
-      quantidade_pedida: quantidade,
-      ordem_full: proximaOrdem,
-    })
-    .select("id")
-    .single();
-  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+      quantidade_pedida: l.quantidade,
+      ordem_full: primeiraOrdem + idx,
+      linha,
+    };
+  });
 
-  // Reserva parcial. Se falhar, apaga o item recém-inserido (rollback da ação).
+  const { data: novosItens, error: insErr } = await sb
+    .from("siso_pedido_itens")
+    .insert(rows)
+    .select("id");
+  if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+  const novosIds = (novosItens ?? []).map((i) => Number(i.id));
+
+  // Reserva parcial por produto (kit expandido = vários; agrega duplicatas).
+  // Se falhar, apaga os itens recém-inseridos (rollback da ação).
   let reservado = 0;
+  const qtyPorProduto = new Map<string, number>();
+  for (const l of linhasAdd) {
+    qtyPorProduto.set(l.produto_id, (qtyPorProduto.get(l.produto_id) ?? 0) + l.quantidade);
+  }
   try {
-    const r = await reservarParcialItem({
-      produtoWms,
-      galpaoId: pedido.separacao_galpao_id,
-      qty: quantidade,
-      pedidoId,
-      usuarioId: user.id,
-    });
-    reservado = r.reservado;
+    for (const [prodId, qty] of qtyPorProduto) {
+      const r = await reservarParcialItem({
+        produtoWms: prodId,
+        galpaoId: pedido.separacao_galpao_id,
+        qty,
+        pedidoId,
+        usuarioId: user.id,
+      });
+      reservado += r.reservado;
+    }
   } catch (err) {
-    await sb.from("siso_pedido_itens").delete().eq("id", novoItem.id);
+    await sb.from("siso_pedido_itens").delete().in("id", novosIds);
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `falha reservando: ${msg}` }, { status: 409 });
   }
 
   await reabrirSeSeparado(pedido);
 
-  logEditor("item adicionado", { pedidoId, item_id: novoItem.id, quantidade, reservado });
+  const qtyTotal = linhasAdd.reduce((s, l) => s + l.quantidade, 0);
+  logEditor("item adicionado", {
+    pedidoId,
+    item_ids: novosIds,
+    quantidade: qtyTotal,
+    reservado,
+    expandido_kit: linhasAdd.length > 1 || linhasAdd[0]?.produto_id !== produtoWms,
+  });
   registrarEvento({
     pedidoId,
     evento: "full_editado",
     usuarioId: user.id,
     usuarioNome: user.nome,
-    detalhes: { acao: "add_item", produto_id: produtoWms, quantidade, reservado },
+    detalhes: { acao: "add_item", produto_id: produtoWms, quantidade, reservado, item_ids: novosIds },
   }).catch(() => {});
 
   return NextResponse.json({
     ok: true,
-    item_id: novoItem.id,
-    ordem_full: proximaOrdem,
-    quantidade,
+    item_id: novosIds[0],
+    item_ids: novosIds,
+    ordem_full: primeiraOrdem,
+    quantidade: qtyTotal,
     reservado,
-    parcial: reservado < quantidade,
+    parcial: reservado < qtyTotal,
     reaberto: pedido.status_separacao === "separado",
   });
 }

@@ -115,6 +115,10 @@ function NovaVendaBody() {
   // cliente/CPF/canal (não se aplica); força modo="separacao" (Full nunca faz
   // baixa_direta — reconciliação de estoque é sempre via editor da lane Full).
   const [isFull, setIsFull] = useState(false);
+  // Full: "Separar na ordem da lista" — preserva cada linha como digitada
+  // (2 linhas do mesmo SKU = 2 itens no checklist, espelhando a lista do
+  // envio Full do ML). Desligado = duplicatas somadas numa linha só.
+  const [preservarLinhas, setPreservarLinhas] = useState(false);
   const [clienteNome, setClienteNome] = useState("");
   const [clienteCpf, setClienteCpf] = useState("");
   const [canal, setCanal] = useState("Balcão");
@@ -176,6 +180,7 @@ function NovaVendaBody() {
         quantidade: it.quantidade,
       })),
       idempotency_key: crypto.randomUUID(),
+      ...(preservarLinhas ? { preservar_linhas: true } : {}),
     };
 
     const res = await sisoFetch("/api/wms/full/criar", {
@@ -327,6 +332,31 @@ function NovaVendaBody() {
               ? "Envio de estoque ao CDF do Mercado Livre. Sem cliente, sem NF, sem Tiny."
               : "Pedido de venda pra um cliente."}
           </p>
+          {isFull && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 8,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={preservarLinhas}
+                onChange={(e) => setPreservarLinhas(e.target.checked)}
+              />
+              <span>
+                Separar na ordem da lista
+                <span className="wms-td-mute" style={{ display: "block", fontSize: 11 }}>
+                  Mantém cada linha como digitada — o mesmo SKU em 2 linhas vira 2 itens
+                  no checklist, na ordem da lista do envio Full.
+                </span>
+              </span>
+            </label>
+          )}
         </Field>
       </section>
 

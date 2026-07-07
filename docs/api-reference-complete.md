@@ -942,6 +942,8 @@ Dois modos solicitados:
 
 **Degradação automática**: se `modo='baixa_direta'` mas qualquer item não tem saldo suficiente no galpão escolhido, todo o pedido cai pra `modo='separacao'` (igual marketplace sem estoque). Resposta inclui `degradado:true`.
 
+**Kits (2026-07-07)**: itens com `eh_kit=true` são desmembrados em componentes ANTES do dedupe/resolução (`expandirItensVenda` em `lib/wms/kits.ts` — mesma semântica do webhook). Kit sem composição cadastrada mantém a linha original + warn (reserva 0 → OC).
+
 **Auth:** X-Session-Id (qualquer cargo autenticado pode criar; vendedor é auto-preenchido com user.id).
 
 **Request:**
@@ -3280,29 +3282,29 @@ Lane interna pra dar baixa de estoque e mandar ao CDF do Mercado Livre (envio Fu
 
 ### POST /api/wms/full/criar
 
-Cria um pedido Full. Rota isolada de `/vendas/criar`. Reserva PARCIAL (o que der; resto pendente). **Não** emite NF nem chama Tiny.
+Cria um pedido Full. Rota isolada de `/vendas/criar`. Reserva PARCIAL (o que der; resto pendente). **Não** emite NF nem chama Tiny. Kits são desmembrados em componentes antes de tudo (`expandirItensVenda`; kit sem composição mantém a linha + warn). Com `preservar_linhas: true` ("Separar na ordem da lista"), cada linha do body vira uma row própria em `siso_pedido_itens` (coluna `linha` 1..N por produto) — 2 linhas do mesmo SKU = 2 itens no checklist; a reserva continua agregada por produto (a R vive por tripla, nunca por linha).
 
-**Body:** `{ empresa_origem_id, galpao_id, items: [{ produto_id (uuid WMS), quantidade }], idempotency_key? }`
+**Body:** `{ empresa_origem_id, galpao_id, items: [{ produto_id (uuid WMS), quantidade }], idempotency_key?, preservar_linhas? }`
 **Resposta 200:** `{ pedido_id: "FULL-…", numero, status: "executando", status_separacao: "aguardando_separacao", parcial, itens_parciais }`
 **Erros:** `400` validação/produto não mapeado · `409` falha de reserva (rollback total) · `403` sem `vendas.criar`
 
 ### POST /api/wms/full/[id]/itens
 
-Adiciona um item a um Full em separação (`ordem_full` no fim, reserva parcial, reabre `separado→em_separacao`). Bloqueia SKU duplicado.
+Adiciona um item a um Full em separação (`ordem_full` no fim, reserva parcial, reabre `separado→em_separacao`). Kit é desmembrado em componentes (N rows). Duplicata: sem `preservar_linhas` no pedido, bloqueia (409, editar qty é a via); com, insere linha nova (`linha` = max+1 do produto).
 
 **Body:** `{ produto_id (uuid WMS), quantidade }`
-**Resposta 200:** `{ ok, item_id, ordem_full, quantidade, reservado, parcial, reaberto }`
+**Resposta 200:** `{ ok, item_id, item_ids, ordem_full, quantidade, reservado, parcial, reaberto }`
 **Erros:** `400` Full fechado/inválido · `409` produto já no pedido / falha de reserva
 
 ### DELETE /api/wms/full/[id]/itens/[itemId]
 
-Remove um item. Picado → desmarca (S→E devolve saldo) + libera R; não-picado → só libera R. Depois apaga a linha.
+Remove um item. Picado → desmarca (S→E devolve saldo) + libera R; não-picado → só libera R. Depois apaga a linha. Com outras linhas do mesmo produto no pedido (preservar_linhas), re-reserva o que ainda falta nelas (a R é por produto).
 
 **Resposta 200:** `{ ok, item_id, picado }` · **Erros:** `400` fechado · `404` item · `409` reconciliação
 
 ### PATCH /api/wms/full/[id]/itens/[itemId]
 
-Muda a qty pedida. ↑ e ↓≥picado: libera todas R + re-reserva (`novaQty − picado`), picks S intactos. ↓<picado: desmarca tudo (S→E) + re-reserva + reabre.
+Muda a qty pedida. ↑ e ↓≥picado: libera todas R + re-reserva (`novaQty − picado` + remanescente das linhas irmãs do mesmo produto), picks S intactos. ↓<picado: desmarca tudo (S→E) + re-reserva + reabre.
 
 **Body:** `{ quantidade }` · **Resposta 200:** `{ ok, item_id, quantidade }` · **Erros:** `400` fechado/inválida · `409` reconciliação
 

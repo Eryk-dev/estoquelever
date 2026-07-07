@@ -1162,7 +1162,9 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
         imagem_url: item.imagemUrl,
         gtin: item.gtin,
       },
-      { onConflict: "pedido_id,produto_id" },
+      // linha default 1 no INSERT; o índice único agora é
+      // (pedido_id, produto_id, linha) — 20260707_pedido_itens_linha.
+      { onConflict: "pedido_id,produto_id,linha" },
     );
     // NÃO engolir falha de gravação de item: um pedido salvo sem itens vira
     // "fantasma" na UI (aparece sem produto) e cai em OC por falta de cobertura.

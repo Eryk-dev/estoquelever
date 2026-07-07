@@ -37,6 +37,7 @@ import { logger } from "@/lib/logger";
 import { reservarAtomico, estornarReservaIndividual } from "@/lib/wms/reservas";
 import { registrarEvento } from "@/lib/historico-service";
 import { userCan } from "@/lib/permissions";
+import { expandirItensVenda } from "@/lib/wms/kits";
 import {
   resolverDisponibilidadeVenda,
   type DisponibilidadeSugestao,
@@ -119,13 +120,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Desmembra kits ANTES do dedupe: linha de kit vira N linhas de componente
+  // (kit pai não tem saldo em siso_estoque — sem isso a separação trava).
+  // Kit sem composição mantém a linha original (warn no helper).
+  const itemsExpandidos = await expandirItensVenda(items);
+
   // Dedupe por produto_id somando a qty. O índice único
-  // idx_siso_pedido_itens_pedido_produto (pedido_id, produto_id) rejeita duas
-  // linhas do mesmo produto no mesmo pedido — o operador pode ter adicionado o
-  // mesmo SKU em linhas separadas. Junta numa só (1 row/produto) ANTES de
-  // resolver disponibilidade, pra reserva/baixa/insert verem qty consolidada.
+  // idx_siso_pedido_itens_pedido_produto_linha (pedido_id, produto_id, linha)
+  // rejeita duas linhas do mesmo produto no mesmo pedido (venda manual grava
+  // sempre linha=1) — o operador pode ter adicionado o mesmo SKU em linhas
+  // separadas, e a expansão de kits pode repetir componente. Junta numa só
+  // (1 row/produto) ANTES de resolver disponibilidade, pra reserva/baixa/
+  // insert verem qty consolidada.
   const itemsDeduped = Array.from(
-    items
+    itemsExpandidos
       .reduce((acc, it) => {
         const prev = acc.get(it.produto_id);
         acc.set(it.produto_id, {

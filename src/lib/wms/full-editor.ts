@@ -27,6 +27,8 @@ export interface PedidoFull {
   fechado_em: string | null;
   separacao_galpao_id: string | null;
   empresa_origem_id: string | null;
+  /** payload do criar — carrega o flag `preservar_linhas` ("Separar na ordem da lista"). */
+  payload_original: Record<string, unknown> | null;
 }
 
 export type FullEditavel =
@@ -41,7 +43,7 @@ export async function carregarFullEditavel(pedidoId: string): Promise<FullEditav
   const sb = createServiceClient();
   const { data: pedido, error } = await sb
     .from("siso_pedidos")
-    .select("id, status_separacao, separacao_full, fechado_em, separacao_galpao_id, empresa_origem_id")
+    .select("id, status_separacao, separacao_full, fechado_em, separacao_galpao_id, empresa_origem_id, payload_original")
     .eq("id", pedidoId)
     .maybeSingle();
 
@@ -90,6 +92,38 @@ export async function reservarParcialItem(opts: {
     restante -= qtyLoc;
   }
   return { reservado: opts.qty - restante, reservaIds };
+}
+
+/**
+ * Alvo de re-reserva do PRODUTO no pedido: Σ max(0, pedida − pega) sobre TODAS
+ * as linhas do produto (com preservar_linhas o mesmo produto pode ter N rows).
+ * A R vive por (pedido, produto, galpão, loc) — nunca por linha — então todo
+ * caminho "liberar tudo + re-reservar" tem de re-reservar o produto INTEIRO,
+ * senão a edição de uma linha evapora a reserva das irmãs.
+ *
+ * `excluirItemId`: linha em edição/remoção — o caller soma a parcela projetada
+ * dela por fora (remove: 0; set_qty: novaQty − picado projetado).
+ */
+export async function alvoReservaProduto(opts: {
+  pedidoId: string;
+  tinyProdutoId: number;
+  excluirItemId?: number;
+}): Promise<number> {
+  const sb = createServiceClient();
+  const { data: rows } = await sb
+    .from("siso_pedido_itens")
+    .select("id, quantidade_pedida, quantidade_pega")
+    .eq("pedido_id", opts.pedidoId)
+    .eq("produto_id", opts.tinyProdutoId);
+
+  let alvo = 0;
+  for (const r of rows ?? []) {
+    if (opts.excluirItemId != null && Number(r.id) === opts.excluirItemId) continue;
+    const pedida = Number(r.quantidade_pedida ?? 0);
+    const pega = Number(r.quantidade_pega ?? 0);
+    alvo += Math.max(0, pedida - pega);
+  }
+  return alvo;
 }
 
 interface ReservaVivaRow {

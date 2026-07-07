@@ -162,4 +162,36 @@ describe("Nova venda — toggle Full", () => {
 
     await waitFor(() => expect(h.push).toHaveBeenCalledWith("/wms/separacao-full"));
   });
+
+  it("checkbox 'Separar na ordem da lista' manda preservar_linhas: true no payload", async () => {
+    const { container } = renderPage();
+
+    await waitFor(() => expect(screen.getByText("NetAir")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Full" }));
+
+    // Default: desligado → flag ausente.
+    const checkbox = container.querySelector(
+      "input[type=checkbox]",
+    ) as HTMLInputElement;
+    expect(checkbox).toBeTruthy();
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+
+    const selects = container.querySelectorAll("select");
+    fireEvent.change(selects[0], { target: { value: "e1" } });
+    fireEvent.change(selects[1], { target: { value: "g1" } });
+    fireEvent.click(screen.getByRole("button", { name: "escolher-produto" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Criar Full e mandar pra separação" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        h.sisoFetch.mock.calls.some(([url]) => url === "/api/wms/full/criar"),
+      ).toBe(true),
+    );
+    const call = h.sisoFetch.mock.calls.find(([url]) => url === "/api/wms/full/criar")!;
+    const body = JSON.parse(String((call[1] as RequestInit).body));
+    expect(body.preservar_linhas).toBe(true);
+  });
 });

@@ -22,6 +22,7 @@ import {
   liberarTodasReservas,
   desmarcarItemFull,
   reabrirSeSeparado,
+  alvoReservaProduto,
   logEditor,
   type PedidoFull,
 } from "@/lib/wms/full-editor";
@@ -88,6 +89,22 @@ export async function DELETE(
       galpaoId: pedido.separacao_galpao_id!,
       usuarioId: user.id,
     });
+    // A R é por produto, não por linha (preservar_linhas): se OUTRAS linhas do
+    // mesmo produto seguem no pedido, re-reserva o que ainda falta nelas.
+    const alvoIrmas = await alvoReservaProduto({
+      pedidoId,
+      tinyProdutoId: item.produto_id,
+      excluirItemId: item.id,
+    });
+    if (alvoIrmas > 0) {
+      await reservarParcialItem({
+        produtoWms,
+        galpaoId: pedido.separacao_galpao_id!,
+        qty: alvoIrmas,
+        pedidoId,
+        usuarioId: user.id,
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `falha ao reconciliar estoque: ${msg}` }, { status: 409 });
@@ -139,13 +156,21 @@ export async function PATCH(
     return NextResponse.json({ ok: true, quantidade: novaQty, sem_mudanca: true });
   }
 
+  // Parcela das OUTRAS linhas do mesmo produto (preservar_linhas) — a R é por
+  // produto, então toda re-reserva soma o que ainda falta nas irmãs.
+  const alvoIrmas = await alvoReservaProduto({
+    pedidoId,
+    tinyProdutoId: item.produto_id,
+    excluirItemId: item.id,
+  });
+
   try {
     if (novaQty < picado) {
       // ↓ abaixo do picado: desmarca tudo (S→E devolve saldo, recria R), libera
-      // as R e re-reserva novaQty. Item perde os picks → reabre.
+      // as R e re-reserva novaQty (+ irmãs). Item perde os picks → reabre.
       await desmarcarItemFull({ itemId: item.id, pedidoId, usuarioId: user.id });
       await liberarTodasReservas({ pedidoId, produtoWms, galpaoId, usuarioId: user.id });
-      await reservarParcialItem({ produtoWms, galpaoId, qty: novaQty, pedidoId, usuarioId: user.id });
+      await reservarParcialItem({ produtoWms, galpaoId, qty: novaQty + alvoIrmas, pedidoId, usuarioId: user.id });
       await sb
         .from("siso_pedido_itens")
         .update({
@@ -160,11 +185,17 @@ export async function PATCH(
       // novaQty ≥ picado (↑ OU ↓ acima do picado): os picks ficam intactos (S não
       // se toca). A R é all-or-nothing por mov e reservarAtomico é idempotente por
       // tripla, então NÃO dá pra "somar" ao reservado — libera TODAS as R e
-      // re-reserva o remanescente (novaQty − picado) do zero.
+      // re-reserva o remanescente (novaQty − picado + irmãs) do zero.
       await liberarTodasReservas({ pedidoId, produtoWms, galpaoId, usuarioId: user.id });
       const alvoReserva = novaQty - picado;
-      if (alvoReserva > 0) {
-        await reservarParcialItem({ produtoWms, galpaoId, qty: alvoReserva, pedidoId, usuarioId: user.id });
+      if (alvoReserva + alvoIrmas > 0) {
+        await reservarParcialItem({
+          produtoWms,
+          galpaoId,
+          qty: alvoReserva + alvoIrmas,
+          pedidoId,
+          usuarioId: user.id,
+        });
       }
       await sb
         .from("siso_pedido_itens")

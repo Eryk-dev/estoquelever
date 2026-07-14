@@ -182,6 +182,25 @@ describe("kits desmembram na criação", () => {
     expect(await reservadoDe(b.wms)).toBe(2);
   });
 
+  it("Full usa a composição mesmo se o cadastro estiver com eh_kit=false", async () => {
+    const componente = await novoProduto();
+    const kit = await novoProduto(0);
+    const { error } = await sb.from("siso_produto_kits").insert({
+      kit_produto_id: kit.wms,
+      componente_produto_id: componente.wms,
+      quantidade: 2,
+    });
+    if (error) throw new Error(`composição inconsistente: ${error.message}`);
+
+    const pedidoId = await criarFull([{ produto_id: kit.wms, quantidade: 3 }]);
+    const itens = await itensDe(pedidoId);
+
+    expect(itens).toHaveLength(1);
+    expect(Number(itens[0].produto_id)).toBe(componente.tiny);
+    expect(Number(itens[0].quantidade_pedida)).toBe(6);
+    expect(await reservadoDe(componente.wms)).toBe(6);
+  });
+
   it("venda manual (modo separacao) com kit → itens = componentes", async () => {
     const a = await novoProduto();
     const kit = await novoKit([{ wms: a.wms, qty: 3 }]);

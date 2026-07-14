@@ -384,14 +384,15 @@ export async function expandirItensVenda(
     .in("id", ids);
   if (prodErr) throw prodErr;
 
-  const kitIds = (prods ?? []).filter((p) => p.eh_kit === true).map((p) => String(p.id));
-  if (kitIds.length === 0) return items;
+  const kitIdsDeclarados = (prods ?? [])
+    .filter((p) => p.eh_kit === true)
+    .map((p) => String(p.id));
   const skuById = new Map((prods ?? []).map((p) => [String(p.id), p.sku as string]));
 
   const { data: composicoes, error: compErr } = await sb
     .from("siso_produto_kits")
     .select("kit_produto_id, componente_produto_id, quantidade")
-    .in("kit_produto_id", kitIds)
+    .in("kit_produto_id", ids)
     .order("criado_em", { ascending: true });
   if (compErr) throw compErr;
 
@@ -405,7 +406,8 @@ export async function expandirItensVenda(
     porKit.set(String(c.kit_produto_id), arr);
   }
 
-  const kitIdSet = new Set(kitIds);
+  const kitIdSet = new Set([...kitIdsDeclarados, ...porKit.keys()]);
+  if (kitIdSet.size === 0) return items;
   const expandido: Array<{ produto_id: string; quantidade: number }> = [];
   for (const item of items) {
     if (!kitIdSet.has(item.produto_id)) {

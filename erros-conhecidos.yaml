@@ -7648,3 +7648,35 @@ erros:
       - supabase/migrations/20260706_pick_item_atomico_r_parcial.sql
       - src/app/api/wms/separacao/marcar-realocacao/route.ts
     tags: [separacao, full, pick, reserva-parcial, ledger, liberacao, p1]
+
+  - id: ajuste-manual-bloqueava-saldo-reservado
+    date: "2026-07-14"
+    source: src/components/wms/ui/modals.tsx
+    category: business_logic
+    message: >
+      Ajuste de estoque não permite zerar/reduzir uma localização com reserva;
+      botão "Confirmar ajuste" fica desabilitado com "real 0 < N reservados".
+    cause: >
+      O cálculo do modal descartava qualquer saída cujo saldo final fosse menor
+      que o reservado. Remover apenas esse bloqueio não bastava: a S isolada do
+      ledger também viola reservado<=saldo, pois a R continuaria na loc antiga.
+    fix: >
+      A tela agora envia o ajuste e avisa que as reservas serão realocadas. A RPC
+      wms_ajustar_estoque_realocando_reservas move cada R reserva_pedido viva por
+      inteiro para outra loc ativa, desbloqueada e com capacidade, emitindo L na
+      origem + R equivalente no destino antes da S. As três movs são atômicas;
+      sem destino suficiente, tudo faz rollback. Entradas do mesmo balanço são
+      processadas antes das saídas e locs que também serão reduzidas são excluídas
+      como destino. Verificado em staging com sucesso (23 un) e rollback sem
+      capacidade, usando fixtures isoladas e auto-limpas.
+    files:
+      - src/components/wms/ui/modals.tsx
+      - src/lib/wms/ajuste-calc.ts
+      - src/lib/wms/movimentacoes.ts
+      - src/app/api/wms/ajuste/route.ts
+      - supabase/migrations/20260714133132_ajuste_manual_realoca_reserva_pedido.sql
+      - supabase/migrations/20260714133646_fix_ajuste_realoca_search_path.sql
+      - test/integration/ajuste-realoca-reserva.test.ts
+      - docs/api-reference-complete.md
+      - docs/architecture-and-flows.md
+    tags: [wms, ajuste-manual, reserva-pedido, realocacao, ledger, atomicidade, full]

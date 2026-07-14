@@ -6155,15 +6155,22 @@ Ajuste manual de estoque (avaria, perda, encontro, erro de contagem). **`motivo`
   "tripla": { "produto_id", "galpao_id", "localizacao_id" },
   "qty": 5,
   "direcao": "entrada | saida",
-  "motivo": "avaria caixa amassada"
+  "motivo": "avaria caixa amassada",
+  "motivo_categoria": "avaria | perda | achado | correcao_inventario | devolucao_sem_fluxo | outro",
+  "localizacoes_saida": ["uuid-loc-que-tambem-sera-reduzida"]
 }
 ```
 
 > Campo renomeado `quadrupla` → `tripla`; `empresa_dona_id` removido (não é mais coordenada).
 
-**Validação:** `motivo.trim().length >= 3` (era opcional, agora obrigatório). Mov gravada com `origem_tipo='ajuste_manual'`, motivo em `siso_movimentacoes.motivo` (coluna nova) + `observacoes`.
+**Validação:** `motivo.trim().length >= 3` e `motivo_categoria` válida. Se uma saída
+deixaria `saldo < reservado`, a RPC move cada `R reserva_pedido` viva por inteiro para outra
+localização ativa do mesmo produto/galpão com saldo livre suficiente. `L` na origem, `R` no
+destino e `S ajuste_manual` são atômicos; sem destino capaz, tudo faz rollback. Locs listadas
+em `localizacoes_saida` não recebem a reserva (o modal usa isso quando reduz várias posições).
 
-**Response 200:** `{ ok: true, mov_id }`.
+**Response 200:**
+`{ ok: true, mov_id, reservas_realocadas, quantidade_realocada }`.
 
 ### POST /api/wms/ajuste/[id]/estornar
 

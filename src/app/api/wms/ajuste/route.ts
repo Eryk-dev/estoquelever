@@ -21,8 +21,10 @@ const CATEGORIAS_VALIDAS = [
  *   - qty (required, > 0)
  *   - motivo (required, ≥ 3 chars)
  *   - direcao: 'entrada' | 'saida'  (required)
+ *   - localizacoes_saida?: uuid[] (locs que também serão reduzidas no lote)
  *
- * Sem dona — em 3D ajuste mexe direto na posição física.
+ * Sem dona — em 3D ajuste mexe direto na posição física. Se uma saída
+ * atravessar o reservado, a RPC realoca Rs de pedido antes de baixar o saldo.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireWarehouseAccess(req);
@@ -105,9 +107,14 @@ export async function POST(req: NextRequest) {
       direcao: body.direcao,
       custo_unitario:
         body.direcao === "entrada" ? custoUnitario : undefined,
+      localizacoes_saida: Array.isArray(body.localizacoes_saida)
+        ? body.localizacoes_saida.filter(
+            (id: unknown): id is string => typeof id === "string",
+          )
+        : [],
       usuario_id: auth.user.id,
     });
-    return NextResponse.json({ ok: true, mov_id: r.mov_id });
+    return NextResponse.json({ ok: true, ...r });
   } catch (e) {
     return wmsErrorResponse({
       source: "wms.ajuste",

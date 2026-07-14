@@ -617,13 +617,12 @@ export function AjusteModal({
     [linhas],
   );
 
-  const { ajustes, erroReserva, erroDuplicada } = useMemo(
+  const { ajustes, erroDuplicada } = useMemo(
     () =>
       calcularAjustes(
         linhas.map((l) => ({
           localizacao_id: l.localizacao.id,
           saldo: Number(l.saldo),
-          reservado: Number(l.reservado),
         })),
         drafts,
         novas.map((n) => ({
@@ -640,7 +639,6 @@ export function AjusteModal({
     !!pid &&
     !!galpaoId &&
     temMudanca &&
-    !erroReserva &&
     !erroDuplicada &&
     motivo.trim().length >= 3;
 
@@ -648,9 +646,21 @@ export function AjusteModal({
     mutationFn: async () => {
       // Sequencial: movs de ajuste são independentes no ledger; falha parcial
       // deixa estado consistente (as aplicadas estão certas) e recuperável.
-      const results: { localizacao_id: string; ok: boolean; msg?: string }[] =
-        [];
-      for (const a of ajustes) {
+      const results: {
+        localizacao_id: string;
+        ok: boolean;
+        msg?: string;
+        quantidade_realocada?: number;
+      }[] = [];
+      const localizacoesSaida = ajustes
+        .filter((a) => a.direcao === "saida")
+        .map((a) => a.localizacao_id);
+      // Entradas primeiro: uma loc adicionada/aumentada neste mesmo balanço
+      // já pode receber a reserva antes de a saída reduzir a loc de origem.
+      const ajustesOrdenados = [...ajustes].sort((a, b) =>
+        a.direcao === b.direcao ? 0 : a.direcao === "entrada" ? -1 : 1,
+      );
+      for (const a of ajustesOrdenados) {
         try {
           const r = await sisoFetch("/api/wms/ajuste", {
             method: "POST",
@@ -665,6 +675,7 @@ export function AjusteModal({
               direcao: a.direcao,
               motivo: motivo.trim(),
               motivo_categoria: categoria,
+              localizacoes_saida: localizacoesSaida,
               ...(a.direcao === "entrada" && a.custo_unitario != null
                 ? { custo_unitario: a.custo_unitario }
                 : {}),
@@ -678,7 +689,14 @@ export function AjusteModal({
               msg: b.error || `HTTP ${r.status}`,
             });
           } else {
-            results.push({ localizacao_id: a.localizacao_id, ok: true });
+            const b = (await r.json()) as {
+              quantidade_realocada?: number;
+            };
+            results.push({
+              localizacao_id: a.localizacao_id,
+              ok: true,
+              quantidade_realocada: Number(b.quantidade_realocada ?? 0),
+            });
           }
         } catch (e) {
           results.push({
@@ -715,8 +733,12 @@ export function AjusteModal({
 
       if (falhas.length === 0) {
         const n = results.length;
+        const qtyRealocada = results.reduce(
+          (total, r) => total + Number(r.quantidade_realocada ?? 0),
+          0,
+        );
         toast.success(
-          `${n} ajuste${n === 1 ? "" : "s"} aplicado${n === 1 ? "" : "s"}`,
+          `${n} ajuste${n === 1 ? "" : "s"} aplicado${n === 1 ? "" : "s"}${qtyRealocada > 0 ? ` · ${fmtNum(qtyRealocada)} un reservadas realocadas` : ""}`,
         );
         onClose();
         return;
@@ -928,13 +950,15 @@ export function AjusteModal({
                       <div
                         style={{
                           fontSize: 11,
-                          color: "var(--wms-c-danger)",
+                          color: below
+                            ? "var(--wms-c-warn)"
+                            : "var(--wms-c-danger)",
                           marginTop: 3,
                         }}
                       >
                         <Icon name="alert" size={10} />{" "}
                         {below
-                          ? `real ${fmtNum(real)} < ${fmtNum(reservado)} reservados`
+                          ? "reservas serão realocadas automaticamente"
                           : erro}
                       </div>
                     )}
@@ -970,7 +994,11 @@ export function AjusteModal({
                       textAlign: "center",
                       fontWeight: 600,
                       ...(below || erro
-                        ? { borderColor: "var(--wms-c-danger)" }
+                        ? {
+                            borderColor: below
+                              ? "var(--wms-c-warn)"
+                              : "var(--wms-c-danger)",
+                          }
                         : delta !== 0
                           ? { borderColor: "var(--wms-c-ok)" }
                           : {}),

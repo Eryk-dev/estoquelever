@@ -227,7 +227,7 @@ essa lacuna com 7 endpoints reverse e ajustes pra preservar invariantes do ledge
 | `POST /api/wms/guarda/[id]/confirmar` (par S+E RECEBIMENTO→loc destino) | `POST /api/wms/guarda/[id]/desfazer` | Estorna a última confirmação (S+E), decrementa `qty_guardada`, restaura status da pendência. |
 | `POST /api/wms/devolucoes/[id]/classificar` (E + transferência opcional pra QUARENTENA + RMA) | `POST /api/wms/devolucoes/[id]/desclassificar` | Match por janela temporal ±60s da `classificada_em` + origem_tipo + (NF/produto quando disponíveis). Estorna todas as movs e volta pra `aguardando_classificacao`. |
 | `POST /api/wms/replenishment` (S+E intra-galpão) | `POST /api/wms/replenishment/[origem_id]/reverter` | Estorna ambas as legs (idempotente — chamadas repetidas pulam movs já estornadas). |
-| `POST /api/wms/ajuste` (mov manual S ou E) | `POST /api/wms/ajuste/[mov_id]/estornar` | Estorna a mov; valida `origem_tipo='ajuste_manual'` antes (recusa estornar movs de outras origens por esse endpoint). |
+| `POST /api/wms/ajuste` (mov manual S ou E; saída pode realocar R de pedido) | `POST /api/wms/ajuste/[mov_id]/estornar` | Estorna a mov; valida `origem_tipo='ajuste_manual'` antes (recusa estornar movs de outras origens por esse endpoint). A reserva eventualmente realocada permanece numa posição válida. |
 | `POST /api/wms/vendas/criar` (baixa_direta gera S por item; modo separação gera R) | `POST /api/wms/vendas/[id]/cancelar` | Estorna movs S (idempotente) ou libera R conforme o status atual. Rejeita 400 se status_separacao ∈ {em_separacao,separado,embalado,conferido} — operador deve `voltar-etapa` primeiro. |
 | `POST /api/wms/transferencias/[id]/receber` (E destino) | `POST /api/wms/transferencias/[id]/desfazer-recebimento` | Estorna **só a leg E** + reset itens + header volta pra `em_transito`. A leg S continua (estoque continua em trânsito). Permite re-receber. |
 
@@ -236,6 +236,9 @@ essa lacuna com 7 endpoints reverse e ajustes pra preservar invariantes do ledge
 Migrations P3 movem 2 fluxos multi-step do TS pra RPC SQL atômica:
 - `wms_replenishment_intra_galpao` — S+E numa transação única. Antes, crash entre S e E
   deixava saldo evaporando. Endpoint `/api/wms/replenishment` consome via `replenishmentIntraGalpao()`.
+- `wms_ajustar_estoque_realocando_reservas` — quando a contagem real ficaria abaixo do
+  reservado, move a `R reserva_pedido` inteira para outra posição com capacidade e só então
+  grava a `S ajuste_manual`; L+R+S fazem rollback juntas se qualquer etapa falhar.
 - `wms_confirmar_guarda_atomico` — S+E + UPDATE de `siso_wms_pendencias_guarda` (`qty_guardada`,
   `status`) numa transação única. Antes, crash entre mov e UPDATE deixava saldo movido mas
   pendência não atualizada (estado fantasma). Endpoint `/api/wms/guarda/[id]/confirmar` consome.

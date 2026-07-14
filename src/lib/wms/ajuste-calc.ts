@@ -17,7 +17,6 @@ export interface AjusteLinhaCalc {
 export interface CalcLinha {
   localizacao_id: string;
   saldo: number;
-  reservado: number;
 }
 
 export interface CalcNova {
@@ -28,8 +27,6 @@ export interface CalcNova {
 
 export interface CalcResultado {
   ajustes: AjusteLinhaCalc[];
-  /** Alguma loc existente teria saldo real < reservado (viola CHECK). */
-  erroReserva: boolean;
   /** Alguma loc nova repete uma loc da lista / outra loc nova. */
   erroDuplicada: boolean;
 }
@@ -40,17 +37,12 @@ export function calcularAjustes(
   novas: CalcNova[],
 ): CalcResultado {
   const ajustes: AjusteLinhaCalc[] = [];
-  let erroReserva = false;
 
   for (const l of linhas) {
     const raw = drafts[l.localizacao_id];
     if (raw === undefined || raw.trim() === "") continue; // não alterado
     const real = Number(raw);
     if (!Number.isFinite(real) || real < 0) continue;
-    if (real < l.reservado) {
-      erroReserva = true;
-      continue;
-    }
     const delta = real - l.saldo;
     if (delta === 0) continue;
     ajustes.push({
@@ -84,5 +76,5 @@ export function calcularAjustes(
     });
   }
 
-  return { ajustes, erroReserva, erroDuplicada };
+  return { ajustes, erroDuplicada };
 }

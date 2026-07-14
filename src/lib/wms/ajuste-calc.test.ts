@@ -1,17 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { calcularAjustes } from "./ajuste-calc";
 
-const L = (localizacao_id: string, saldo: number, reservado = 0) => ({
+const L = (localizacao_id: string, saldo: number) => ({
   localizacao_id,
   saldo,
-  reservado,
 });
 
 describe("calcularAjustes", () => {
   it("loc não alterada (sem draft) não vira ajuste", () => {
     const r = calcularAjustes([L("a", 10)], {}, []);
     expect(r.ajustes).toEqual([]);
-    expect(r.erroReserva).toBe(false);
     expect(r.erroDuplicada).toBe(false);
   });
 
@@ -39,17 +37,10 @@ describe("calcularAjustes", () => {
     ]);
   });
 
-  it("real abaixo do reservado → erroReserva, sem ajuste pra essa loc", () => {
-    const r = calcularAjustes([L("a", 10, 4)], { a: "2" }, []);
-    expect(r.erroReserva).toBe(true);
-    expect(r.ajustes).toEqual([]);
-  });
-
-  it("real == reservado é permitido", () => {
-    const r = calcularAjustes([L("a", 10, 4)], { a: "4" }, []);
-    expect(r.erroReserva).toBe(false);
+  it("saída não é bloqueada no cálculo; backend trata eventual reserva", () => {
+    const r = calcularAjustes([L("a", 10)], { a: "2" }, []);
     expect(r.ajustes).toEqual([
-      { localizacao_id: "a", direcao: "saida", qty: 6 },
+      { localizacao_id: "a", direcao: "saida", qty: 8 },
     ]);
   });
 

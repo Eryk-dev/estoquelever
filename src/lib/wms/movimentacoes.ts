@@ -462,38 +462,68 @@ export interface AjusteManualInput {
    * mexe em `siso_custo_medio`).
    */
   custo_unitario?: number;
+  /** Locs que também terão saída neste lote; não recebem reservas movidas. */
+  localizacoes_saida?: string[];
 }
 
 /**
  * Ajuste manual de saldo numa tripla. `motivo` é obrigatório (>=3 chars) e
  * `motivo_categoria` precisa ser uma das 6 categorias estruturadas — ajuste
- * sem justificativa ou sem categoria não passa.
+ * sem justificativa ou sem categoria não passa. Saída abaixo do reservado
+ * realoca Rs de pedido para outra posição com capacidade na mesma transação.
  *
- * Retorna `{ mov_id }` pra permitir estorno via `estornarAjuste` /
- * `POST /api/wms/ajuste/[id]/estornar`.
+ * Retorna o `mov_id` e o total de reservas realocadas. O id permite estorno
+ * via `estornarAjuste` / `POST /api/wms/ajuste/[id]/estornar`.
  */
 export async function ajustarEstoque(
   input: AjusteManualInput,
-): Promise<{ mov_id: string }> {
+): Promise<{
+  mov_id: string;
+  reservas_realocadas: number;
+  quantidade_realocada: number;
+}> {
   if (!input.motivo || input.motivo.trim().length < 3) {
     throw new Error("motivo do ajuste é obrigatório (≥3 caracteres)");
   }
   if (!input.motivo_categoria) {
     throw new Error("motivo_categoria do ajuste é obrigatório");
   }
-  const mov = await inserirMovimentacao({
-    tripla: input.tripla,
-    tipo: input.direcao === "entrada" ? "E" : "S",
-    qty: input.qty,
-    origem_tipo: "ajuste_manual",
-    origem_detalhes: { direcao: input.direcao },
-    motivo: input.motivo.trim(),
-    motivo_categoria: input.motivo_categoria,
-    custo_unitario:
-      input.direcao === "entrada" ? input.custo_unitario : undefined,
-    usuario_id: input.usuario_id,
-  });
-  return { mov_id: mov.id };
+  const sb = createServiceClient();
+  const { data, error } = await sb.rpc(
+    "wms_ajustar_estoque_realocando_reservas",
+    {
+      p_produto_id: input.tripla.produto_id,
+      p_galpao_id: input.tripla.galpao_id,
+      p_localizacao_id: input.tripla.localizacao_id,
+      p_quantidade: input.qty,
+      p_direcao: input.direcao,
+      p_motivo: input.motivo.trim(),
+      p_motivo_categoria: input.motivo_categoria,
+      p_usuario_id: input.usuario_id,
+      p_custo_unitario:
+        input.direcao === "entrada" ? input.custo_unitario ?? null : null,
+      p_localizacoes_saida: input.localizacoes_saida ?? [],
+    },
+  );
+  if (error) {
+    logger.error("wms.ajuste", "RPC de ajuste manual falhou", {
+      error: error.message,
+      tripla: input.tripla,
+      direcao: input.direcao,
+      qty: input.qty,
+    });
+    throw error;
+  }
+  const r = data as {
+    mov_id: string;
+    reservas_realocadas: number;
+    quantidade_realocada: number;
+  };
+  return {
+    mov_id: r.mov_id,
+    reservas_realocadas: Number(r.reservas_realocadas ?? 0),
+    quantidade_realocada: Number(r.quantidade_realocada ?? 0),
+  };
 }
 
 /**

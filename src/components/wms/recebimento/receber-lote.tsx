@@ -126,7 +126,9 @@ export function ReceberLote({
 
   const [itens, setItens] = useState<ReceberLoteItem[]>(itensIniciais);
   const [iniciarRota, setIniciarRota] = useState(false);
-  const [entradaDireta, setEntradaDireta] = useState(false);
+  const [entradaDireta, setEntradaDireta] = useState(
+    config.entradaDiretaDefault ?? false,
+  );
 
   // Seed-once dos fluxos pré-definidos: a lista vem async e, depois de seedada,
   // o operador edita qty/custo/loc. Re-sincronizar a cada nova referência de

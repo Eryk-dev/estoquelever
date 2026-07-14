@@ -68,4 +68,6 @@ export interface ReceberLoteConfig {
    *  false em transferência: entrada é sempre direta no backend e não há rota
    *  de guarda, então os toggles não fazem sentido. */
   guardaTogglesVisible?: boolean;
+  /** valor inicial do toggle de entrada direta. Default false. */
+  entradaDiretaDefault?: boolean;
 }

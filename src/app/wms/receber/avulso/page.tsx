@@ -77,6 +77,7 @@ const CONFIG_AVULSO: ReceberLoteConfig = {
   permissaoReceber: "operacoes.receber",
   putawaySuggest: true,
   locAllowCreate: true,
+  entradaDiretaDefault: true,
 };
 
 interface ReceberResponse {

@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
   // Fetch the order (include empresa_origem_id for queue job)
   const { data: pedido, error: fetchError } = await supabase
     .from("siso_pedidos")
-    .select("id, filial_origem, empresa_origem_id, status, nota_fiscal_id, chave_acesso_nf")
+    .select("id, filial_origem, empresa_origem_id, status, nota_fiscal_id, chave_acesso_nf, separacao_futura")
     .eq("id", pedidoId)
     .single();
 
@@ -383,10 +383,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Pista FUTURA (não-OC): a venda está buffered no ML — aprovar NÃO pode gerar
+  // NF agora. Aprova sem job e cai em `aguardando_separacao`: a R segura o
+  // estoque no galpão de cobertura e o pick faz R→L+S. A NF nasce só na
+  // promoção (promoverPedidoFutura), quando a etiqueta liberar.
+  const futuraSemJob = pedido.separacao_futura === true && decisao !== "oc";
+
   // Enqueue durável + atômico (P005): status do pedido + job lancar_estoque na
   // MESMA tx via RPC, com retry curto. Mata o estado-fantasma "aprovado sem job"
   // (antes UPDATE + INSERT eram independentes e o queueError era engolido).
-  if (decisao !== "oc") {
+  if (decisao !== "oc" && !futuraSemJob) {
     let enfErr: { message: string } | null = null;
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       const { error } = await supabase.rpc("wms_aprovar_e_enfileirar", {
@@ -418,18 +424,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "falha_enfileirar", message: enfErr.message }, { status: 500 });
     }
   } else {
-    // OC: não enfileira lancar_estoque. UPDATE direto (status_separacao=null).
+    // Sem job de lancar_estoque. UPDATE direto:
+    //  - OC → status_separacao=null (o worker seta validacao_oc).
+    //  - Futura não-OC → aguardando_separacao (separa cedo, NF só na promoção).
     const { error: updErr } = await supabase
       .from("siso_pedidos")
       .update({
         status: "executando", decisao_final: decisao,
         operador_id: operadorId ?? null, operador_nome: operadorNome ?? null,
         tipo_resolucao: "manual", marcadores,
-        separacao_galpao_id: separacaoGalpaoId, status_separacao: null,
+        separacao_galpao_id: separacaoGalpaoId,
+        status_separacao: futuraSemJob ? "aguardando_separacao" : null,
       })
       .eq("id", pedidoId);
     if (updErr) {
-      logger.error("aprovar", "Failed to update order (oc)", { pedidoId, supabaseError: updErr.message });
+      logger.error("aprovar", "Failed to update order (sem job)", {
+        pedidoId, decisao, futura: futuraSemJob, supabaseError: updErr.message,
+      });
       return NextResponse.json({ error: updErr.message }, { status: 500 });
     }
   }

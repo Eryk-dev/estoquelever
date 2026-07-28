@@ -130,8 +130,9 @@ vi.mock("./wms/trocas-roteamento", () => ({
   aplicarTrocasRoteamento: vi.fn(async () => undefined),
 }));
 
+const reservarMock = vi.fn(async () => "R-1");
 vi.mock("./wms/reservas", () => ({
-  reservarAtomico: vi.fn(async () => "R-1"),
+  reservarAtomico: (...a: unknown[]) => reservarMock(...(a as [])),
   estornarReservaIndividual: vi.fn(async () => undefined),
 }));
 
@@ -405,11 +406,11 @@ describe("processWebhookWms — separação futura (Fase 2)", () => {
     expect(rec.jobInserts[0]).toMatchObject({ tipo: "lancar_estoque", decisao: "oc" });
   });
 
-  it("futura TRANSFERÊNCIA: separa direto no galpão de cobertura (auto), não vai pra pendente", async () => {
+  it("futura TRANSFERÊNCIA: vai pra pendente (painel humano), sem job, com R criada", async () => {
     state.existente = null;
     state.job = null;
-    // cobertura 100% num galpão não-casa → transferencia. Futura NÃO deve cair em
-    // pendente (painel humano) — separa cedo nesse galpão.
+    // cobertura 100% num galpão não-casa → transferencia. Transferência NUNCA é
+    // auto-aprovada, nem na pista futura: cai em `pendente` pro painel humano.
     rotearMock.mockResolvedValueOnce(
       {
         decisao: "transferencia",
@@ -420,13 +421,18 @@ describe("processWebhookWms — separação futura (Fase 2)", () => {
 
     const res = await processWebhookWms({ ...input(), separacaoFutura: true });
 
-    expect(res.status).toBe("executando"); // auto, não pendente
+    expect(res.status).toBe("pendente");
     expect(rec.pedidoUpserts[0]).toMatchObject({
       separacao_futura: true,
-      status_separacao: "aguardando_separacao",
-      decisao_final: "transferencia",
+      status: "pendente",
+      sugestao: "transferencia",
+      status_separacao: null,
+      decisao_final: null,
+      tipo_resolucao: null,
     });
-    expect(rec.jobInserts).toHaveLength(0); // separa direto, sem NF
+    expect(rec.jobInserts).toHaveLength(0); // sem job — decisão é humana
+    // A R já foi criada no galpão de cobertura (segura o estoque até a aprovação)
+    expect(reservarMock).toHaveBeenCalled();
   });
 });
 

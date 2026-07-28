@@ -77,10 +77,12 @@ Tiny webhook (pedido)
        · upsert siso_pedidos/itens · cria reservas R (TTL 30d) p/ propria+transferencia (OC não reserva)
        · propria → AUTO-APROVA (executando, aguardando_nf, enfileira lancar_estoque)
        · oc → AUTO-APROVA (executando, decisao_final='oc'; worker seta status_separacao='validacao_oc')
-       · transferencia → pendente (painel humano)
+       · transferencia → pendente (painel humano) — SEMPRE, inclusive na pista futura
   ──────────────────────────────────────────────────────────────
 Aprovação humana (api/wms/pedidos/aprovar)   [transferencia; "rejeitado" cancela]
   · cria reservas R se faltarem; 409 se estoque live não cobre → enfileira lancar_estoque
+  · futura não-OC: NÃO enfileira (sem NF cedo) → UPDATE direto p/ aguardando_separacao;
+    a NF nasce na promoção (promoverPedidoFutura)
   ──────────────────────────────────────────────────────────────
 execution-worker (siso_fila_execucao, backoff exponencial, claim atômico)
   · lancar_estoque: marcadores Tiny + gera NF; OC valida shortfall contra siso_estoque LIVE

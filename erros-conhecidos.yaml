@@ -7772,3 +7772,35 @@ erros:
     - src/app/api/wms/admin/galpoes/[id]/route.ts
     - src/app/api/wms/admin/usuarios/route.ts
   tags: [wms, etiqueta, excesso, printnode, impressora, configuracao]
+
+- id: FUTURA-TRANSFERENCIA-AUTO-APROVADA
+  date: 2026-07-28
+  source: operacao-staging
+  category: business_logic
+  message: >
+    Pedido de TRANSFERÊNCIA na pista futura era auto-aprovado no intake
+    (status=executando, decisao_final='transferencia', tipo_resolucao='auto'),
+    nunca passando pelo painel humano. Ex.: pedido 938470136 (ML
+    2000013692554571) — auto-aprovado como transferência em 25/06, ficou 33
+    dias na fila de separação sem ninguém decidir.
+  cause: >
+    `webhook-processor-wms.ts` tinha a flag `futuraTransferencia`
+    (separacaoFutura && sugestao==='transferencia') somada ao `autoAprova`,
+    justificada por "senão a futura transferência cai em pendente e some da
+    pista futura". Só que transferência exige decisão humana por definição —
+    é o único caso (junto com troca_equivalente) que vai pro painel.
+  fix: >
+    Removida a flag: `autoAprova = isAuto || autoEnfileiraOc` e
+    `futuraSeparaDireto = isAuto && separacaoFutura`. Futura transferência
+    agora entra `pendente` com decisao_final=null e a R já criada no galpão de
+    cobertura (segura o estoque até a decisão). Pra não regredir a pista
+    futura na aprovação, /api/wms/pedidos/aprovar passou a ler
+    `separacao_futura`: aprovação não-OC de futura NÃO enfileira
+    `lancar_estoque` (nada de NF semanas antes) — faz UPDATE direto pra
+    `aguardando_separacao`, mesmo destino de antes, só que com decisão humana.
+    A NF continua nascendo só na promoção (`promoverPedidoFutura`).
+  files:
+    - src/lib/webhook-processor-wms.ts
+    - src/app/api/wms/pedidos/aprovar/route.ts
+    - src/lib/webhook-processor-wms.test.ts
+  tags: [wms, futura, transferencia, auto-aprovacao, roteamento, aprovar]

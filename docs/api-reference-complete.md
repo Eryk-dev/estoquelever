@@ -349,6 +349,8 @@ This is the **authoritative, comprehensive reference** for every API route in th
 
 **Purpose:** Operator approves a pending order with a decision. Moves order to "executando" state and enqueues stock posting.
 
+> **Pista futura:** pedido com `separacao_futura=true` e decisão não-OC **não** enfileira `lancar_estoque` (geraria NF semanas antes da etiqueta liberar) — UPDATE direto pra `status_separacao='aguardando_separacao'`, mantendo a flag. A NF nasce na promoção (`promoverPedidoFutura`). Transferência (futura ou não) **nunca** é auto-aprovada no intake — sempre passa por aqui.
+
 **Auth:** X-Session-Id header (optional role check could be added)
 
 **Request Body:**

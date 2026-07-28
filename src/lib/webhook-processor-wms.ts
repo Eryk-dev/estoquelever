@@ -836,16 +836,15 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   }
   const isAuto = sugestao === "propria" && !requerSku;
   const autoEnfileiraOc = sugestao === "oc" && !requerSku;
-  // FUTURA separa direto também na TRANSFERÊNCIA: a venda buffered cuja cobertura
-  // está num galpão não-casa é pré-separada NESSE galpão (peça na caixa do dia
-  // de lá; expede de lá na promoção) — auto, sem painel humano. Sem isso, toda
-  // futura transferência caía em `pendente`/status nulo → sumia da pista futura.
-  // Troca de equivalência (curadoria) segue pro painel /wms/trocas, mesmo futura.
-  const futuraTransferencia =
-    separacaoFutura && sugestao === "transferencia" && !requerSku;
-  // Futura que separa cedo no galpão de cobertura (propria OU transferência).
-  const futuraSeparaDireto = (isAuto && separacaoFutura) || futuraTransferencia;
-  const autoAprova = isAuto || autoEnfileiraOc || futuraTransferencia;
+  // TRANSFERÊNCIA NUNCA é auto-aprovada — nem na pista futura. Vai pro painel
+  // humano (`pendente`, decisao_final=null). A R já foi criada no galpão de
+  // cobertura (passo 8) e segura o estoque até a decisão. Aprovada em
+  // /api/wms/pedidos/aprovar, a futura cai em `aguardando_separacao` SEM job de
+  // NF (a rota respeita `separacao_futura`) — mesmo destino de antes, só que
+  // com decisão humana. Troca de equivalência segue pro painel /wms/trocas.
+  // Futura que separa cedo no galpão de cobertura (só propria — auto-aprovada).
+  const futuraSeparaDireto = isAuto && separacaoFutura;
+  const autoAprova = isAuto || autoEnfileiraOc;
   const status = autoAprova ? "executando" : "pendente";
   const tipoResolucao = autoAprova ? "auto" : null;
 
@@ -1048,16 +1047,12 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       sugestao_motivo: motivo,
       status,
       tipo_resolucao: tipoResolucao,
-      decisao_final: isAuto
-        ? "propria"
-        : futuraTransferencia
-          ? "transferencia"
-          : (autoEnfileiraOc ? "oc" : null),
+      decisao_final: isAuto ? "propria" : (autoEnfileiraOc ? "oc" : null),
       separacao_galpao_id: separacaoGalpaoId,
       separacao_futura: separacaoFutura,
       // status_separacao no intake:
-      //  - futura propria/transferência → aguardando_separacao (sem etapa de NF;
-      //    a R segura o estoque no galpão de cobertura, o pick faz R→L+S).
+      //  - futura propria → aguardando_separacao (sem etapa de NF; a R segura o
+      //    estoque no galpão de cobertura, o pick faz R→L+S).
       //  - normal propria → aguardando_nf.
       //  - OC (futura ou normal) → NULL: o worker (executarMarcadoresOnly) seta
       //    validacao_oc; setar aguardando_nf dispararia enriquecerDadosNf cedo.
@@ -1262,10 +1257,10 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     registrarEvento({
       pedidoId: pedido.id,
       evento: "auto_aprovado",
-      detalhes: { decisao: isAuto ? "propria" : (futuraTransferencia ? "transferencia" : "oc"), motivo, futura: separacaoFutura, via: "wms" },
+      detalhes: { decisao: isAuto ? "propria" : "oc", motivo, futura: separacaoFutura, via: "wms" },
     }).catch(() => {});
 
-    // Futura que separa direto (propria/transferência) NÃO enfileira lancar_estoque:
+    // Futura propria que separa direto NÃO enfileira lancar_estoque:
     // não gera NF nem baixa estoque agora (a R segura o estoque; o pick na pista
     // futura faz R→L+S; a NF nasce só na promoção). Crucial p/ a re-processabilidade
     // da promoção: enfileirar o job ligaria o early-return de idempotência

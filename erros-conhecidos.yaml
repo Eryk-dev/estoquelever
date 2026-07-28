@@ -7680,3 +7680,95 @@ erros:
       - docs/api-reference-complete.md
       - docs/architecture-and-flows.md
     tags: [wms, ajuste-manual, reserva-pedido, realocacao, ledger, atomicidade, full]
+
+- id: INVENTARIO-SESSOES-CONCORRENTES-MESMA-LOC
+  date: 2026-07-06
+  source: operacao-staging
+  category: business_logic
+  message: >
+    "divergência <uuid> (produto <sku>, loc <loc>): perda <n> maior que o
+    saldo atual <m> — rejeite essa divergência e re-aplique a sessão" ao
+    aplicar sessão de inventário (wms_aplicar_sessao_inventario, preflight
+    INV-02/04).
+  cause: >
+    Duas sessões de inventário contaram a MESMA loc. Sessão grande a6e67e5b
+    (11 locs, contada ~16:32, aprovada 18:57) ficou pendente; sessão pequena
+    498286b7 recontou só G-02-1 (19:03) e foi APLICADA primeiro (19:09).
+    As divergências da sessão grande em G-02-1 viraram stale: perdas colidem
+    com saldo já baixado (preflight barra), e os GANHOS stale aplicariam em
+    cima da contagem nova inflando estoque (preflight NÃO barra ganho).
+    Janela existe porque finalizarLoc libera o lock da loc na finalização
+    (decisão D2, INV-06) — loc volta pro roteamento/nova sessão antes da
+    sessão dona ser aplicada.
+  fix: >
+    Contagem mais recente vence (inventário manda na qty real da loc).
+    Rejeitar TODAS as divergências da sessão antiga naquela loc (não só as
+    perdas que colidem — ganhos stale também), depois re-aplicar a sessão:
+    UPDATE siso_inventario_divergencias SET status='rejeitada' WHERE
+    sessao_id=<antiga> AND localizacao_id=<loc> AND status='aprovada';
+    SELECT wms_aplicar_sessao_inventario(<sessao>, <usuario>). Preflight de
+    conferência antes de aplicar: comparar delta contra saldo/reservado
+    atual de siso_estoque pra achar todas as colisões de uma vez.
+  files:
+    - supabase/migrations/20260612b_loc_locks_sessao_id.sql
+  tags: [inventario, divergencia, sessoes-concorrentes, aplicacao, staging]
+
+- id: ETIQUETA-EXCESSO-QR-EMBOLA-BARCODE
+  date: 2026-07-28
+  source: operacao-staging
+  category: business_logic
+  message: >
+    Na etiqueta de excesso 10×15, o QR code se sobrepõe ao CODE128 em
+    algumas situações — os dois ficam ilegíveis pro coletor.
+  cause: >
+    zpl-excesso.ts posicionava os dois em coordenadas FIXAS (QR em lx=500,
+    CODE128 em lx=750) e emitia magnificação FIXA `^BQN,2,8`. Mas o lado do
+    QR não é fixo: depende da VERSÃO do símbolo, que cresce com o tamanho do
+    dado. Até a versão 3 (29 módulos × 8 = 232 dots) o QR terminava antes de
+    750; a partir da versão 4 (33 módulos × 8 = 264) ele invadia o barcode.
+    A constante `QR_SIZE = 200` era só uma estimativa usada pra posicionar o
+    campo — o ZPL nunca declara o lado real, então nada no código percebia.
+  fix: >
+    Dimensionar o QR antes de posicionar: `dimensionarQr()` estima a versão
+    pela capacidade em BYTES (modo binário, correção Q — pior caso, então
+    erra sobrando espaço) e encolhe a magnificação pra caber em QR_MAX_W=200
+    dots, com piso QR_MAG_MIN=4 (legibilidade). O CODE128 passa a começar em
+    `COL_INFO_X + ladoRealDoQr + GAP_QR_BAR(50)` em vez de lx=750 fixo, e o
+    module width dele é calculado pelo espaço que REALMENTE sobra até a borda
+    da coluna. Teste `QR nunca embola com o CODE128` varre 14 tamanhos de SKU
+    e assere a largura REAL (módulos × magnificação), não o ^FO declarado.
+  files:
+    - src/lib/wms/zpl-excesso.ts
+    - src/lib/wms/zpl-excesso.test.ts
+  tags: [wms, etiqueta, excesso, zpl, qrcode, code128, printnode]
+
+- id: ETIQUETA-EXCESSO-SEMPRE-NA-IMPRESSORA-DE-ENVIO
+  date: 2026-07-28
+  source: operacao-staging
+  category: business_logic
+  message: >
+    Etiqueta de excesso saía sempre na EXPCWB (impressora de envio do CWB),
+    sem opção de escolher outra impressora pra esse tipo de etiqueta.
+  cause: >
+    `imprimirEtiquetaExcesso` chamava `resolverImpressora` (etiqueta de
+    envio) direto, porque é a que tem mídia 10×15. Não existia coluna de
+    configuração `_excesso` — diferente da etiqueta de produto, que já tinha
+    `printnode_printer_id_produto` em galpões e usuários desde 2026-05-14.
+  fix: >
+    Espelhar o padrão da etiqueta de produto: colunas `_excesso` em
+    siso_galpoes/siso_usuarios (migration 20260728) + `resolverImpressoraExcesso`
+    (user._excesso > galpao._excesso > user envio > galpao envio, com
+    `fallbackEnvelope` sinalizando a queda). `resolverImpressoraProduto` e a
+    nova viraram wrappers de `resolverImpressoraPorTipo(tipo, ...)` — mesmo
+    código, sufixo de coluna parametrizado. Config em
+    /wms/configuracoes/conexoes (linha "Excesso" por galpão e por usuário).
+    Sem impressora de excesso configurada o comportamento é idêntico ao de
+    antes (cai na de envio) — migração sem regressão.
+  files:
+    - supabase/migrations/20260728_printnode_impressora_excesso.sql
+    - src/lib/printnode.ts
+    - src/lib/wms/etiqueta-produto-service.ts
+    - src/app/wms/configuracoes/conexoes/page.tsx
+    - src/app/api/wms/admin/galpoes/[id]/route.ts
+    - src/app/api/wms/admin/usuarios/route.ts
+  tags: [wms, etiqueta, excesso, printnode, impressora, configuracao]

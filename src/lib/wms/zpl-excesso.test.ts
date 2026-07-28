@@ -91,6 +91,42 @@ describe("gerarZplExcesso", () => {
     expect(zpl).toContain("FDlinha 1 linha 2");
   });
 
+  it("QR nunca embola com o CODE128, seja qual for o tamanho do SKU", () => {
+    // Largura REAL do símbolo = módulos(versão) × magnificação. Versão vem da
+    // capacidade em bytes (modo binário, correção Q) — tabela replicada aqui de
+    // propósito: é ela que a impressora aplica, não o ^FO declarado.
+    const MODULOS = [21, 25, 29, 33, 37, 41, 45, 49, 53, 57];
+    const CAP_BYTES = [11, 20, 32, 46, 60, 74, 86, 108, 130, 151];
+
+    for (const len of [1, 6, 8, 11, 12, 16, 20, 21, 25, 32, 33, 46, 60, 80]) {
+      const sku = "X".repeat(len);
+      const zpl = gerarZplExcesso({ ...BASE, sku });
+
+      const qrM = zpl.match(/\^FO(\d+),(\d+)\^BQN,2,(\d+)/);
+      const barM = zpl.match(/\^FO(\d+),(\d+)\^BCR/);
+      expect(qrM, `QR ausente pra len=${len}`).not.toBeNull();
+      expect(barM, `barcode ausente pra len=${len}`).not.toBeNull();
+
+      const idx = CAP_BYTES.findIndex((c) => len <= c);
+      const modulos = MODULOS[idx === -1 ? MODULOS.length - 1 : idx];
+      const mag = Number(qrM![3]);
+      const qrLx = Number(qrM![2]);
+      const barLx = Number(barM![2]);
+
+      expect(mag, `mag ilegível pra len=${len}`).toBeGreaterThanOrEqual(4);
+      expect(barLx, `QR embola no barcode pra len=${len}`).toBeGreaterThan(
+        qrLx + modulos * mag,
+      );
+    }
+  });
+
+  it("SKU longo encolhe a magnificação do QR (cabe no orçamento)", () => {
+    // 6 bytes → versão 1 (21 módulos) → mag 8 = 168 dots
+    expect(gerarZplExcesso(BASE)).toContain("^BQN,2,8^FDQA,192847^FS");
+    // 25 bytes → versão 3 (29 módulos) → mag 6 = 174 dots
+    expect(gerarZplExcesso({ ...BASE, sku: "X".repeat(25) })).toContain("^BQN,2,6^FDQA,");
+  });
+
   it("campos rotacionados ficam dentro da mídia (FO x em 0..800)", () => {
     const zpl = gerarZplExcesso({ ...BASE, qty: 99999, sku: "X".repeat(25) });
     const fos = [...zpl.matchAll(/\^FO(\d+),(\d+)/g)];

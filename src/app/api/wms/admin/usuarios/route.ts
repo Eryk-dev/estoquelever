@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("siso_usuarios")
-    .select("id, nome, cargo, cargos, ativo, foto_url, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_account_id, printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto")
+    .select("id, nome, cargo, cargos, ativo, foto_url, criado_em, atualizado_em, printnode_printer_id, printnode_printer_nome, printnode_account_id, printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto, printnode_printer_id_excesso, printnode_printer_nome_excesso, printnode_account_id_excesso")
     .order("criado_em", { ascending: true });
 
   if (error) {
@@ -142,6 +142,9 @@ export async function PUT(request: NextRequest) {
     printnode_printer_id_produto?: number | null;
     printnode_printer_nome_produto?: string | null;
     printnode_account_id_produto?: string | null;
+    printnode_printer_id_excesso?: number | null;
+    printnode_printer_nome_excesso?: string | null;
+    printnode_account_id_excesso?: string | null;
   };
 
   try {

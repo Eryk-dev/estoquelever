@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import {
   enviarImpressaoZpl,
-  resolverImpressora,
+  resolverImpressoraExcesso,
   resolverImpressoraProduto,
 } from "@/lib/printnode";
 import { logger } from "@/lib/logger";
@@ -193,6 +193,11 @@ export interface ImprimirEtiquetaExcessoInput {
   usuarioId: string;
   galpaoId: string;
   etiqueta: EtiquetaExcessoInput;
+  /**
+   * Nº de vias FÍSICAS da mesma etiqueta (default 1). Não confundir com
+   * `etiqueta.qty`, que é o número ESTAMPADO nela.
+   */
+  copias?: number;
   /** Título do print job (aparece no PrintNode). */
   titulo: string;
   /** ID de referência do contexto (ex: produto_id). */
@@ -200,26 +205,37 @@ export interface ImprimirEtiquetaExcessoInput {
 }
 
 /**
- * Imprime UMA etiqueta de excesso 10×15 (paisagem, qty estampada).
+ * Imprime N vias da etiqueta de excesso 10×15 (paisagem, qty estampada).
  *
- * Diferente da etiqueta de produto pequena: vai pra impressora de ENVIO do
- * galpão (`resolverImpressora`) — é a que tem mídia 10×15. Mesmo contrato de
- * erro do imprimirEtiquetasProduto: não lança, devolve `{ok: false, error}`.
+ * Diferente da etiqueta de produto pequena: vai pra impressora de EXCESSO do
+ * galpão (`resolverImpressoraExcesso`), que cai pra de envio quando não
+ * configurada — é a que tem mídia 10×15. Mesmo contrato de erro do
+ * imprimirEtiquetasProduto: não lança, devolve `{ok: false, error}`.
  */
 export async function imprimirEtiquetaExcesso(
   input: ImprimirEtiquetaExcessoInput,
 ): Promise<ImprimirEtiquetasResult> {
-  const printer = await resolverImpressora(input.usuarioId, input.galpaoId);
+  const copias = Math.max(1, Math.floor(input.copias ?? 1));
+  const printer = await resolverImpressoraExcesso(input.usuarioId, input.galpaoId);
 
   if (!printer) {
-    logger.warn(LOG_SOURCE, "nenhuma impressora de envio configurada (excesso)", {
+    logger.warn(LOG_SOURCE, "nenhuma impressora configurada (excesso)", {
       usuarioId: input.usuarioId,
       galpaoId: input.galpaoId,
     });
-    return { ok: false, error: "Nenhuma impressora de envio configurada (mídia 10×15)" };
+    return { ok: false, error: "Nenhuma impressora configurada (excesso nem envio)" };
   }
 
-  const zpl = gerarZplExcesso(input.etiqueta);
+  if (printer.fallbackEnvelope) {
+    logger.warn(LOG_SOURCE, "usando impressora de envio como fallback (excesso)", {
+      galpaoId: input.galpaoId,
+      printerId: String(printer.printerId),
+    });
+  }
+
+  // Vias idênticas: repete o ZPL inteiro (mesmo padrão do zpl-produto).
+  const zplUnitario = gerarZplExcesso(input.etiqueta);
+  const zpl = Array.from({ length: copias }, () => zplUnitario).join("\n");
 
   const sb = createServiceClient();
   const payloadHash = createHash("sha256").update(zpl).digest("hex");
@@ -234,7 +250,7 @@ export async function imprimirEtiquetaExcesso(
         payload_hash: payloadHash,
         contexto: "excesso",
         contexto_ref_id: input.contextoRefId ?? null,
-        total_etiquetas: 1,
+        total_etiquetas: copias,
         status: "enviado",
         usuario_id: input.usuarioId,
         galpao_id: input.galpaoId,
@@ -269,15 +285,18 @@ export async function imprimirEtiquetaExcesso(
       jobId: String(jobId),
       sku: input.etiqueta.sku,
       qty: String(input.etiqueta.qty),
+      copias: String(copias),
       printerId: String(printer.printerId),
+      fallback: String(printer.fallbackEnvelope),
     });
     return {
       ok: true,
       jobId,
-      totalEtiquetas: 1,
-      totalFolhas: 1,
+      totalEtiquetas: copias,
+      totalFolhas: copias,
       printerId: printer.printerId,
       printerNome: printer.printerNome,
+      fallbackEnvelope: printer.fallbackEnvelope,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

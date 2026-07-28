@@ -3,9 +3,10 @@
 // Físico: mesma mídia da etiqueta de envio (10cm × 15cm @ 203dpi → PW=800,
 // LL=1200). Todo o conteúdo é rotacionado 90° (campos R) pra leitura em
 // paisagem — o operador cola na lateral da caixa e lê com os 15cm na
-// horizontal. 1 etiqueta por impressão, com a quantidade escolhida pelo
-// operador ESTAMPADA nela (diferente da etiqueta de produto pequena, que
-// imprime N vias de 1 unidade).
+// horizontal. A quantidade escolhida pelo operador sai ESTAMPADA nela
+// (diferente da etiqueta de produto pequena, que imprime N vias de 1
+// unidade). Este módulo gera SEMPRE 1 etiqueta; o nº de vias é do caller
+// (`imprimirEtiquetaExcesso`), que repete o ZPL.
 //
 // Layout (visão paisagem 1200×800):
 //   ┌──────────┬─────────────────────────────────────────────┐
@@ -23,7 +24,10 @@
 // o topo visual (paisagem) em px+altura → px = 800 − ly − altura.
 //
 // QR e CODE128 carregam o MESMO dado (o SKU) — redundância de leitura:
-// coletor 2D/celular lê o QR, leitor 1D legado lê o barcode.
+// coletor 2D/celular lê o QR, leitor 1D legado lê o barcode. O lado do QR
+// depende do tamanho do dado (versão) — por isso ele é DIMENSIONADO antes
+// (`dimensionarQr`) e o CODE128 começa depois da borda real do QR + folga.
+// Posição fixa embolava os dois quando o SKU crescia a versão do QR.
 
 export interface EtiquetaExcessoInput {
   sku: string;
@@ -47,10 +51,19 @@ const RULE_X = 460;
 const COL_INFO_X = 500;
 const COL_INFO_W = 660;
 
-const QR_MAG = 8;
-/** Estimativa do lado do QR (mag 8, versão 1-2) pra posicionar o campo. */
-const QR_SIZE = 200;
+/** Borda direita útil da coluna de info. */
+const COL_INFO_RIGHT = COL_INFO_X + COL_INFO_W;
+
+/** Orçamento horizontal do QR — a magnificação encolhe pra caber nele. */
+const QR_MAX_W = 200;
+const QR_MAG_MAX = 8;
+/** Piso de magnificação: abaixo disso o QR fica ilegível no coletor. */
+const QR_MAG_MIN = 4;
+/** Folga entre QR e CODE128 (cobre a quiet zone dos dois). */
+const GAP_QR_BAR = 50;
 const BAR_HEIGHT = 160;
+/** Centro vertical (paisagem) da faixa QR + CODE128. */
+const BAND_CY = 500;
 
 function clean(s: string | null | undefined): string {
   if (s === null || s === undefined) return "";
@@ -117,11 +130,40 @@ function escolherFonteQty(qtyStr: string): number {
   return 150;
 }
 
-/** Module width do CODE128 pra caber em ~410 dots a partir de lx=750. */
-function moduleWidthBarcode(sku: string): number {
-  if (sku.length <= 8) return 3;
-  if (sku.length <= 14) return 2;
-  return 1;
+/** Módulos por lado do QR model 2, versões 1..10. */
+const QR_MODULOS = [21, 25, 29, 33, 37, 41, 45, 49, 53, 57];
+/**
+ * Capacidade em BYTES por versão no modo binário com correção Q (o que o
+ * `^FDQA,` escolhe no pior caso). Usar o pior caso garante que a versão
+ * estimada nunca fique MENOR que a que a impressora vai gerar — se errar,
+ * erra sobrando espaço, não embolando com o barcode.
+ */
+const QR_CAP_BYTES = [11, 20, 32, 46, 60, 74, 86, 108, 130, 151];
+
+/**
+ * Magnificação + lado real (dots) do QR pro dado informado. Encolhe a
+ * magnificação conforme a versão cresce pra manter o símbolo dentro de
+ * `QR_MAX_W`; nunca abaixo de `QR_MAG_MIN` (legibilidade > orçamento —
+ * o barcode é reposicionado a partir do lado REAL, então não embola).
+ */
+function dimensionarQr(dados: string): { mag: number; size: number } {
+  const bytes = new TextEncoder().encode(dados).length;
+  const idx = QR_CAP_BYTES.findIndex((cap) => bytes <= cap);
+  const modulos = QR_MODULOS[idx === -1 ? QR_MODULOS.length - 1 : idx];
+  const mag = Math.max(
+    QR_MAG_MIN,
+    Math.min(QR_MAG_MAX, Math.floor(QR_MAX_W / modulos)),
+  );
+  return { mag, size: modulos * mag };
+}
+
+/**
+ * Module width do CODE128 pro espaço que sobra à direita do QR.
+ * Largura em módulos ≈ 11×chars + 35 (start + check + stop, Code B).
+ */
+function moduleWidthBarcode(sku: string, budget: number): number {
+  const modulos = 11 * sku.length + 35;
+  return Math.max(1, Math.min(3, Math.floor(budget / modulos)));
 }
 
 /**
@@ -138,7 +180,11 @@ export function gerarZplExcesso(input: EtiquetaExcessoInput): string {
   const desc = escolherFonteDescricao(descricao);
   const skuFont = escolherFonteSku(sku);
   const qtyFont = escolherFonteQty(qty);
-  const mod = moduleWidthBarcode(sku);
+  const qr = dimensionarQr(sku);
+  const qrY = Math.round(BAND_CY - qr.size / 2);
+  // barcode começa depois da borda REAL do QR — nunca embola.
+  const barX = COL_INFO_X + qr.size + GAP_QR_BAR;
+  const mod = moduleWidthBarcode(sku, COL_INFO_RIGHT - barX);
   const qtyY = Math.round(400 - qtyFont / 2);
   const locLinha = galpao ? `${localizacao} · ${galpao}` : localizacao;
 
@@ -160,9 +206,9 @@ export function gerarZplExcesso(input: EtiquetaExcessoInput): string {
     // ── SKU em destaque
     `${foR(COL_INFO_X, 270, skuFont)}^A0R,${skuFont},${skuFont}^FB${COL_INFO_W},1,0,C^FD${sku}^FS`,
     // ── QR (2D) + CODE128 (1D), ambos com o SKU
-    `${foR(COL_INFO_X, 410, QR_SIZE)}^BQN,2,${QR_MAG}^FDQA,${sku}^FS`,
+    `${foR(COL_INFO_X, qrY, qr.size)}^BQN,2,${qr.mag}^FDQA,${sku}^FS`,
     `^BY${mod},2,${BAR_HEIGHT}`,
-    `${foR(750, 420, BAR_HEIGHT)}^BCR,${BAR_HEIGHT},N,N,N^FD${sku}^FS`,
+    `${foR(barX, BAND_CY - BAR_HEIGHT / 2, BAR_HEIGHT)}^BCR,${BAR_HEIGHT},N,N,N^FD${sku}^FS`,
     hLine(COL_INFO_X, 650, COL_INFO_W),
     // ── rodapé: loc/galpão + data
     `${foR(COL_INFO_X, 690, 40)}^A0R,40,40^FD${locLinha}^FS`,

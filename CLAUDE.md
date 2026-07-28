@@ -323,7 +323,7 @@ erros-conhecidos.yaml                   # base de erros (grep antes, adicionar d
 
 - **Tiny ERP v3** (`api tiny.json` na raiz pra contratos). Base `https://api.tiny.com.br/public-api/v3`. OAuth2 via Keycloak (token curto, auto-refresh 60s de buffer). Respostas **sem** wrapper `{data}`. Depósitos vêm do endpoint de estoque (não há `/depositos`). Rate-limit per-empresa (`tiny-queue` + `rate-limiter`). Tiny é só camada **fiscal/marketplace** (emite NF, propaga pra ML/Shopee) — não controla mais estoque.
 - **Mercado Livre** (`ml-*.ts`). OAuth2; `refresh_token` single-use; access 6h.
-- **PrintNode** multi-conta (`siso_printnode_contas`). `resolverImpressora` = override-do-usuário > default-do-galpão. Etiquetas de envio (ZPL/PDF) + de produto (`zpl-produto.ts`, 2-por-folha) + de excesso 10×15 paisagem (`wms/zpl-excesso.ts`, qty estampada, sai na impressora de envio). Jobs logados em `siso_impressoes_log` (retry manual).
+- **PrintNode** multi-conta (`siso_printnode_contas`). `resolverImpressora` = override-do-usuário > default-do-galpão. Etiquetas de envio (ZPL/PDF) + de produto (`zpl-produto.ts`, 2-por-folha) + de excesso 10×15 paisagem (`wms/zpl-excesso.ts`, qty estampada + N vias). Cada tipo tem impressora própria (`_produto` / `_excesso` em galpões e usuários, `resolverImpressoraProduto` / `resolverImpressoraExcesso`), com fallback pra de envio quando não configurada. Jobs logados em `siso_impressoes_log` (retry manual).
 
 ---
 

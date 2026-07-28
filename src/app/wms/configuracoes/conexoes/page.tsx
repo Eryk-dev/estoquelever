@@ -34,6 +34,9 @@ interface GalpaoConexao {
   printnode_printer_id_produto: number | null;
   printnode_printer_nome_produto: string | null;
   printnode_account_id_produto: string | null;
+  printnode_printer_id_excesso: number | null;
+  printnode_printer_nome_excesso: string | null;
+  printnode_account_id_excesso: string | null;
   siso_empresas: Array<{ id: string; nome: string; cnpj: string; ativo: boolean }>;
 }
 
@@ -1137,6 +1140,21 @@ function PrintNodeCard({
                       }}
                       emptyLabel="Mesma de envio (fallback)"
                     />
+                    <PrinterRow
+                      label="Excesso"
+                      hint="Etiqueta 10×15 de overstock. Cai pra impressora de envio se vazio"
+                      groups={printerGroups}
+                      value={g.printnode_printer_id_excesso}
+                      saving={savingId === `g-exc-${g.id}`}
+                      onChange={(picked) => {
+                        patchGalpao(g.id, `g-exc-${g.id}`, {
+                          printnode_printer_id_excesso: picked?.printer.id ?? null,
+                          printnode_printer_nome_excesso: picked?.printer.name ?? null,
+                          printnode_account_id_excesso: picked?.accountId ?? null,
+                        });
+                      }}
+                      emptyLabel="Mesma de envio (fallback)"
+                    />
                   </div>
                 ))}
             </div>
@@ -1199,6 +1217,21 @@ function PrintNodeCard({
                         printnode_printer_id_produto: picked?.printer.id ?? null,
                         printnode_printer_nome_produto: picked?.printer.name ?? null,
                         printnode_account_id_produto: picked?.accountId ?? null,
+                      });
+                    }}
+                    emptyLabel="Nenhuma (usa padrão do galpão)"
+                  />
+                  <PrinterRow
+                    label="Excesso"
+                    groups={printerGroups}
+                    value={u.printnode_printer_id_excesso}
+                    saving={savingId === `u-exc-${u.id}`}
+                    onChange={(picked) => {
+                      patchUsuario(`u-exc-${u.id}`, {
+                        id: u.id,
+                        printnode_printer_id_excesso: picked?.printer.id ?? null,
+                        printnode_printer_nome_excesso: picked?.printer.name ?? null,
+                        printnode_account_id_excesso: picked?.accountId ?? null,
                       });
                     }}
                     emptyLabel="Nenhuma (usa padrão do galpão)"

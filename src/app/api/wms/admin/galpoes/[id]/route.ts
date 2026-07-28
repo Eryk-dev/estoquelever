@@ -31,6 +31,9 @@ export async function PUT(
     printnode_printer_id_produto,
     printnode_printer_nome_produto,
     printnode_account_id_produto,
+    printnode_printer_id_excesso,
+    printnode_printer_nome_excesso,
+    printnode_account_id_excesso,
   } = body;
 
   const update: Record<string, unknown> = { atualizado_em: new Date().toISOString() };
@@ -60,6 +63,12 @@ export async function PUT(
     update.printnode_printer_nome_produto = printnode_printer_nome_produto;
   if (printnode_account_id_produto !== undefined)
     update.printnode_account_id_produto = printnode_account_id_produto;
+  if (printnode_printer_id_excesso !== undefined)
+    update.printnode_printer_id_excesso = printnode_printer_id_excesso;
+  if (printnode_printer_nome_excesso !== undefined)
+    update.printnode_printer_nome_excesso = printnode_printer_nome_excesso;
+  if (printnode_account_id_excesso !== undefined)
+    update.printnode_account_id_excesso = printnode_account_id_excesso;
 
   const supabase = createServiceClient();
   const { data, error } = await supabase

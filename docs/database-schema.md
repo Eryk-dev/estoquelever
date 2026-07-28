@@ -377,6 +377,9 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 | `printnode_printer_id_produto` | bigint | YES | | Dedicated PrintNode printer pra etiqueta de produto (recebimento/guarda). NULL → fallback pra `printnode_printer_id`. |
 | `printnode_printer_nome_produto` | text | YES | | Cached name da impressora de produto |
 | `printnode_account_id_produto` | uuid | YES | FK | Conta PrintNode dona da impressora de produto. ON DELETE SET NULL. |
+| `printnode_printer_id_excesso` | bigint | YES | | Dedicated PrintNode printer pra etiqueta de excesso (10×15 paisagem, overstock). NULL → fallback pra `printnode_printer_id`. |
+| `printnode_printer_nome_excesso` | text | YES | | Cached name da impressora de excesso |
+| `printnode_account_id_excesso` | uuid | YES | FK | Conta PrintNode dona da impressora de excesso. ON DELETE SET NULL. |
 | `criado_em` | timestamptz | NO | now() | Creation timestamp |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
@@ -387,6 +390,7 @@ All tables are prefixed with `siso_`. This document covers all tables, columns, 
 **Foreign Keys:**
 - `printnode_account_id` → `siso_printnode_contas(id)` ON DELETE SET NULL
 - `printnode_account_id_produto` → `siso_printnode_contas(id)` ON DELETE SET NULL
+- `printnode_account_id_excesso` → `siso_printnode_contas(id)` ON DELETE SET NULL
 
 **Notes:**
 - Seeded with "CWB" and "SP" but flexible for additional locations
@@ -1300,8 +1304,8 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 **Primary Key:** `id` · **Unique:** `label`
 
 **Referenced by:**
-- `siso_galpoes.printnode_account_id` (envelope) e `printnode_account_id_produto` (etiqueta produto) — ambas ON DELETE SET NULL
-- `siso_usuarios.printnode_account_id` e `printnode_account_id_produto` (override por usuário) — ambas ON DELETE SET NULL
+- `siso_galpoes.printnode_account_id` (envelope), `printnode_account_id_produto` (etiqueta produto) e `printnode_account_id_excesso` (etiqueta excesso 10×15) — todas ON DELETE SET NULL
+- `siso_usuarios.printnode_account_id`, `printnode_account_id_produto` e `printnode_account_id_excesso` (override por usuário) — todas ON DELETE SET NULL
 
 **Notes:**
 - Galpões/usuários guardam (printer_id + account_id). `resolverImpressora` faz JOIN pra carregar a `api_key` certa ao enviar o print job.
@@ -1427,6 +1431,9 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 | `printnode_printer_id_produto` | bigint | YES | | Per-user override pra impressora de etiqueta de produto. Prioridade: user._produto > galpao._produto > user._printer_id > galpao._printer_id. |
 | `printnode_printer_nome_produto` | text | YES | | Printer name (cached) |
 | `printnode_account_id_produto` | uuid | YES | FK | Conta PrintNode dona da impressora de produto. ON DELETE SET NULL. |
+| `printnode_printer_id_excesso` | bigint | YES | | Per-user override pra impressora de etiqueta de excesso (10×15). Prioridade: user._excesso > galpao._excesso > user._printer_id > galpao._printer_id. |
+| `printnode_printer_nome_excesso` | text | YES | | Printer name (cached) |
+| `printnode_account_id_excesso` | uuid | YES | FK | Conta PrintNode dona da impressora de excesso. ON DELETE SET NULL. |
 | `criado_em` | timestamptz | NO | now() | Creation |
 | `atualizado_em` | timestamptz | NO | now() | Last update |
 
@@ -1435,13 +1442,14 @@ Undo de recebimento de transferência **atômico**: estorno das legs E + reset d
 **Foreign Keys:**
 - `printnode_account_id` → `siso_printnode_contas(id)` ON DELETE SET NULL
 - `printnode_account_id_produto` → `siso_printnode_contas(id)` ON DELETE SET NULL
+- `printnode_account_id_excesso` → `siso_printnode_contas(id)` ON DELETE SET NULL
 
 **Notes:**
 - PIN is 4 digits, unencrypted (suitable for warehouse environment)
 - `cargos` array replaces legacy `cargo` column (new code uses array)
 - Seed user: Eryk / 1234 / admin
-- `printnode_printer_id` (envio) e `printnode_printer_id_produto` (recebimento) são independentes — operador pode ter 1 impressora pra cada finalidade ou usar fallback
-- `printnode_account_id` / `_produto` adicionados em 2026-05-19 pra suportar múltiplas contas PrintNode
+- `printnode_printer_id` (envio), `printnode_printer_id_produto` (recebimento) e `printnode_printer_id_excesso` (overstock 10×15) são independentes — operador pode ter 1 impressora pra cada finalidade ou usar fallback
+- `printnode_account_id` / `_produto` adicionados em 2026-05-19 pra suportar múltiplas contas PrintNode; `_excesso` em 2026-07-28
 
 ---
 
@@ -2019,6 +2027,7 @@ Migrations are stored in `supabase/migrations/` in chronological order:
 | 2026-06-23 | `20260623_pick_parcial_idempotency.sql` | **BUG-09 — `/parcial` idempotente.** `wms_pick_parcial_atomico` +`p_idempotency_key uuid` (drop do overload de 10 args): top-check retorna `ja_aplicado=true` se a key já existe; a S de venda (ou o ajuste quando `qty_pega=0`) carrega a key → `wms_inserir_movimentacao` deduplica no ledger (UNIQUE parcial). Fecha o reenvio do MESMO request (timeout/duplo-clique de rede) que dobrava a S e inflava `quantidade_pega` no ramo residual (`loc_zerou=false`, item aberto). Route (`parcial/route.ts`) guarda a key no topo (item+realoc) e o caminho realocação passou a usar a MESMA RPC (antes 2 `inserirMovimentacao` diretos). |
 | 2026-06-23 | `20260623b_desfazer_troca_aplicada.sql` | **BUG-A — desfazer troca aplicada.** `siso_trocas_equivalencia.status` CHECK +`desfeita`. Nova RPC `wms_desfazer_troca_aplicada_atomico(p_pedido_item_id, p_usuario_id)`: num item reaberto e não-picado, libera a R `reserva_pedido` do substituto, limpa `produto_wms_substituto_id`/`troca_equivalencia_id` e fecha a troca `desfeita` — tudo-ou-nada. Endpoint `POST /api/wms/trocas/[id]/desfazer`. |
 | 2026-07-06 | `20260706_pick_item_atomico_r_parcial.sql` | **`wms_pick_item_atomico` suporta R parcial/multi-loc.** L âncora com a qty da PRÓPRIA R (não `p_qty`) + libera as demais R vivas do mesmo `(pedido, produto, galpão)` (`mov_l_extra_ids`). Fecha "liberação excede reservado: 1 - 6 < 0" da lane Full (R parcial by design) e de R clampada pós-desmarca — item ficava impickável pra sempre. S segue `p_qty` (falta física falha loud). Ver erros-conhecidos `pick-atomico-l-qty-cheia-vs-r-parcial-lane-full`. |
+| 2026-07-28 | `20260728_printnode_impressora_excesso.sql` | **Impressora dedicada pra etiqueta de excesso.** Adiciona `printnode_printer_id_excesso` / `_nome_excesso` / `printnode_account_id_excesso` (uuid FK ON DELETE SET NULL) em `siso_galpoes` e `siso_usuarios` + 2 índices parciais. A etiqueta 10×15 de overstock saía sempre na impressora de ENVIO do galpão (EXPCWB no CWB); agora resolve por `resolverImpressoraExcesso` com fallback pra envio (zero mudança até o admin configurar em `/wms/configuracoes/conexoes`). |
 
 **Key Phases:**
 1. **Phase 1 (Mar 9-11):** Core tables + execution queue + logging

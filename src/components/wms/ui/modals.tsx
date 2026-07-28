@@ -2029,9 +2029,11 @@ export function EtiquetasModal({
 
   const [pid, setPid] = useState<Produto | null>(seed?.produto ?? null);
   const [qty, setQty] = useState("1");
+  // Só pro excesso: nº de VIAS físicas (a qty acima sai estampada em cada uma).
+  const [copias, setCopias] = useState("1");
   const [galpaoIdUser, setGalpaoIdUser] = useState<string | null>(null);
   const [locIdUser, setLocIdUser] = useState<string | null>(null);
-  // padrao = N etiquetas pequenas (1/unidade) · excesso = 1 etiqueta 10×15
+  // padrao = N etiquetas pequenas (1/unidade) · excesso = N vias 10×15
   // paisagem com a qty ESTAMPADA (marca caixa de overstock).
   const [tipo, setTipo] = useState<"padrao" | "excesso">("padrao");
 
@@ -2057,6 +2059,7 @@ export function EtiquetasModal({
   const locId = locIdUser ?? locaisDisp[0]?.localizacao_id ?? "";
 
   const qtyNum = Number(qty);
+  const copiasNum = Number(copias);
   const folhas = qtyNum > 0 ? Math.ceil(qtyNum / 2) : 0;
 
   const mut = useMutation({
@@ -2071,6 +2074,7 @@ export function EtiquetasModal({
               produto_id: pid!.id,
               galpao_id: galpaoId,
               qty: qtyNum,
+              copias: copiasNum,
               ...(locId ? { localizacao_id: locId } : {}),
             }
           : {
@@ -2100,9 +2104,17 @@ export function EtiquetasModal({
     },
     onSuccess: (body) => {
       if (tipo === "excesso") {
+        const vias = body.totalEtiquetas ?? copiasNum;
         toast.success(
-          `Etiqueta de excesso (${fmtNum(qtyNum)} un) enviada pra impressão`,
+          `${vias > 1 ? `${fmtNum(vias)} etiquetas` : "Etiqueta"} de excesso (${fmtNum(
+            qtyNum,
+          )} un) enviada${vias > 1 ? "s" : ""} pra impressão`,
         );
+        if (body.fallbackEnvelope) {
+          toast.warning(
+            "Impressora de excesso não configurada — usando a de envio",
+          );
+        }
         onClose();
         return;
       }
@@ -2122,14 +2134,19 @@ export function EtiquetasModal({
   });
 
   const valid =
-    !!pid && !!galpaoId && Number.isInteger(qtyNum) && qtyNum > 0;
+    !!pid &&
+    !!galpaoId &&
+    Number.isInteger(qtyNum) &&
+    qtyNum > 0 &&
+    (tipo !== "excesso" ||
+      (Number.isInteger(copiasNum) && copiasNum > 0 && copiasNum <= 50));
 
   return (
     <Modal
       title="Imprimir etiquetas de produto"
       subtitle={
         tipo === "excesso"
-          ? "1 etiqueta 10×15 (paisagem) com a quantidade estampada. Vai pra impressora de envio do galpão."
+          ? "Etiqueta 10×15 (paisagem) com a quantidade estampada. Vai pra impressora de excesso do galpão."
           : "1 etiqueta por unidade, 2 por folha. Vai pra impressora de produto do galpão."
       }
       onClose={onClose}
@@ -2147,7 +2164,7 @@ export function EtiquetasModal({
             {mut.isPending
               ? "Enviando…"
               : tipo === "excesso"
-                ? "Imprimir etiqueta"
+                ? `Imprimir${copiasNum > 1 ? ` ${fmtNum(copiasNum)}` : " etiqueta"}`
                 : `Imprimir${qtyNum > 0 ? ` ${fmtNum(qtyNum)}` : ""}`}
           </button>
         </>
@@ -2222,6 +2239,24 @@ export function EtiquetasModal({
           />
         </Field>
       </div>
+
+      {tipo === "excesso" && (
+        <Field
+          label="Vias"
+          required
+          hint="quantas etiquetas iguais imprimir (máx. 50)"
+        >
+          <input
+            className="wms-input"
+            type="number"
+            min="1"
+            max="50"
+            value={copias}
+            onChange={(e) => setCopias(e.target.value)}
+            placeholder="1"
+          />
+        </Field>
+      )}
 
       {!!pid && !!galpaoId && (
         <div

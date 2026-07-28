@@ -7,12 +7,14 @@ import { imprimirEtiquetaExcesso } from "@/lib/wms/etiqueta-produto-service";
 /**
  * POST /api/wms/etiquetas/excesso
  *
- * Imprime UMA etiqueta de excesso 10×15 (paisagem) com a quantidade
- * estampada — pra marcar caixa de overstock. Sai na impressora de ENVIO
- * do galpão (é a que tem mídia 10×15), não na de produto.
+ * Imprime N vias da etiqueta de excesso 10×15 (paisagem) com a quantidade
+ * estampada — pra marcar caixa de overstock. Sai na impressora de EXCESSO
+ * do galpão, que cai pra de envio quando não configurada (é a que tem mídia
+ * 10×15), não na de produto.
  *
- * Body: `{ produto_id, galpao_id, qty, localizacao_id? }`
+ * Body: `{ produto_id, galpao_id, qty, copias?, localizacao_id? }`
  *   - qty: inteiro >= 1, é o número impresso na etiqueta (não nº de vias)
+ *   - copias: inteiro 1..50, nº de vias físicas (default 1)
  *   - localizacao_id opcional — sem ela a etiqueta sai com "—"
  */
 export async function POST(req: NextRequest) {
@@ -23,6 +25,7 @@ export async function POST(req: NextRequest) {
   const produtoId = body?.produto_id;
   const galpaoId = body?.galpao_id;
   const qty = body?.qty;
+  const copias = body?.copias ?? 1;
   const localizacaoId = body?.localizacao_id;
 
   if (typeof produtoId !== "string" || typeof galpaoId !== "string") {
@@ -34,6 +37,12 @@ export async function POST(req: NextRequest) {
   if (typeof qty !== "number" || !Number.isInteger(qty) || qty < 1 || qty > 99999) {
     return NextResponse.json(
       { error: "qty deve ser inteiro entre 1 e 99999" },
+      { status: 400 },
+    );
+  }
+  if (typeof copias !== "number" || !Number.isInteger(copias) || copias < 1 || copias > 50) {
+    return NextResponse.json(
+      { error: "copias deve ser inteiro entre 1 e 50" },
       { status: 400 },
     );
   }
@@ -67,7 +76,8 @@ export async function POST(req: NextRequest) {
     const result = await imprimirEtiquetaExcesso({
       usuarioId: auth.user.id,
       galpaoId,
-      titulo: `Etiqueta excesso ${produto.sku} (${qty} un)`,
+      titulo: `Etiqueta excesso ${produto.sku} (${qty} un${copias > 1 ? ` × ${copias} vias` : ""})`,
+      copias,
       contextoRefId: produto.id,
       etiqueta: {
         sku: produto.sku,
@@ -86,7 +96,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       jobId: result.jobId,
+      totalEtiquetas: result.totalEtiquetas,
       printerNome: result.printerNome,
+      fallbackEnvelope: result.fallbackEnvelope,
     });
   } catch (e) {
     return wmsErrorResponse({

@@ -30,6 +30,7 @@ export async function GET(request: NextRequest) {
       id, nome, descricao, ativo, cidade, estado, pais,
       printnode_printer_id, printnode_printer_nome, printnode_account_id,
       printnode_printer_id_produto, printnode_printer_nome_produto, printnode_account_id_produto,
+      printnode_printer_id_excesso, printnode_printer_nome_excesso, printnode_account_id_excesso,
       criado_em, atualizado_em,
       siso_empresas!siso_empresas_galpao_id_fkey (
         id, nome, cnpj, ativo, criado_em, atualizado_em,

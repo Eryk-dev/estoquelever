@@ -6490,21 +6490,31 @@ encerrar mesmo com gente bipando). `computarDivergencias` agora limpa operadores
 Idem `aprovar` mas pra sessão inteira (todas as locs em uma chamada). Mesmo comportamento P3 — aceita `force: true` para bypass do guard `OPERADORES_ATIVOS`.
 
 ### POST /api/wms/inventario/[id]/aplicar
-Gera movs `origem_tipo='inventario'` no ledger pra cada divergência aprovada (E ou S conforme delta). Marca divergências como `aplicada` e libera locks.
+Aplica a sessão inteira em uma RPC atômica. Para cada divergência aprovada,
+trava a tripla `(produto, galpão, localização)` e calcula
+`delta_aplicado = qty_contada_final - saldo_live`: o inventário funciona como
+balanço físico e leva o saldo exatamente à quantidade contada. O snapshot
+(`saldo_sistema`, `delta`) permanece na divergência para auditoria e também é
+gravado em `origem_detalhes`, junto de `saldo_aplicacao` e `delta_aplicado`.
 
-**P3 #4.1 — idempotente.** Migration `20260527_p3_movs_unique_inventario_divergencia.sql`
-adiciona UNIQUE partial index `uniq_movs_inventario_divergencia` em `siso_movimentacoes` (`origem_id`, `origem_tipo`)
-WHERE `origem_tipo IN ('inventario_perda','inventario_ganho')`. Aplicar 2× em paralelo: o 2º bate na UNIQUE e
-recebe **409 SQLSTATE 23505** que é traduzido em ConflictError com `{ code: "DIVERGENCIA_JA_APLICADA", divergencia_id }`.
-Resposta: pula a div já aplicada e segue com as outras. No fim, retorna `movsGeradas` real + `divsJaAplicadas` count.
+Se o saldo já coincidir com a contagem, a divergência vira `aplicada` com
+`mov_aplicada_id=NULL`, sem fabricar uma movimentação de quantidade zero.
+Quando necessário, gera `inventario_ganho` (E) ou `inventario_perda` (S).
+Perdas abaixo do reservado liberam o excesso de reservas na mesma transação e
+mandam pedidos afetados para `pendente_realocacao`.
 
-**Response:** `{ ok: true, movsGeradas, divsJaAplicadas }`.
+**Idempotente:** a sessão é travada com `FOR UPDATE`; uma nova chamada depois de
+`status='aplicada'` apenas conta as movimentações vivas, sem duplicar E/S.
+
+**Response 200:** `{ movsGeradas: number }`. **409** quando uma reserva viva não
+pode ser identificada/liberada; **400** para estado inválido da sessão.
 
 ### POST /api/wms/inventario/[id]/estornar
 
 **P3 #4.2 — Admin-only.** Reverte uma sessão `status='aplicada'`. Para cada divergência
-`aplicada` (com `mov_aplicada_id` não-null), insere mov de estorno via `estornarMovimentacao`
-e volta divergência pra `status='pendente'` (`mov_aplicada_id=NULL`). Sessão volta pra `status='revisao'`.
+`aplicada` com movimentação, insere a contra-mov; também volta para `pendente`
+as divergências aplicadas sem movimento porque o saldo já coincidia com a
+contagem. Sessão volta pra `status='revisao'`.
 
 **Raio-X Fase 4 (P056/P061):** o estorno de sessão agora vai pela RPC tudo-ou-nada
 `wms_estornar_sessao_inventario` (preflight de saldo de todas as contra-movs antes de inserir

@@ -7913,3 +7913,32 @@ erros:
     - src/lib/wms/zpl-excesso.ts
     - src/lib/wms/zpl-excesso.test.ts
   tags: [wms, etiqueta, excesso, zpl, sku, fb, texto]
+
+- id: INVENTARIO-APLICA-DELTA-SNAPSHOT-STALE
+  date: 2026-07-29
+  source: operacao-staging
+  category: business_logic
+  message: >
+    "divergência 0787c613-799b-4419-94ba-7d2ecf45edc9 (produto 021518,
+    loc PL-02-4): perda 1 maior que o saldo atual 0" ao aplicar a sessão
+    e482d38b-f8b6-47db-b195-5b5a46ed6c76.
+  cause: >
+    A divergência guardava snapshot saldo=1, contagem=0 e delta=-1. Depois do
+    fechamento, ajustes manuais +2/-3 já levaram o saldo vivo a 0. A RPC ainda
+    tratava o delta do snapshot como ordem fixa e tentava baixar mais 1, embora
+    o saldo já fosse exatamente a quantidade física contada.
+  fix: >
+    wms_aplicar_sessao_inventario agora trava cada tripla e calcula
+    delta_aplicado=qty_contada_final-saldo_live. O snapshot continua preservado
+    para auditoria; se saldo_live já coincide com a contagem, a divergência é
+    marcada aplicada sem mov de quantidade zero. Metadata da mov registra
+    snapshot, saldo de aplicação e delta efetivo. O estorno de sessão reabre
+    também divergências aplicadas sem movimento.
+  files:
+    - supabase/migrations/20260729091739_inventario_aplica_saldo_contado_live.sql
+    - src/app/api/wms/inventario/[id]/aplicar/route.ts
+    - test/integration/aplicar-sessao-inventario-rpc.test.ts
+    - docs/api-reference-complete.md
+    - docs/architecture-and-flows.md
+    - docs/database-schema.md
+  tags: [wms, inventario, snapshot, saldo-live, ledger, balanco, atomicidade]

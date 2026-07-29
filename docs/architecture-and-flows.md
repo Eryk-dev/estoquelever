@@ -128,7 +128,7 @@ Três camadas sustentam "contar sem parar a operação":
 
 1. **Locks soft** (`siso_localizacao_locks`, agora com `sessao_id` de dono — INV-06): tiram as locs da sessão do roteamento de pedidos novos, da sugestão de pick, do reconciliador-OC, do cascade do parcial, do fallback de loc (`buscarLocComMaiorSaldoNoGalpao`) e da sugestão de put-away (INV-07). Liberação é **per-loc no `finalizarLoc`** (loc contada volta pro roteamento na hora) com backstop em aprovar/cancelar/aplicar.
 2. **Reconciliação temporal** (acima): absorve movs que acontecem mesmo assim — picks de **reservas pré-existentes** seguem permitidos por design (`wms_pick_item_atomico` NÃO checa lock; bloquear pararia a separação). A matemática por tripla com `T_ref` cobre pick antes/depois do bipe, put-away durante a sessão e estornos.
-3. **Aplicação por delta** (`wms_aplicar_sessao_inventario`): aplica E/S do delta sobre o saldo atual — movs entre contagem e aplicação não corrompem. Preflight INV-02/04 aborta nomeando a divergência se uma perda colidir com saldo/reserva (badge "⚠ reserva" na UI de divergências avisa antes).
+3. **Aplicação como balanço físico** (`wms_aplicar_sessao_inventario`): sob `FOR UPDATE` da tripla, recalcula `delta_aplicado = qty_contada_final - saldo_live` e leva o saldo exatamente à quantidade contada. O `saldo_sistema`/`delta` temporal permanece imutável na divergência para auditoria, mas não é tratado como uma ordem fixa de E/S. Se o saldo já chegou à contagem, marca a divergência `aplicada` sem criar mov de quantidade zero. Perdas abaixo do reservado liberam o excesso de reservas na mesma transação.
 
 **Residual aceito (físico, inerente):** janela de segundos entre o picker tirar a peça da prateleira e a mov ser gravada — se bipes do MESMO SKU intercalam esse intervalo, há ambiguidade que nenhum modelo de ledger resolve. Com os locks dos pontos INV-07 fechados, picks novos não são mais direcionados pra locs em contagem, encolhendo a exposição.
 
@@ -136,7 +136,7 @@ Três camadas sustentam "contar sem parar a operação":
 
 ---
 
-*Last updated: 2026-06-12 — Inventário operação-viva: retomada pós-refresh (INV-05), locks com dono + per-loc (INV-06), furos de lock fechados (INV-07), órfãs antes do computar (INV-08).*
+*Last updated: 2026-07-29 — aplicação do inventário como balanço físico sobre o saldo live; snapshot temporal preservado somente para auditoria.*
 
 ---
 
@@ -223,7 +223,7 @@ essa lacuna com 7 endpoints reverse e ajustes pra preservar invariantes do ledge
 
 | Ação forward | Endpoint reverso (P3) | Estorna que? |
 |---|---|---|
-| `POST /api/wms/inventario/[id]/aplicar` (gera movs `inventario_perda/ganho` por divergência) | `POST /api/wms/inventario/[id]/estornar` **(admin)** | Para cada divergência `aplicada`, estorna a mov gerada e volta divergência pra `pendente`. Sessão volta pra `revisao`. |
+| `POST /api/wms/inventario/[id]/aplicar` (reconcilia saldo live até a contagem; gera `inventario_perda/ganho` só quando necessário) | `POST /api/wms/inventario/[id]/estornar` **(admin)** | Estorna cada mov gerada e volta todas as divergências pra `pendente`, inclusive as aplicadas sem mov porque o saldo já coincidia. Sessão volta pra `revisao`. |
 | `POST /api/wms/guarda/[id]/confirmar` (par S+E RECEBIMENTO→loc destino) | `POST /api/wms/guarda/[id]/desfazer` | Estorna a última confirmação (S+E), decrementa `qty_guardada`, restaura status da pendência. |
 | `POST /api/wms/devolucoes/[id]/classificar` (E + transferência opcional pra QUARENTENA + RMA) | `POST /api/wms/devolucoes/[id]/desclassificar` | Match por janela temporal ±60s da `classificada_em` + origem_tipo + (NF/produto quando disponíveis). Estorna todas as movs e volta pra `aguardando_classificacao`. |
 | `POST /api/wms/replenishment` (S+E intra-galpão) | `POST /api/wms/replenishment/[origem_id]/reverter` | Estorna ambas as legs (idempotente — chamadas repetidas pulam movs já estornadas). |

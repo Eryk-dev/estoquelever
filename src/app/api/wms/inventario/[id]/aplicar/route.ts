@@ -44,13 +44,14 @@ export async function POST(
             .maybeSingle();
           const galpaoId = (sess as { galpao_id?: string } | null)?.galpao_id;
           if (!galpaoId) return;
-          // Divergências aplicadas de ganho (delta>0) nesta sessão.
+          // O inventário reconcilia a quantidade contada contra o saldo LIVE.
+          // O delta do snapshot pode ter sinal diferente do delta realmente
+          // aplicado; a movimentação é a fonte correta para achar os ganhos.
           const { data: ganhos } = await sb
-            .from("siso_inventario_divergencias")
+            .from("siso_movimentacoes")
             .select("produto_id")
-            .eq("sessao_id", id)
-            .eq("status", "aplicada")
-            .gt("delta", 0);
+            .eq("origem_id", id)
+            .eq("origem_tipo", "inventario_ganho");
           const produtos = [
             ...new Set(
               ((ganhos ?? []) as Array<{ produto_id: string }>).map((g) => g.produto_id),

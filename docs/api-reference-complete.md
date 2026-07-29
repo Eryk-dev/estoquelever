@@ -1692,6 +1692,8 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 ### POST /api/wms/separacao/concluir
 
 > **2026-06-11:** o claim do UPDATE pra `separado` agora aceita `em_separacao` E `aguardando_separacao` e verifica os ids efetivamente claimados; pedidos não-claimados voltam em `nao_concluidos: [{pedido_id, motivo}]` na resposta (UI mostra toast warn). Antes respondia sucesso com pedido preso.
+>
+> **2026-07-29 (idempotência):** os não-claimados agora têm o `status_separacao` **relido** e classificados: já em/depois de `separado` (`separado`/`embalado`/`conferido`/`expedido`) ou já no destino do bucket → `ja_concluidos: string[]` (no-op — não redispara cutover/histórico/agrupamento); qualquer outro estado → `nao_concluidos` com `motivo: "status_atual:<status>"`. Antes, reclicar Concluir acusava dezenas de pedidos já concluídos como falha.
 
 **File:** `src/app/api/wms/separacao/concluir/route.ts`
 
@@ -1712,9 +1714,11 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 ```json
 {
   "separados": ["string"],
+  "ja_concluidos": ["string"],
   "aguardandoCompra": ["string"],
   "validacaoOc": ["string"],
   "pendentes": ["string"],
+  "nao_concluidos": [{ "pedido_id": "string", "motivo": "string" }],
   "cobertura_incompleta": [{ "pedido_id": "string", "sku": "string", "recebido": 0, "solicitado": 0, "mensagem": "string" }]
 }
 ```

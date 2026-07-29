@@ -6,6 +6,16 @@ import { preCriarAgrupamentosEmLote, recarregarEtiquetasFaltantes } from "@/lib/
 import { dispararCutoverSePronto } from "@/lib/wms/cutover";
 import { getSessionUser } from "@/lib/session";
 
+/**
+ * Estágios em 'separado' ou depois dele na ordem canônica de separação.
+ * Pedido nesses estados já foi concluído — reconcluir é no-op, não falha.
+ */
+const STATUS_POS_SEPARADO = new Set([
+  "separado",
+  "embalado",
+  "conferido",
+  "expedido",
+]);
 
 /**
  * POST /api/separacao/concluir
@@ -201,7 +211,10 @@ export async function POST(request: NextRequest) {
     const separadosCompletos = separados.filter(
       (pid) => !pedidosComCoberturaIncompleta.has(pid),
     );
-    const naoConcluidos: Array<{ pedido_id: string; motivo: string }> = [];
+    // Pedidos cujo UPDATE não casou o filtro de status. Só depois de reler o
+    // status ATUAL dá pra saber se é "já estava lá" (no-op, retry do operador)
+    // ou "mudou pra um estado inesperado" (race real).
+    const naoClaimados: Array<{ pedido_id: string; destino: string }> = [];
 
     // Pedidos com itens OC sem decisão voltam pra validação OC (preserva o
     // pick dos normais; libera o operador da wave).
@@ -276,10 +289,7 @@ export async function POST(request: NextRequest) {
       );
       for (const pid of aguardandoCompra) {
         if (!claimadosCompraSet.has(pid)) {
-          naoConcluidos.push({
-            pedido_id: pid,
-            motivo: "status_inesperado_aguardando_compra",
-          });
+          naoClaimados.push({ pedido_id: pid, destino: "aguardando_compra" });
         }
       }
     }
@@ -291,6 +301,7 @@ export async function POST(request: NextRequest) {
     // `.eq("em_separacao")`, o UPDATE atualizava 0 linhas e a resposta mentia
     // "separado". `.select("id")` devolve os ids realmente claimados pra detectar
     // quem ficou de fora.
+    let claimadosSeparado = new Set<string>();
     if (separadosCompletos.length > 0) {
       const { data: claimados, error: updateError } = await supabase
         .from("siso_pedidos")
@@ -323,25 +334,62 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Pedidos que NÃO foram claimados (status mudou por baixo — outro operador,
-      // race) não viraram 'separado'. Reporta na resposta pra UI avisar.
-      const claimadosSet = new Set((claimados ?? []).map((p) => p.id as string));
+      // Pedidos que NÃO foram claimados: ou já estavam em 'separado'+ (retry do
+      // operador / outro operador concluiu antes) ou o status mudou pra algo
+      // inesperado. A classificação vem depois, relendo o status atual.
+      const claimadosSet = new Set((claimados ?? []).map((p) => String(p.id)));
       for (const pid of separadosCompletos) {
         if (!claimadosSet.has(pid)) {
-          naoConcluidos.push({ pedido_id: pid, motivo: "status_inesperado" });
+          naoClaimados.push({ pedido_id: pid, destino: "separado" });
+        }
+      }
+      claimadosSeparado = claimadosSet;
+    }
+
+    // Reconcilia os não-claimados com o status ATUAL. Concluir é idempotente:
+    // pedido que já está em 'separado' ou depois (embalado/conferido/expedido)
+    // já passou por aqui — não é falha, é no-op. Só o que ficou em outro estado
+    // (aguardando_compra por mando de compras, cancelado, voltou etapa…) vira
+    // aviso de verdade.
+    const jaConcluidos: string[] = [];
+    const naoConcluidos: Array<{ pedido_id: string; motivo: string }> = [];
+    if (naoClaimados.length > 0) {
+      const { data: atuais } = await supabase
+        .from("siso_pedidos")
+        .select("id, status_separacao")
+        .in(
+          "id",
+          naoClaimados.map((n) => n.pedido_id),
+        );
+      const statusAtual = new Map(
+        (atuais ?? []).map((p) => [
+          String(p.id),
+          (p.status_separacao as string | null) ?? null,
+        ]),
+      );
+      for (const { pedido_id, destino } of naoClaimados) {
+        const atual = statusAtual.get(pedido_id) ?? null;
+        if (atual !== null && (STATUS_POS_SEPARADO.has(atual) || atual === destino)) {
+          jaConcluidos.push(pedido_id);
+        } else {
+          naoConcluidos.push({
+            pedido_id,
+            motivo: atual ? `status_atual:${atual}` : "status_desconhecido",
+          });
         }
       }
     }
 
-    // Só os que REALMENTE viraram 'separado' disparam cutover/histórico/agrupamento.
-    const naoConcluidosSet = new Set(naoConcluidos.map((n) => n.pedido_id));
-    const separadosConcluidos = separadosCompletos.filter(
-      (pid) => !naoConcluidosSet.has(pid),
+    // Só os que REALMENTE viraram 'separado' agora disparam cutover/histórico/
+    // agrupamento — os `jaConcluidos` já dispararam na conclusão original.
+    const separadosConcluidos = separadosCompletos.filter((pid) =>
+      claimadosSeparado.has(pid),
     );
 
     logger.info("separacao-concluir", "Separação concluída", {
       separados: separadosConcluidos,
-      naoConcluidos: naoConcluidos.map((n) => n.pedido_id),
+      jaConcluidos,
+      naoConcluidos,
       aguardandoCompra: aguardandoCompraAtualizados,
       validacaoOc,
       pendentes,
@@ -416,6 +464,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       separados: separadosConcluidos,
+      ja_concluidos: jaConcluidos,
       aguardandoCompra: aguardandoCompraAtualizados,
       validacaoOc,
       pendentes,

@@ -553,6 +553,7 @@ export default function WmsChecklistPage() {
       }
       return r.json() as Promise<{
         separados: string[];
+        ja_concluidos?: string[];
         pendentes: string[];
         aguardandoCompra?: string[];
         validacaoOc?: string[];
@@ -1206,11 +1207,17 @@ export default function WmsChecklistPage() {
       const valOc = result.validacaoOc?.length ?? 0;
       const incompletos = result.cobertura_incompleta ?? [];
       const pedidosIncompletos = new Set(incompletos.map((c) => c.pedido_id));
+      // Pedidos que já estavam concluídos antes desta chamada (retry do
+      // operador / outro operador terminou primeiro). No-op, não é falha.
+      const jaConcluidos = result.ja_concluidos ?? [];
       // P2-SEP-06: pedidos que a API reportou como NÃO concluídos (status mudou
       // por baixo — outro operador/race). Avisa o operador em vez de mentir.
       const naoConcluidos = result.nao_concluidos ?? [];
       const partes: string[] = [];
       if (sep > 0) partes.push(`${sep} separado(s)`);
+      if (jaConcluidos.length > 0) {
+        partes.push(`${jaConcluidos.length} já concluído(s) antes`);
+      }
       if (ag > 0) partes.push(`${ag} aguardando compra`);
       if (valOc > 0) partes.push(`${valOc} com validação OC pendente`);
       if (pen > 0) partes.push(`${pen} pendente(s)`);
@@ -1219,10 +1226,14 @@ export default function WmsChecklistPage() {
       }
       const msg = partes.length > 0 ? partes.join(" · ") : "Concluído";
       if (naoConcluidos.length > 0) {
+        // Lista truncada: um wave grande pode ter dezenas e o toast vira parede
+        // de números ilegível.
+        const amostra = naoConcluidos.slice(0, 5).map((n) => n.pedido_id);
+        const resto = naoConcluidos.length - amostra.length;
         toast.warning(
-          `${msg} — ${naoConcluidos.length} pedido(s) não concluído(s) (status mudou): ${naoConcluidos
-            .map((n) => n.pedido_id)
-            .join(", ")}. Atualize a tela.`,
+          `${msg} — ${naoConcluidos.length} pedido(s) não concluído(s) (status mudou): ${amostra.join(
+            ", ",
+          )}${resto > 0 ? ` e mais ${resto}` : ""}. Atualize a tela.`,
           { duration: 7000 },
         );
       } else if (pedidosIncompletos.size > 0) {

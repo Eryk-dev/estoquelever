@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   claimCompra: true,
   statusFilters: [] as string[][],
+  // status_separacao devolvido na releitura dos pedidos não-claimados
+  statusAtual: null as string | null,
 }));
 
 vi.mock("@/lib/session", () => ({
@@ -89,6 +91,15 @@ vi.mock("@/lib/supabase-server", () => ({
             error: null,
           }).then(resolve);
         }
+        if (table === "siso_pedidos" && operation === "select") {
+          return Promise.resolve({
+            data:
+              state.statusAtual === null
+                ? []
+                : [{ id: "p1", status_separacao: state.statusAtual }],
+            error: null,
+          }).then(resolve);
+        }
         return Promise.resolve({ data: [], error: null }).then(resolve);
       };
       return chain;
@@ -110,6 +121,7 @@ function request(): NextRequest {
 beforeEach(() => {
   state.claimCompra = true;
   state.statusFilters.length = 0;
+  state.statusAtual = null;
 });
 
 describe("concluir pedido que veio de validação OC", () => {
@@ -124,21 +136,45 @@ describe("concluir pedido que veio de validação OC", () => {
     ]);
     expect(body.aguardandoCompra).toEqual(["p1"]);
     expect(body.nao_concluidos).toEqual([]);
+    expect(body.ja_concluidos).toEqual([]);
   });
 
-  it("não responde sucesso falso quando o status não foi atualizado", async () => {
+  it("não responde sucesso falso quando o status foi pra um estado inesperado", async () => {
     state.claimCompra = false;
+    state.statusAtual = "cancelado";
 
     const response = await POST(request());
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.aguardandoCompra).toEqual([]);
+    expect(body.ja_concluidos).toEqual([]);
     expect(body.nao_concluidos).toEqual([
-      {
-        pedido_id: "p1",
-        motivo: "status_inesperado_aguardando_compra",
-      },
+      { pedido_id: "p1", motivo: "status_atual:cancelado" },
     ]);
+  });
+
+  it("não acusa falha quando o pedido já estava no destino (retry)", async () => {
+    state.claimCompra = false;
+    state.statusAtual = "aguardando_compra";
+
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.nao_concluidos).toEqual([]);
+    expect(body.ja_concluidos).toEqual(["p1"]);
+  });
+
+  it("não acusa falha quando o pedido já avançou pra embalado", async () => {
+    state.claimCompra = false;
+    state.statusAtual = "embalado";
+
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.nao_concluidos).toEqual([]);
+    expect(body.ja_concluidos).toEqual(["p1"]);
   });
 });

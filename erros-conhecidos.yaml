@@ -7942,3 +7942,33 @@ erros:
     - docs/architecture-and-flows.md
     - docs/database-schema.md
   tags: [wms, inventario, snapshot, saldo-live, ledger, balanco, atomicidade]
+
+- id: SEPARACAO-CONCLUIR-NAO-IDEMPOTENTE
+  date: 2026-07-29
+  source: separacao-concluir
+  category: business_logic
+  message: >
+    "88 com validação OC pendente · 33 pendente(s) — 71 pedido(s) não
+    concluído(s) (status mudou): 1047006290, 1046732425, ... Atualize a tela."
+    ao clicar Concluir no checklist de separação.
+  cause: >
+    O UPDATE para 'separado' filtra status_separacao IN (em_separacao,
+    aguardando_separacao, validacao_oc) e reporta como nao_concluidos tudo que
+    o .select("id") não devolveu. Pedido que JÁ estava em separado/embalado/
+    conferido (retry do operador, ou outro operador concluiu antes) não casa o
+    filtro e era acusado de falha. Nos logs: a 1ª chamada (17:08:35) concluiu 68
+    de verdade e acusou 3 falsos; as duas retentativas do operador (17:10, 17:11)
+    acusaram os 71 já concluídos. O toast ainda despejava a lista inteira de ids,
+    virando uma parede de números ilegível num wave de ~192 pedidos.
+  fix: >
+    concluir agora relê o status_separacao ATUAL dos pedidos não-claimados e
+    classifica: status em/depois de 'separado' (separado, embalado, conferido,
+    expedido) ou já igual ao destino do bucket = ja_concluidos (no-op, não é
+    falha, e NÃO redispara cutover/histórico/agrupamento); qualquer outro estado
+    vira nao_concluidos com motivo "status_atual:<status>". O toast mostra
+    "N já concluído(s) antes" e trunca a lista de não-concluídos em 5 ids.
+  files:
+    - src/app/api/wms/separacao/concluir/route.ts
+    - src/app/wms/separacao/checklist/page.tsx
+    - src/app/api/wms/separacao/concluir/validacao-oc.test.ts
+  tags: [wms, separacao, concluir, idempotencia, race, toast, checklist]

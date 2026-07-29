@@ -53,6 +53,10 @@ const COL_INFO_W = 660;
 
 /** Borda direita útil da coluna de info. */
 const COL_INFO_RIGHT = COL_INFO_X + COL_INFO_W;
+/** Largura média de char da fonte A0 ≈ font × isto (heurística empírica). */
+const CHAR_W_RATIO = 0.55;
+/** Alvo de largura do SKU — folga de 60 dots sobre a coluna (ver `escolherFonteSku`). */
+const SKU_MAX_W = COL_INFO_W - 60;
 
 /** Orçamento horizontal do QR — a magnificação encolhe pra caber nele. */
 const QR_MAX_W = 200;
@@ -111,14 +115,24 @@ function escolherFonteDescricao(desc: string): {
   return { texto: desc.slice(0, 132) + "…", font: 36, lines: 4 };
 }
 
-/** SKU em destaque — encolhe conforme o comprimento pra caber em 660 dots. */
+/**
+ * SKU em destaque — encolhe conforme o comprimento (char width ≈ font ×
+ * 0.55, mesma heurística do zpl-produto).
+ *
+ * O `^FB` é de 1 linha e **quebra no espaço**: SKU mais largo que a coluna
+ * não é cortado nem truncado — o ZPL desenha o resto POR CIMA da mesma
+ * linha, e o texto vira borrão. SKUs longos costumam ter espaço (ex.:
+ * "MK-XB27BK-KIT-Q MK-175B LIMB"), então o degrau aberto é calculado contra
+ * `SKU_MAX_W` — menor que a coluna de propósito, pra absorver a variância
+ * da heurística de largura.
+ */
 function escolherFonteSku(sku: string): number {
   const len = sku.length;
   if (len <= 10) return 110;
   if (len <= 13) return 90;
   if (len <= 16) return 72;
   if (len <= 21) return 56;
-  return 40;
+  return Math.max(20, Math.min(40, Math.floor(SKU_MAX_W / (len * CHAR_W_RATIO))));
 }
 
 /** Quantidade gigante — encolhe conforme o nº de dígitos (coluna de 440). */

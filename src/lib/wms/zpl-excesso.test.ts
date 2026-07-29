@@ -51,6 +51,19 @@ describe("gerarZplExcesso", () => {
     expect(longo).toContain("^A0R,72,72^FB660,1,0,C^FDTEST-EXCESSO-XYZ^FS");
   });
 
+  it("SKU nunca sobrescreve a si mesmo (largura estimada cabe em 660 dots)", () => {
+    // ^FB de 1 linha não corta: o excedente é desenhado POR CIMA da linha.
+    for (let len = 1; len <= 60; len++) {
+      const sku = "X".repeat(len);
+      const font = Number(
+        gerarZplExcesso({ ...BASE, sku }).match(
+          /\^A0R,(\d+),\d+\^FB660,1,0,C\^FD/,
+        )![1],
+      );
+      expect(len * font * 0.55, `SKU de ${len}ch estoura a coluna`).toBeLessThanOrEqual(660);
+    }
+  });
+
   it("module width do barcode encolhe pra SKU longo", () => {
     expect(gerarZplExcesso(BASE)).toContain("^BY3,2,160");
     expect(gerarZplExcesso({ ...BASE, sku: "ABCDEFGHIJKL" })).toContain("^BY2,2,160");
@@ -98,8 +111,20 @@ describe("gerarZplExcesso", () => {
     const MODULOS = [21, 25, 29, 33, 37, 41, 45, 49, 53, 57];
     const CAP_BYTES = [11, 20, 32, 46, 60, 74, 86, 108, 130, 151];
 
-    for (const len of [1, 6, 8, 11, 12, 16, 20, 21, 25, 32, 33, 46, 60, 80]) {
-      const sku = "X".repeat(len);
+    // SKUs reais longos têm espaço/minúscula → o QR cai em modo BYTE, que
+    // estoura a versão MUITO antes do modo alfanumérico. Era o caso que
+    // embolava: 36 bytes = versão 4 = 264 dots na magnificação fixa antiga.
+    const reais = [
+      "MK-XB27BK-KIT-Q MK-175B LIMB MK-4BAL",
+      "TELA Aparelho  1, 1a, 1+, 1a+ 1AAA",
+      "K-XB21BK MK-CCS MK-RL MK-350Q-BK",
+    ];
+    const casos = [
+      ...[1, 6, 8, 11, 12, 16, 20, 21, 25, 32, 33, 46, 60, 80].map((n) => "X".repeat(n)),
+      ...reais,
+    ];
+    for (const sku of casos) {
+      const len = sku.length;
       const zpl = gerarZplExcesso({ ...BASE, sku });
 
       const qrM = zpl.match(/\^FO(\d+),(\d+)\^BQN,2,(\d+)/);

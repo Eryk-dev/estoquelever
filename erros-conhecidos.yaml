@@ -7888,3 +7888,28 @@ erros:
     - src/app/wms/separacao/page.tsx
     - docs/api-reference-complete.md
   tags: [wms, separacao, checklist, validacao_oc, oc_pendente, parcial, esgotado, desfazer_encontrei, full]
+
+- id: ETIQUETA-EXCESSO-SKU-SOBRESCREVE-A-SI-MESMO
+  date: 2026-07-29
+  source: render-labelary
+  category: business_logic
+  message: >
+    Na etiqueta de excesso, o SKU em destaque sai borrado/ilegivel quando
+    passa de ~30 caracteres — as letras aparecem uma por cima da outra.
+  cause: >
+    `escolherFonteSku` tinha degrau ABERTO: qualquer SKU acima de 21 chars
+    caia em font 40, que so cabe ~30 chars nos 660 dots da coluna. O campo
+    e um `^FB660,1` — com 1 linha, o ZPL nao trunca nem corta o excedente:
+    ele quebra a linha (no espaco, quando ha) e desenha o resto POR CIMA da
+    mesma linha. Os SKUs longos reais tem espaco (ex.: "MK-XB27BK-KIT-Q
+    MK-175B LIMB MK-4BAL", 36ch), entao o wrap sempre acontecia.
+  fix: >
+    Degrau final calculado em vez de constante: `min(40, SKU_MAX_W /
+    (len × 0.55))`, com SKU_MAX_W = COL_INFO_W − 60. A folga de 60 dots
+    absorve a variancia da heuristica de largura de char (com 660 cheio o
+    wrap ainda disparava em 36ch). Teste varre len 1..60 e assere que a
+    largura estimada cabe em 660. Verificado renderizando no Labelary.
+  files:
+    - src/lib/wms/zpl-excesso.ts
+    - src/lib/wms/zpl-excesso.test.ts
+  tags: [wms, etiqueta, excesso, zpl, sku, fb, texto]

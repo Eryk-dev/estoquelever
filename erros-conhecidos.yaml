@@ -7804,3 +7804,87 @@ erros:
     - src/app/api/wms/pedidos/aprovar/route.ts
     - src/lib/webhook-processor-wms.test.ts
   tags: [wms, futura, transferencia, auto-aprovacao, roteamento, aprovar]
+
+- id: SEPARACAO-VALIDACAO-OC-BLOQUEIA-PICK
+  date: 2026-07-28
+  source: operacao-staging
+  category: business_logic
+  message: >
+    Checklist travava no meio da wave: "pedido status validacao_oc não permite
+    marcar" (400) ao marcar item com saldo e R viva. Ex.: FULL-46c1eb91-ms58r8ad
+    (lane Full, CWB) — item TEC001 zerou a loc D-05-4 e foi pro pick OC; a partir
+    daí FRM012/FUM002 (saldo 1.807 e 184) não podiam mais ser marcados.
+  cause: >
+    O cascade de parcial (loc_zerou + sem cobertura no galpão) chama
+    `mandarItensParaValidacaoOC`, que demove o pedido INTEIRO pra
+    `status_separacao='validacao_oc'` e zera separacao_operador_id/iniciada_em —
+    mas os demais itens continuam com reserva viva e saldo. As guardas de pick
+    (`marcar-item` ALLOWED, `bipar-checklist` ALLOWED_STATUS, `parcial`
+    !== em_separacao) não listavam `validacao_oc`, então todo clique/bipe/parcial
+    seguinte virava 400. Contradizia o próprio design: o checklist só mostra o
+    toast "enviados pro Pick OC" e mantém o operador na tela ("segue pickando o
+    resto do wave"), e `separacao/iniciar` já aceita validacao_oc.
+  fix: >
+    `validacao_oc` adicionado às três guardas de pick (marcar-item,
+    bipar-checklist, parcial), permitindo que os itens normais restantes usem
+    suas R vivas. O próprio `oc_pendente` continua bloqueado no checkbox,
+    scanner e parcial comuns com `validacao_oc_requer_decisao`: ele só segue
+    por Encontrei/Esgotado. `concluir` continua devolvendo o pedido pra
+    validacao_oc enquanto houver OC sem decisão.
+  files:
+    - src/app/api/wms/separacao/marcar-item/route.ts
+    - src/app/api/wms/separacao/marcar-item/validacao-oc.test.ts
+    - src/app/api/wms/separacao/bipar-checklist/route.ts
+    - src/app/api/wms/separacao/bipar-checklist/substituto-match.test.ts
+    - src/app/api/wms/separacao/parcial/route.ts
+    - docs/api-reference-complete.md
+  tags: [wms, separacao, checklist, validacao_oc, oc_pendente, marcar-item, parcial, bipar-checklist, full, pick]
+  notes: >
+    A especificação original da lane Full não previa OC/Compras, mas a operação
+    atual envia o residual sem cobertura para a mesma segunda validação dos
+    demais pedidos. Esse comportamento foi preservado; a lane Full agora expõe
+    também a aba aguardando_compra, evitando que o envio desapareça após a
+    decisão Esgotado.
+
+- id: SEPARACAO-OC-SEGUNDA-VALIDACAO-SOME
+  date: 2026-07-28
+  source: operacao-staging
+  category: business_logic
+  message: >
+    Item parcialmente pego que ficava sem cobertura entrava em "Itens OC —
+    validar" já com check verde; aparecia apenas Desfazer, sem os botões
+    Encontrei/Esgotado necessários pra segunda validação.
+  cause: >
+    `/separacao/parcial` marca `separacao_marcado=true` ao concluir o pick da
+    loc original. Na sequência, `mandarItensParaValidacaoOC` alterava somente
+    `compra_status='oc_pendente'` e preservava essa marca, embora ela
+    representasse o pick anterior, não uma decisão OC. Caso real
+    FULL-46c1eb91-ms58r8ad/TEC001: 5 de 6 saíram da D-05-4 e o residual 1 foi
+    pra OC ainda marcado. Achado adicional no mesmo clique: a ação
+    `desfazer_encontrei` tentava estornar `item.mov_saida_id`, mas o SELECT
+    inicial de validar-oc-item não trazia a coluna; limpava o vínculo/qty sem
+    emitir o estorno.
+  fix: >
+    A promoção a `oc_pendente` agora limpa separacao_marcado e
+    separacao_marcado_em, preservando quantidade_pega para a decisão
+    Encontrei/Esgotado operar somente sobre o residual. validar-oc-item passou
+    a baixar somente esse residual. Desfazer é bloqueado enquanto o item ainda
+    está oc_pendente e, depois de Encontrei, usa
+    `wms_desmarcar_item_atomico` com a fração da tabela ponte: devolve apenas a
+    nova S, restaura a reserva e preserva o pick parcial anterior. Scanner,
+    checkbox e parcial comuns recusam oc_pendente para não contornar a segunda
+    validação. Concluir aceita validacao_oc como origem e a lane Full mantém
+    aguardando_compra visível.
+  files:
+    - src/lib/wms/mandar-compras.ts
+    - src/lib/wms/mandar-compras.test.ts
+    - src/app/api/wms/separacao/validar-oc-item/route.ts
+    - src/app/api/wms/separacao/validar-oc-item/encontrei-nao-pre-bipa-embalagem.test.ts
+    - src/app/api/wms/separacao/marcar-item/route.ts
+    - src/app/api/wms/separacao/bipar-checklist/route.ts
+    - src/app/api/wms/separacao/parcial/route.ts
+    - src/app/api/wms/separacao/concluir/route.ts
+    - src/app/api/wms/separacao/concluir/validacao-oc.test.ts
+    - src/app/wms/separacao/page.tsx
+    - docs/api-reference-complete.md
+  tags: [wms, separacao, checklist, validacao_oc, oc_pendente, parcial, esgotado, desfazer_encontrei, full]

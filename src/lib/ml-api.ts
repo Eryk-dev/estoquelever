@@ -34,6 +34,12 @@ export interface MlItemSearchResp {
   results: string[]; // array de MLB ids
 }
 
+export interface MlSellerItemsScanPage {
+  scroll_id: string | null;
+  paging?: { limit?: number; total?: number };
+  results: string[];
+}
+
 export interface MlAttribute {
   id: string;
   name?: string;
@@ -75,6 +81,16 @@ export interface MlItem {
   seller_custom_field?: string | null;
   attributes?: MlAttribute[];
   variations?: MlVariation[];
+}
+
+export interface MlScanItemsDetails {
+  items: MlItem[];
+  skipped: Array<{
+    id: string;
+    motivo: "not_found" | "not_active";
+    code: number;
+    status: string | null;
+  }>;
 }
 
 // ─── Fetch genérico com auto-refresh em 401 ─────────────────────────
@@ -129,10 +145,10 @@ export async function getMlUserMe(connectionId: string): Promise<MlUserMe> {
  *   1. ?sku=… (seller_custom_field do item)
  *   2. ?seller_sku=… (atributo padronizado SELLER_SKU do item)
  *
- * Os dois endpoints buscam apenas no nível ITEM — não enxergam SKUs que
- * vivem só dentro de `variations[]`. Por isso o filtro final por SKU é
- * feito em `searchAndMatchItemsBySku()` aplicando match também nas
- * variações do item baixado.
+ * Os dois endpoints buscam apenas no nível ITEM — não enxergam de forma
+ * exaustiva SKUs que vivem só dentro de `variations[]`. O filtro final por SKU
+ * também considera variações quando o item-pai foi devolvido, mas uma busca
+ * vazia nunca prova que o SKU não existe em outro anúncio.
  *
  * Pagina via offset até esgotar (limit=100/page, máx 1000 resultados —
  * limite do endpoint público do ML).
@@ -141,6 +157,7 @@ export async function searchSellerItemsBySku(
   connectionId: string,
   sellerId: number,
   sku: string,
+  opts?: { strictSearch?: boolean },
 ): Promise<string[]> {
   if (isMlDisabled()) {
     // Stub retorna { results: [], total: 0 } — flatten pra string[]
@@ -168,6 +185,7 @@ export async function searchSellerItemsBySku(
           offset,
           err: err instanceof Error ? err.message : String(err),
         });
+        if (opts?.strictSearch) throw err;
         return;
       }
       page.results.forEach((id) => ids.add(id));
@@ -179,6 +197,64 @@ export async function searchSellerItemsBySku(
 
   await Promise.all([paginate("sku"), paginate("seller_sku")]);
   return Array.from(ids);
+}
+
+/**
+ * Lê uma página do scroll exaustivo de anúncios ativos de uma conta.
+ *
+ * O scroll_id expira após poucos minutos e representa estado mutável no ML.
+ * Quem chama precisa persistir um marcador de "fetch em andamento" antes da
+ * requisição; se houver crash entre o fetch e o checkpoint, a geração deve ser
+ * reiniciada para não pular uma página.
+ */
+export async function scanSellerActiveItemsPage(
+  connectionId: string,
+  sellerId: number,
+  scrollId?: string | null,
+): Promise<MlSellerItemsScanPage> {
+  if (isMlDisabled()) {
+    throw new Error("Integração Mercado Livre desabilitada");
+  }
+
+  const params = new URLSearchParams({
+    search_type: "scan",
+    limit: "100",
+  });
+  if (scrollId) {
+    params.set("scroll_id", scrollId);
+  } else {
+    params.set("status", "active");
+  }
+
+  const page = await mlFetch<{
+    scroll_id?: unknown;
+    paging?: MlSellerItemsScanPage["paging"];
+    results?: unknown;
+  }>(
+    connectionId,
+    `/users/${sellerId}/items/search?${params.toString()}`,
+  );
+  if (
+    !Object.prototype.hasOwnProperty.call(page, "results") ||
+    (page.results !== null &&
+      (!Array.isArray(page.results) ||
+        page.results.some((id) => typeof id !== "string")))
+  ) {
+    throw new Error("ML scan devolveu results ausente ou inválido");
+  }
+  if (
+    !Object.prototype.hasOwnProperty.call(page, "scroll_id") ||
+    (page.scroll_id !== null && typeof page.scroll_id !== "string")
+  ) {
+    throw new Error("ML scan devolveu scroll_id ausente ou inválido");
+  }
+  return {
+    scroll_id: page.scroll_id,
+    paging: page.paging,
+    // O contrato usa null ao chegar ao fim; internamente normalizamos para a
+    // página vazia que autoriza publicar a geração.
+    results: page.results ?? [],
+  };
 }
 
 // ─── SKU extraction helpers (espelho do Levercopy/item_copier.py) ───
@@ -234,17 +310,24 @@ export function skusMatch(a: string, b: string): boolean {
  * qualquer um dos 4 lugares onde o ML guarda SKU (item-top, item-attr,
  * variation-top, variation-attr).
  *
- * Isso fecha o gap do search nativo do ML, que não procura dentro de
- * `variations[]` — é o motivo principal de SKUs de variação sumirem
- * com o approach simples de 2 endpoints.
+ * Isso evita aceitar um item-pai sem o SKU desejado e reconhece o SKU em uma
+ * variação quando o pai foi devolvido. Não fecha o gap do search nativo:
+ * um pai que não apareceu na busca direta continua invisível. Por isso os
+ * consumidores não devem interpretar retorno vazio como ausência confirmada.
  */
 export async function searchAndMatchItemsBySku(
   connectionId: string,
   sellerId: number,
   sku: string,
+  opts?: { strictSearch?: boolean },
 ): Promise<MlItem[]> {
   if (isMlDisabled()) return searchAndMatchItemsBySkuStub(sku);
-  const ids = await searchSellerItemsBySku(connectionId, sellerId, sku);
+  const ids = await searchSellerItemsBySku(
+    connectionId,
+    sellerId,
+    sku,
+    opts,
+  );
   if (ids.length === 0) return [];
   const items = await getMlItemsDetails(connectionId, ids);
   return items.filter((it) =>
@@ -259,14 +342,22 @@ export async function searchAndMatchItemsBySku(
 export async function getMlItemsDetails(
   connectionId: string,
   itemIds: string[],
+  opts?: { requireAll?: boolean },
 ): Promise<MlItem[]> {
-  if (isMlDisabled()) return getMlItemsDetailsStub(itemIds);
+  if (isMlDisabled()) {
+    const items = await getMlItemsDetailsStub(itemIds);
+    if (opts?.requireAll && items.length !== new Set(itemIds).size) {
+      throw new Error("Stub ML não devolveu todos os anúncios solicitados");
+    }
+    return items;
+  }
   if (itemIds.length === 0) return [];
 
   const out: MlItem[] = [];
+  const idsUnicos = Array.from(new Set(itemIds));
   // ML aceita até 20 ids por multi-get
-  for (let i = 0; i < itemIds.length; i += 20) {
-    const slice = itemIds.slice(i, i + 20);
+  for (let i = 0; i < idsUnicos.length; i += 20) {
+    const slice = idsUnicos.slice(i, i + 20);
     const attributes =
       "id,title,price,currency_id,status,permalink,available_quantity," +
       "sold_quantity,thumbnail,listing_type_id,seller_custom_field,attributes," +
@@ -275,13 +366,99 @@ export async function getMlItemsDetails(
       Array<{ code: number; body: MlItem }>
     >(
       connectionId,
-      `/items?ids=${slice.join(",")}&attributes=${attributes}`,
+      `/items?ids=${slice.join(",")}&attributes=${attributes}&include_attributes=all`,
     );
     resp.forEach((r) => {
       if (r.code === 200 && r.body) out.push(r.body);
     });
   }
+  if (opts?.requireAll) {
+    const recebidos = new Set(out.map((item) => item.id));
+    const ausentes = idsUnicos.filter((id) => !recebidos.has(id));
+    if (ausentes.length > 0) {
+      throw new Error(
+        `ML multiget incompleto: ${ausentes.length} de ${idsUnicos.length} anúncio(s) sem detalhe`,
+      );
+    }
+  }
   return out;
+}
+
+/**
+ * Multi-get estrito para uma página do scan de anúncios ativos.
+ *
+ * Entre o search e o multi-get um anúncio pode fechar, pausar ou ser apagado.
+ * Esses casos são descartes conclusivos (não está mais ativo), não falhas da
+ * página. Rate limit, 5xx, entrada ausente e códigos desconhecidos lançam erro
+ * para o worker repetir/reiniciar a geração sem publicar snapshot parcial.
+ */
+export async function getMlActiveItemsDetailsForScan(
+  connectionId: string,
+  itemIds: string[],
+): Promise<MlScanItemsDetails> {
+  if (isMlDisabled()) {
+    throw new Error("Integração Mercado Livre desabilitada");
+  }
+
+  const idsUnicos = Array.from(new Set(itemIds));
+  const items: MlItem[] = [];
+  const skipped: MlScanItemsDetails["skipped"] = [];
+  for (let i = 0; i < idsUnicos.length; i += 20) {
+    const slice = idsUnicos.slice(i, i + 20);
+    const attributes =
+      "id,title,price,currency_id,status,permalink,available_quantity," +
+      "sold_quantity,thumbnail,listing_type_id,seller_custom_field,attributes," +
+      "variations";
+    const response = await mlFetch<
+      Array<{
+        code: number;
+        body?: Partial<MlItem> & {
+          error?: string;
+          message?: string;
+        };
+      }>
+    >(
+      connectionId,
+      `/items?ids=${slice.join(",")}&attributes=${attributes}&include_attributes=all`,
+    );
+
+    for (let index = 0; index < slice.length; index++) {
+      const id = slice[index];
+      const entry = response[index];
+      if (!entry) {
+        throw new Error(`ML multiget sem resposta para ${id}`);
+      }
+      if (entry.code === 404) {
+        skipped.push({
+          id,
+          motivo: "not_found",
+          code: 404,
+          status: null,
+        });
+        continue;
+      }
+      if (entry.code === 429 || entry.code >= 500) {
+        throw new Error(`ML multiget transitório ${entry.code} para ${id}`);
+      }
+      if (entry.code !== 200) {
+        throw new Error(`ML multiget inesperado ${entry.code} para ${id}`);
+      }
+      if (!entry.body || entry.body.id !== id || !entry.body.status) {
+        throw new Error(`ML multiget inválido para ${id}`);
+      }
+      if (entry.body.status !== "active") {
+        skipped.push({
+          id,
+          motivo: "not_active",
+          code: 200,
+          status: entry.body.status,
+        });
+        continue;
+      }
+      items.push(entry.body as MlItem);
+    }
+  }
+  return { items, skipped };
 }
 
 // ─── Prazo de despacho (SLA) por pedido ─────────────────────────────

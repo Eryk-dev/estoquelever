@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { wmsApi } from "@/lib/wms/api-client";
@@ -19,6 +19,10 @@ import type {
   CriarVendaDiretaResponse,
   ModoVendaDireta,
 } from "@/types";
+import {
+  agregarSolicitacaoPorProduto,
+  produtoTemCobertura,
+} from "@/lib/wms/vendas-cobertura";
 
 interface VendedorLite {
   id: string;
@@ -55,22 +59,15 @@ function emptyItem(): ItemForm {
 
 export default function NovaVendaPage() {
   return (
-    <>
-      <PageHeader
-        title="Nova venda"
-        subtitle="Pedido manual. Escolha o galpão onde você está, adicione produtos e o sistema resolve loc + saldo."
-        backHref="/wms/vendas"
-        backLabel="Vendas"
-      />
-      <Suspense fallback={null}>
-        <NovaVendaBody />
-      </Suspense>
-    </>
+    <Suspense fallback={<div className="wms-sales-detail-loading"><span /><span /></div>}>
+      <NovaVendaBody />
+    </Suspense>
   );
 }
 
 function NovaVendaBody() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { can, permissoes } = usePermissoes();
   const podeCriar = can("vendas.criar");
@@ -114,7 +111,7 @@ function NovaVendaBody() {
   // Full: envio de estoque ao CDF do ML, sem pedido-fantasma no Tiny. Esconde
   // cliente/CPF/canal (não se aplica); força modo="separacao" (Full nunca faz
   // baixa_direta — reconciliação de estoque é sempre via editor da lane Full).
-  const [isFull, setIsFull] = useState(false);
+  const [isFull, setIsFull] = useState(searchParams.get("tipo") === "full");
   // Full: "Separar na ordem da lista" — preserva cada linha como digitada
   // (2 linhas do mesmo SKU = 2 itens no checklist, espelhando a lista do
   // envio Full do ML). Desligado = duplicatas somadas numa linha só.
@@ -297,52 +294,108 @@ function NovaVendaBody() {
     }
   };
 
+  const totalUnidades = items.reduce(
+    (total, item) => total + Math.max(0, Number(item.quantidade) || 0),
+    0,
+  );
+  const solicitacaoPorProduto = useMemo(
+    () =>
+      agregarSolicitacaoPorProduto(
+        items.map((item) => ({
+          produtoId: item.produto?.id ?? null,
+          quantidade: item.quantidade,
+        })),
+      ),
+    [items],
+  );
+  const itensPreenchidos = items.filter((item) => item.produto).length;
+  const itensComSaldo = items.filter((item, index) => {
+    if (!item.produto || !galpaoId) return false;
+    return produtoTemCobertura(
+      solicitacaoPorProduto.get(item.produto.id),
+      Number(dispQueries[index]?.data?.total_disponivel ?? 0),
+    );
+  }).length;
+  const itensSemCobertura = items.filter((item, index) => {
+    if (
+      !item.produto ||
+      !galpaoId ||
+      dispQueries[index]?.isFetching ||
+      dispQueries[index]?.isError
+    ) {
+      return false;
+    }
+    return !produtoTemCobertura(
+      solicitacaoPorProduto.get(item.produto.id),
+      Number(dispQueries[index]?.data?.total_disponivel ?? 0),
+    );
+  }).length;
+  const coberturaEmConsulta = items.some(
+    (item, index) =>
+      !!item.produto && !!galpaoId && !!dispQueries[index]?.isFetching,
+  );
+  const coberturaComErro = items.some(
+    (item, index) =>
+      !!item.produto && !!galpaoId && !!dispQueries[index]?.isError,
+  );
+  const coberturaConferida =
+    itensPreenchidos > 0 &&
+    itensComSaldo === itensPreenchidos &&
+    !coberturaEmConsulta &&
+    !coberturaComErro;
+
   return (
-    <div style={{ padding: "12px 16px", display: "grid", gap: 16, maxWidth: 880 }}>
-      {user ? (
-        <p className="wms-td-mute" style={{ fontSize: 11 }}>
-          Vendedor: <strong>{user.nome}</strong>
-        </p>
-      ) : null}
+    <>
+      <PageHeader
+        title={isFull ? "Novo envio Full" : "Nova venda"}
+        subtitle={
+          isFull
+            ? "Monte as linhas do envio e confira a cobertura antes de liberar para separação."
+            : "Cadastre o cliente, escolha a saída e acompanhe cada item desde a origem."
+        }
+        backHref="/wms/vendas"
+        backLabel="Vendas diretas"
+      >
+        <span className={`wms-sales-origin ${isFull ? "is-full" : ""}`}>
+          {isFull ? "FULL" : "MANUAL"}
+        </span>
+      </PageHeader>
+
+      <div className="wms-sales-create">
+        <main className="wms-sales-create-main">
 
       {/* Tipo de pedido — Full esconde cliente/CPF/canal e envia ao CDF do ML
           sem pedido-fantasma no Tiny (ver /wms/separacao-full). */}
-      <section className="wms-card" style={{ padding: 14 }}>
+      <section className="wms-card wms-sales-create-section">
+        <div className="wms-sales-create-section-head">
+          <span>01 · Fluxo</span>
+          <h2>O que você está criando?</h2>
+        </div>
         <Field label="Tipo de pedido">
-          <div style={{ display: "flex", gap: 6 }}>
+          <div className="wms-sales-type-options">
             <button
               type="button"
               onClick={() => setIsFull(false)}
-              className={`wms-btn ${!isFull ? "wms-btn-primary" : ""}`}
-              style={{ flex: 1 }}
+              className={`wms-sales-type-option ${!isFull ? "is-active" : ""}`}
             >
-              Venda
+              <span><Icon name="handshake" size={16} /></span>
+              <strong>Venda direta</strong>
+              <small>Cliente, canal e baixa direta ou separação.</small>
+              {!isFull && <Icon name="check" size={13} />}
             </button>
             <button
               type="button"
               onClick={() => setIsFull(true)}
-              className={`wms-btn ${isFull ? "wms-btn-primary" : ""}`}
-              style={{ flex: 1 }}
+              className={`wms-sales-type-option ${isFull ? "is-active" : ""}`}
             >
-              Full
+              <span><Icon name="box" size={16} /></span>
+              <strong>Envio Full</strong>
+              <small>Estoque para o CDF do Mercado Livre, por linha.</small>
+              {isFull && <Icon name="check" size={13} />}
             </button>
           </div>
-          <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
-            {isFull
-              ? "Envio de estoque ao CDF do Mercado Livre. Sem cliente, sem NF, sem Tiny."
-              : "Pedido de venda pra um cliente."}
-          </p>
           {isFull && (
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 8,
-                cursor: "pointer",
-                fontSize: 12,
-              }}
-            >
+            <label className="wms-sales-preserve-lines">
               <input
                 type="checkbox"
                 checked={preservarLinhas}
@@ -350,10 +403,10 @@ function NovaVendaBody() {
               />
               <span>
                 Separar na ordem da lista
-                <span className="wms-td-mute" style={{ display: "block", fontSize: 11 }}>
+                <small>
                   Mantém cada linha como digitada — o mesmo SKU em 2 linhas vira 2 itens
                   no checklist, na ordem da lista do envio Full.
-                </span>
+                </small>
               </span>
             </label>
           )}
@@ -361,7 +414,11 @@ function NovaVendaBody() {
       </section>
 
       {/* Cliente + canal */}
-      <section className="wms-card" style={{ padding: 14, display: "grid", gap: 12 }}>
+      <section className="wms-card wms-sales-create-section">
+        <div className="wms-sales-create-section-head">
+          <span>02 · Contexto</span>
+          <h2>{isFull ? "Origem do envio" : "Cliente e origem da venda"}</h2>
+        </div>
         {!isFull && (
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
             <Field label="Cliente" required>
@@ -473,40 +530,56 @@ function NovaVendaBody() {
       {/* Modo — Full não se aplica (sempre separação; editor da lane Full é
           quem reconcilia estoque, nunca baixa_direta). */}
       {!isFull && (
-        <section className="wms-card" style={{ padding: 14 }}>
+        <section className="wms-card wms-sales-create-section">
+          <div className="wms-sales-create-section-head">
+            <span>03 · Saída</span>
+            <h2>Como o estoque será processado?</h2>
+          </div>
           <Field label="Como baixar do estoque">
-            <div style={{ display: "flex", gap: 6 }}>
+            <div className="wms-sales-mode-options">
               <button
                 type="button"
                 onClick={() => setModo("separacao")}
-                className={`wms-btn ${modo === "separacao" ? "wms-btn-primary" : ""}`}
-                style={{ flex: 1 }}
+                className={`wms-sales-mode-option ${modo === "separacao" ? "is-active" : ""}`}
               >
-                Mandar pra separação
+                <Icon name="list" size={14} />
+                <span>
+                  <strong>Mandar para separação</strong>
+                  <small>Operador retira, confere e embala.</small>
+                </span>
               </button>
               <button
                 type="button"
                 onClick={() => setModo("baixa_direta")}
-                className={`wms-btn ${modo === "baixa_direta" ? "wms-btn-primary" : ""}`}
-                style={{ flex: 1 }}
+                className={`wms-sales-mode-option ${modo === "baixa_direta" ? "is-active" : ""}`}
               >
-                Baixar estoque direto
+                <Icon name="arrow-right" size={14} />
+                <span>
+                  <strong>Baixa direta</strong>
+                  <small>Registra a saída agora, sem fila de picking.</small>
+                </span>
               </button>
             </div>
-            <p className="wms-td-mute" style={{ fontSize: 11, marginTop: 6 }}>
-              {modo === "separacao"
-                ? "Pedido vai pra fila de wave picking. Operador separa e embala."
-                : "Sistema baixa direto na loc sugerida. Se faltar saldo, cai pra separação automaticamente."}
-            </p>
+            {modo === "baixa_direta" && (
+              <p className="wms-sales-mode-note">
+                Se algum item não tiver cobertura completa, o pedido muda
+                automaticamente para separação e mantém a rastreabilidade.
+              </p>
+            )}
           </Field>
         </section>
       )}
 
       {/* Itens — overflow visible pra não clipar dropdown do ProdutoCombo */}
-      <section className="wms-card" style={{ padding: 14, overflow: "visible" }}>
-        <strong style={{ fontSize: 13, display: "block", marginBottom: 10 }}>
-          Itens
-        </strong>
+      <section className="wms-card wms-sales-create-section wms-sales-create-items">
+        <div className="wms-sales-create-section-head">
+          <span>{isFull ? "03" : "04"} · Itens</span>
+          <h2>{isFull ? "Linhas do envio Full" : "Produtos da venda"}</h2>
+          <small>
+            {itensPreenchidos}/{items.length} linhas preenchidas ·{" "}
+            {totalUnidades.toLocaleString("pt-BR")} unidades
+          </small>
+        </div>
 
         <div style={{ display: "grid", gap: 10 }}>
           {items.map((item, idx) => {
@@ -514,34 +587,39 @@ function NovaVendaBody() {
             const sug = disp?.data?.sugestao ?? null;
             const total = disp?.data?.total_disponivel ?? 0;
             const carregando = !!disp?.isFetching && !disp?.data;
-            const podeBaixar = !!item.produto && total >= item.quantidade;
+            const erroDisponibilidade = !!disp?.isError;
+            const solicitacaoProduto = item.produto
+              ? solicitacaoPorProduto.get(item.produto.id)
+              : undefined;
+            const podeBaixar =
+              !!item.produto &&
+              produtoTemCobertura(solicitacaoProduto, total);
             const semSaldo =
-              !!item.produto && !!galpaoId && !carregando && total === 0;
+              !!item.produto &&
+              !!galpaoId &&
+              !carregando &&
+              !erroDisponibilidade &&
+              total === 0;
             const saldoInsuficiente =
               !!item.produto &&
               !!galpaoId &&
               !carregando &&
+              !erroDisponibilidade &&
               total > 0 &&
-              total < item.quantidade;
+              !podeBaixar;
             return (
               <div
                 key={item.uid}
-                style={{
-                  border: "1px solid var(--wms-c-border)",
-                  borderRadius: 8,
-                  padding: 12,
-                  display: "grid",
-                  gap: 10,
-                }}
+                className={`wms-sales-create-item ${
+                  saldoInsuficiente || semSaldo ? "has-warning" : ""
+                }`}
               >
                 <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 90px 28px",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
+                  className="wms-sales-create-item-fields"
                 >
+                  <span className="wms-sales-create-line">
+                    {String(idx + 1).padStart(2, "0")}
+                  </span>
                   <ProdutoCombo
                     value={item.produto}
                     onChange={(p) => updateItem(idx, { produto: p })}
@@ -572,19 +650,20 @@ function NovaVendaBody() {
                 {/* Linha de disponibilidade — read-only, automática */}
                 {item.produto && galpaoId && (
                   <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      fontSize: 12,
-                      paddingTop: 6,
-                      borderTop: "1px dashed var(--wms-c-border)",
-                    }}
+                    className="wms-sales-create-availability"
                   >
                     <Icon name="sparkle" size={11} />
                     {carregando ? (
                       <span className="wms-td-mute">
                         Buscando localização…
+                      </span>
+                    ) : erroDisponibilidade ? (
+                      <span
+                        style={{
+                          color: "var(--wms-c-warning, #d97706)",
+                        }}
+                      >
+                        Não foi possível consultar o saldo agora
                       </span>
                     ) : sug ? (
                       <>
@@ -611,7 +690,11 @@ function NovaVendaBody() {
                             className="wms-td-mute"
                             style={{ fontSize: 11 }}
                           >
-                            — pedindo {item.quantidade}, vira separação/OC
+                            — pedindo {solicitacaoProduto?.quantidade ?? item.quantidade}
+                            {solicitacaoProduto && solicitacaoProduto.linhas > 1
+                              ? ` em ${solicitacaoProduto.linhas} linhas`
+                              : ""}
+                            , vira separação/OC
                           </span>
                         )}
                       </>
@@ -643,39 +726,136 @@ function NovaVendaBody() {
         </button>
       </section>
 
-      {/* Footer */}
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          justifyContent: "flex-end",
-          paddingTop: 4,
-        }}
-      >
-        <button
-          className="wms-btn"
-          onClick={() => router.push("/wms/vendas")}
-          disabled={enviando}
-          type="button"
-        >
-          Cancelar
-        </button>
-        <button
-          className="wms-btn wms-btn-primary"
-          onClick={submit}
-          disabled={!valido || enviando || !podeCriar}
-          title={!podeCriar ? "Sem permissão pra criar venda" : ""}
-          type="button"
-        >
-          {enviando
-            ? "Criando…"
-            : isFull
-              ? "Criar Full e mandar pra separação"
-              : modo === "separacao"
-                ? "Criar e mandar pra separação"
-                : "Criar e baixar estoque agora"}
-        </button>
+        </main>
+
+        <aside className="wms-sales-create-summary">
+          <header>
+            <span>Resumo</span>
+            <h2>{isFull ? "Envio Full" : "Venda direta"}</h2>
+            <p>
+              Revise os pontos abaixo antes de criar. Nada será movimentado
+              enquanto você não confirmar.
+            </p>
+          </header>
+
+          <dl>
+            <div>
+              <dt>Responsável</dt>
+              <dd>
+                {vendedorIdAlvo
+                  ? vendedoresQuery.data?.find((v) => v.id === vendedorIdAlvo)
+                      ?.nome ?? "Vendedor selecionado"
+                  : user?.nome ?? "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>{isFull ? "Conta ML" : "Empresa"}</dt>
+              <dd>
+                {empresas.find((empresa) => empresa.id === empresaOrigemId)
+                  ?.nome ?? "Pendente"}
+              </dd>
+            </div>
+            <div>
+              <dt>Galpão</dt>
+              <dd>
+                {(galpoes ?? []).find((galpao) => galpao.id === galpaoId)
+                  ?.nome ?? "Pendente"}
+              </dd>
+            </div>
+            <div>
+              <dt>Itens / unidades</dt>
+              <dd>
+                {itensPreenchidos} / {totalUnidades.toLocaleString("pt-BR")}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="wms-sales-create-checks">
+            <span className={empresaOrigemId && galpaoId ? "is-ok" : ""}>
+              <Icon
+                name={empresaOrigemId && galpaoId ? "check" : "dot"}
+                size={11}
+              />
+              Origem definida
+            </span>
+            <span className={itensPreenchidos === items.length ? "is-ok" : ""}>
+              <Icon
+                name={itensPreenchidos === items.length ? "check" : "dot"}
+                size={11}
+              />
+              Todas as linhas preenchidas
+            </span>
+            <span
+              className={
+                coberturaConferida
+                  ? "is-ok"
+                  : itensSemCobertura > 0 || coberturaComErro
+                    ? "is-warning"
+                    : ""
+              }
+            >
+              <Icon
+                name={
+                  itensSemCobertura > 0 || coberturaComErro
+                    ? "alert"
+                    : coberturaConferida
+                      ? "check"
+                      : "dot"
+                }
+                size={11}
+              />
+              {coberturaComErro
+                ? "Falha ao conferir cobertura"
+                : itensSemCobertura > 0
+                ? `${itensSemCobertura} ${
+                    itensSemCobertura === 1 ? "item sem" : "itens sem"
+                  } cobertura`
+                : coberturaConferida
+                  ? "Cobertura conferida"
+                  : coberturaEmConsulta
+                    ? "Conferindo cobertura"
+                    : "Cobertura pendente"}
+            </span>
+          </div>
+
+          {itensSemCobertura > 0 && (
+            <div className="wms-sales-create-warning">
+              <Icon name="alert" size={13} />
+              <span>
+                {isFull
+                  ? "O Full será criado com reserva parcial e os itens sem cobertura ficarão claros na separação."
+                  : "Na baixa direta, o pedido será direcionado para separação em vez de falhar silenciosamente."}
+              </span>
+            </div>
+          )}
+
+          <div className="wms-sales-create-actions">
+            <button
+              className="wms-btn wms-btn-ghost"
+              onClick={() => router.push("/wms/vendas")}
+              disabled={enviando}
+              type="button"
+            >
+              Cancelar
+            </button>
+            <button
+              className="wms-btn wms-btn-primary"
+              onClick={submit}
+              disabled={!valido || enviando || !podeCriar}
+              title={!podeCriar ? "Sem permissão para criar venda" : ""}
+              type="button"
+            >
+              {enviando
+                ? "Criando…"
+                : isFull
+                  ? "Criar envio Full"
+                  : modo === "separacao"
+                    ? "Criar e separar"
+                    : "Criar e baixar agora"}
+            </button>
+          </div>
+        </aside>
       </div>
-    </div>
+    </>
   );
 }

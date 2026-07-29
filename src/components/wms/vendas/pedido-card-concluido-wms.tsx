@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Icon } from "@/components/wms/ui/wms-ui";
+import { Icon, fmtDateTime } from "@/components/wms/ui/wms-ui";
 import { DecisaoLabel } from "./estoque-por-galpao-bar";
 import {
   ItemRowV2,
@@ -151,8 +151,15 @@ function PedidoCardConcluidoWms({
             </span>
           )}
 
-          <span className="wms-pcard-compact-time" title={processadoIso}>
-            {formatRelativeTime(processadoIso)}
+          <span
+            className="wms-pcard-compact-time"
+            title={`Criado em ${fmtDateTime(pedido.criadoEm)}${
+              pedido.processadoEm
+                ? ` · Processado ${formatRelativeTime(processadoIso)}`
+                : ""
+            }`}
+          >
+            Criado {fmtDateTime(pedido.criadoEm)}
           </span>
 
           <span

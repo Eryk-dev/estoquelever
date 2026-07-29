@@ -8,6 +8,8 @@ import {
   normalizarOem,
   oemEmComum,
   montarOndeComprar,
+  origemSugestao,
+  filtrarSugestoesPorOrigem,
   type CrossPar,
   type ProdutoMin,
   type FornecedorPoolEntrada,
@@ -24,6 +26,31 @@ describe("saoLigaveis", () => {
   it("recusa ligar peça com ela mesma", () => {
     expect(saoLigaveis("A", "A")).toBe(false);
     expect(saoLigaveis("A", "B")).toBe(true);
+  });
+});
+
+describe("filtro de origem da fila", () => {
+  const itens = [
+    { id: 1, fonte: "manual" },
+    { id: 2, fonte: "oem_auto" },
+    { id: 3, fonte: "importacao_auto" },
+  ];
+
+  it("classifica fontes *_auto como automáticas e as demais como manuais", () => {
+    expect(origemSugestao("manual")).toBe("manual");
+    expect(origemSugestao("MANUAL")).toBe("manual");
+    expect(origemSugestao("oem_auto")).toBe("automatica");
+    expect(origemSugestao("curadoria_legada")).toBe("manual");
+  });
+
+  it("separa manuais e automáticas sem alterar a fila original", () => {
+    expect(filtrarSugestoesPorOrigem(itens, "manual").map((i) => i.id)).toEqual([
+      1,
+    ]);
+    expect(
+      filtrarSugestoesPorOrigem(itens, "automatica").map((i) => i.id),
+    ).toEqual([2, 3]);
+    expect(filtrarSugestoesPorOrigem(itens, "todas")).toEqual(itens);
   });
 });
 

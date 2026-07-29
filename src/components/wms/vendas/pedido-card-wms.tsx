@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
-import { Icon } from "@/components/wms/ui/wms-ui";
+import { Icon, fmtDateTime } from "@/components/wms/ui/wms-ui";
 import { CrossPopoverButton } from "@/components/wms/cross/cross-popover-button";
 import { ProdutoLightbox } from "@/components/wms/produto-lightbox";
 import {
@@ -453,7 +453,9 @@ function PedidoCardWms({ pedido, onClick, interactive }: PedidoCardWmsProps) {
         </header>
 
         <div className="wms-pcard-meta-row">
-          <span>{formatRelativeTime(criadoEm)}</span>
+          <span title={criadoEm}>
+            Criado em {fmtDateTime(criadoEm)} · {formatRelativeTime(criadoEm)}
+          </span>
         </div>
 
         <div className="wms-pcard-items-v2">

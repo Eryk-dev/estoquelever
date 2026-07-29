@@ -526,6 +526,11 @@ export default function WmsPedidoDetalhePage() {
           }
         />
         <Kpi
+          label="Criado em"
+          value={fmtDateTime(p.criado_em)}
+          sub={formatRelativeTime(p.criado_em)}
+        />
+        <Kpi
           label="Decisão"
           value={
             <DecisaoLabel

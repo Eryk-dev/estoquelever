@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
     const { data: item, error: itemErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id, produto_wms_substituto_id",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_parcial, mov_saida_id, produto_wms_substituto_id, compra_status",
       )
       .eq("id", pedido_item_id)
       .single();
@@ -55,6 +55,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    if (item.compra_status === "oc_pendente") {
+      return NextResponse.json(
+        {
+          error: "validacao_oc_requer_decisao",
+          message: "Use Encontrei ou Esgotado para validar este item OC.",
+        },
+        { status: 409 },
+      );
+    }
 
     const { data: pedido } = await supabase
       .from("siso_pedidos")
@@ -64,7 +73,18 @@ export async function POST(request: NextRequest) {
     if (!pedido) {
       return NextResponse.json({ error: "pedido não encontrado" }, { status: 404 });
     }
-    const ALLOWED = ["em_separacao", "aguardando_separacao", "aguardando_compra", "pendente_realocacao"];
+    // `validacao_oc` entra na lista: o cascade de parcial (loc zerou + sem
+    // cobertura) demove o pedido INTEIRO pra validacao_oc no meio da wave, mas
+    // os demais itens seguem com R viva e saldo — o operador tem que continuar
+    // pickando o resto (mesma premissa do checklist e de `iniciar`, que já
+    // aceita validacao_oc). Sem isso o pedido travava no checklist.
+    const ALLOWED = [
+      "em_separacao",
+      "aguardando_separacao",
+      "aguardando_compra",
+      "validacao_oc",
+      "pendente_realocacao",
+    ];
     if (!ALLOWED.includes(pedido.status_separacao ?? "")) {
       return NextResponse.json(
         { error: `pedido status ${pedido.status_separacao} não permite marcar` },

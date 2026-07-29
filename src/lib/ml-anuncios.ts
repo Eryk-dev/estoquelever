@@ -12,7 +12,10 @@
  * chamar a API ML novamente.
  */
 import { createServiceClient } from "./supabase-server";
-import { searchAndMatchItemsBySku, type MlItem } from "./ml-api";
+import {
+  searchAndMatchItemsBySku,
+  type MlItem,
+} from "./ml-api";
 import { logger } from "./logger";
 
 export interface AnuncioMl {
@@ -31,20 +34,93 @@ export interface AnuncioMl {
 
 const CACHE_TTL_MS = 5 * 60_000; // 5 minutos
 
-interface Conn {
+export interface ConexaoMlAtiva {
   id: string;
   ml_user_id: number;
   nickname: string;
 }
 
-async function listActiveConnections(): Promise<Conn[]> {
+export interface IndiceRecenteAnunciosAtivos {
+  skusAtivos: Set<string>;
+  anunciosAtivos: number;
+  contasAtivas: number;
+  atualizadoEm: string | null;
+}
+
+export function normalizarSkuAnuncio(sku: string): string {
+  return sku.trim().toLocaleUpperCase();
+}
+
+export function skuTemAnuncioAtivo(
+  sku: string,
+  skusAtivos: ReadonlySet<string>,
+): boolean {
+  return skusAtivos.has(normalizarSkuAnuncio(sku));
+}
+
+export async function listarConexoesMlAtivas(): Promise<ConexaoMlAtiva[]> {
   const supabase = createServiceClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("siso_ml_connections")
     .select("id, ml_user_id, nickname")
     .eq("ativo", true)
     .not("access_token", "is", null);
+  if (error) throw error;
   return data ?? [];
+}
+
+/**
+ * Lê somente o índice local recente. O cache é alimentado pelas consultas por
+ * SKU; portanto, ausência nesse conjunto significa somente "a verificar".
+ */
+export async function getIndiceRecenteAnunciosAtivos(): Promise<IndiceRecenteAnunciosAtivos> {
+  const conns = await listarConexoesMlAtivas();
+  if (conns.length === 0) {
+    return {
+      skusAtivos: new Set(),
+      anunciosAtivos: 0,
+      contasAtivas: 0,
+      atualizadoEm: null,
+    };
+  }
+
+  const supabase = createServiceClient();
+  const cutoff = new Date(Date.now() - CACHE_TTL_MS).toISOString();
+  const ids = conns.map((conn) => conn.id);
+  const skusAtivos = new Set<string>();
+  let anunciosAtivos = 0;
+  let atualizadoEm: string | null = null;
+  const PAGE_SIZE = 1000;
+
+  for (let page = 0; ; page++) {
+    const { data, error } = await supabase
+      .from("siso_ml_anuncios_cache")
+      .select("sku, atualizado_em")
+      .in("conexao_id", ids)
+      .eq("status", "active")
+      .gte("atualizado_em", cutoff)
+      .order("atualizado_em", { ascending: false })
+      .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+    if (error) throw error;
+
+    const rows = data ?? [];
+    anunciosAtivos += rows.length;
+    for (const row of rows) {
+      const sku = normalizarSkuAnuncio(row.sku);
+      if (sku) skusAtivos.add(sku);
+      if (!atualizadoEm || row.atualizado_em > atualizadoEm) {
+        atualizadoEm = row.atualizado_em;
+      }
+    }
+    if (rows.length < PAGE_SIZE) break;
+  }
+
+  return {
+    skusAtivos,
+    anunciosAtivos,
+    contasAtivas: conns.length,
+    atualizadoEm,
+  };
 }
 
 async function readCacheForConn(
@@ -124,7 +200,11 @@ async function persistCache(
  */
 export async function getAnunciosPorSku(
   sku: string,
-  opts?: { conexaoIds?: string[]; forceRefresh?: boolean },
+  opts?: {
+    conexaoIds?: string[];
+    forceRefresh?: boolean;
+    strictSearch?: boolean;
+  },
 ): Promise<{
   anuncios: AnuncioMl[];
   contas_consultadas: number;
@@ -147,7 +227,7 @@ export async function getAnunciosPorSku(
     };
   }
 
-  let conns = await listActiveConnections();
+  let conns = await listarConexoesMlAtivas();
   if (opts?.conexaoIds && opts.conexaoIds.length > 0) {
     const ids = new Set(opts.conexaoIds);
     conns = conns.filter((c) => ids.has(c.id));
@@ -169,6 +249,7 @@ export async function getAnunciosPorSku(
           c.id,
           c.ml_user_id,
           skuNorm,
+          { strictSearch: opts?.strictSearch },
         );
         await persistCache(c.id, skuNorm, items);
         return items.map<AnuncioMl>((it) => ({

@@ -155,6 +155,11 @@ export async function mandarItensParaValidacaoOC(
         compra_quantidade_solicitada: qtyResidual,
         compra_solicitada_em: now,
         fornecedor_oc: fornecedor,
+        // A marca anterior representa o pick da loc que acabou de zerar, não a
+        // decisão do validador OC. Preserva quantidade_pega (o OC decide só o
+        // residual), mas reabre a linha para Encontrei/Esgotado.
+        separacao_marcado: false,
+        separacao_marcado_em: null,
       })
       .eq("id", item.id);
 

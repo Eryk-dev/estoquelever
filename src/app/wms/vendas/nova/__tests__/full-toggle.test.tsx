@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: h.push }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/auth-context", () => ({
@@ -116,20 +117,24 @@ describe("Nova venda — toggle Full", () => {
     expect(screen.getByText("Como baixar do estoque")).toBeTruthy();
     expect(screen.getByText("Empresa que vende")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Full" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Envio Full/i }),
+    );
 
     expect(screen.queryByPlaceholderText("Nome do cliente")).toBeNull();
     expect(screen.queryByPlaceholderText("Opcional")).toBeNull();
     expect(screen.queryByText("Como baixar do estoque")).toBeNull();
     expect(screen.queryByText("Empresa que vende")).toBeNull();
-    expect(screen.getByText("Conta ML")).toBeTruthy();
+    expect(screen.getAllByText("Conta ML").length).toBeGreaterThan(0);
   });
 
   it("submete Full em /api/wms/full/criar sem cliente_nome/canal_venda/modo no payload", async () => {
     const { container } = renderPage();
 
     await waitFor(() => expect(screen.getByText("NetAir")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Full" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Envio Full/i }),
+    );
 
     const selects = container.querySelectorAll("select");
     expect(selects.length).toBe(2); // Conta ML + Galpão (Canal escondido)
@@ -139,7 +144,7 @@ describe("Nova venda — toggle Full", () => {
     fireEvent.click(screen.getByRole("button", { name: "escolher-produto" }));
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Criar Full e mandar pra separação" }),
+      screen.getByRole("button", { name: "Criar envio Full" }),
     );
 
     await waitFor(() =>
@@ -167,7 +172,9 @@ describe("Nova venda — toggle Full", () => {
     const { container } = renderPage();
 
     await waitFor(() => expect(screen.getByText("NetAir")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Full" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Envio Full/i }),
+    );
 
     // Default: desligado → flag ausente.
     const checkbox = container.querySelector(
@@ -182,7 +189,7 @@ describe("Nova venda — toggle Full", () => {
     fireEvent.change(selects[1], { target: { value: "g1" } });
     fireEvent.click(screen.getByRole("button", { name: "escolher-produto" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Criar Full e mandar pra separação" }),
+      screen.getByRole("button", { name: "Criar envio Full" }),
     );
 
     await waitFor(() =>

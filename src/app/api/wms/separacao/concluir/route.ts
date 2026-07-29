@@ -201,6 +201,7 @@ export async function POST(request: NextRequest) {
     const separadosCompletos = separados.filter(
       (pid) => !pedidosComCoberturaIncompleta.has(pid),
     );
+    const naoConcluidos: Array<{ pedido_id: string; motivo: string }> = [];
 
     // Pedidos com itens OC sem decisão voltam pra validação OC (preserva o
     // pick dos normais; libera o operador da wave).
@@ -234,8 +235,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Update pedidos transitioning to aguardando_compra (partial — waiting for purchases)
+    let aguardandoCompraAtualizados = aguardandoCompra;
     if (aguardandoCompra.length > 0) {
-      const { error: compraError } = await supabase
+      const { data: claimadosCompra, error: compraError } = await supabase
         .from("siso_pedidos")
         .update({
           status_separacao: "aguardando_compra",
@@ -243,7 +245,11 @@ export async function POST(request: NextRequest) {
           // Do NOT reset separacao_marcado/bipado_completo — preserve pick state
         })
         .in("id", aguardandoCompra)
-        .eq("status_separacao", "em_separacao");
+        // Um item pode mandar o pedido inteiro para validacao_oc enquanto os
+        // itens normais continuam sendo separados. Ao concluir os normais
+        // depois da decisão Esgotado, esse é um estado de origem válido.
+        .in("status_separacao", ["em_separacao", "validacao_oc"])
+        .select("id");
 
       if (compraError) {
         logger.logError({
@@ -261,6 +267,21 @@ export async function POST(request: NextRequest) {
           { status: 500 },
         );
       }
+
+      const claimadosCompraSet = new Set(
+        (claimadosCompra ?? []).map((pedido) => String(pedido.id)),
+      );
+      aguardandoCompraAtualizados = aguardandoCompra.filter((pid) =>
+        claimadosCompraSet.has(pid),
+      );
+      for (const pid of aguardandoCompra) {
+        if (!claimadosCompraSet.has(pid)) {
+          naoConcluidos.push({
+            pedido_id: pid,
+            motivo: "status_inesperado_aguardando_compra",
+          });
+        }
+      }
     }
 
     // Update fully completed pedidos to 'separado' (apenas os com cobertura OK)
@@ -270,7 +291,6 @@ export async function POST(request: NextRequest) {
     // `.eq("em_separacao")`, o UPDATE atualizava 0 linhas e a resposta mentia
     // "separado". `.select("id")` devolve os ids realmente claimados pra detectar
     // quem ficou de fora.
-    const naoConcluidos: Array<{ pedido_id: string; motivo: string }> = [];
     if (separadosCompletos.length > 0) {
       const { data: claimados, error: updateError } = await supabase
         .from("siso_pedidos")
@@ -279,7 +299,11 @@ export async function POST(request: NextRequest) {
           separacao_concluida_em: new Date().toISOString(),
         })
         .in("id", separadosCompletos)
-        .in("status_separacao", ["em_separacao", "aguardando_separacao"])
+        .in("status_separacao", [
+          "em_separacao",
+          "aguardando_separacao",
+          "validacao_oc",
+        ])
         .select("id");
 
       if (updateError) {
@@ -318,7 +342,7 @@ export async function POST(request: NextRequest) {
     logger.info("separacao-concluir", "Separação concluída", {
       separados: separadosConcluidos,
       naoConcluidos: naoConcluidos.map((n) => n.pedido_id),
-      aguardandoCompra,
+      aguardandoCompra: aguardandoCompraAtualizados,
       validacaoOc,
       pendentes,
       coberturaIncompleta: [...pedidosComCoberturaIncompleta],
@@ -341,9 +365,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Record history for pedidos transitioning to aguardando_compra
-    if (aguardandoCompra.length > 0) {
+    if (aguardandoCompraAtualizados.length > 0) {
       registrarEventos(
-        aguardandoCompra.map((pid) => ({
+        aguardandoCompraAtualizados.map((pid) => ({
           pedidoId: pid,
           evento: "separacao_aguardando_compra" as const,
           usuarioId: session.id,
@@ -392,7 +416,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       separados: separadosConcluidos,
-      aguardandoCompra,
+      aguardandoCompra: aguardandoCompraAtualizados,
       validacaoOc,
       pendentes,
       nao_concluidos: naoConcluidos,

@@ -868,10 +868,17 @@ export default function WmsSeparacaoPage() {
     "encaixotado",
   ];
   // Separação Full: a MESMA tela, servida em /wms/separacao-full. Difere só em
-  // (a) filtrar separacao_full=true na API, (b) 4 abas só (sem compras/NF/
-  // embalagem/conferência — Full termina em `separado`/`fechado`).
+  // (a) filtrar separacao_full=true na API, (b) manter a etapa de compras
+  // visível quando uma validação OC confirma Esgotado. Sem essa aba o Full
+  // mudava para aguardando_compra e simplesmente sumia da lane.
   const full = (pathname ?? "").startsWith("/wms/separacao-full");
-  const FULL_TABS: Tab[] = ["aguardando_separacao", "em_separacao", "separado", "fechado"];
+  const FULL_TABS: Tab[] = [
+    "aguardando_compra",
+    "aguardando_separacao",
+    "em_separacao",
+    "separado",
+    "fechado",
+  ];
   const rawTab = parseTab(searchParams?.get("tab"));
   // Em futura/full, tab fora do conjunto visível cai pra "pra separar".
   const tab =

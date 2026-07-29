@@ -82,7 +82,9 @@ vi.mock("@/lib/supabase-server", () => ({
 vi.mock("@/lib/session", () => ({
   getSessionUser: () => Promise.resolve({ id: "u1", nome: "Eryk" }),
 }));
-const pickMovPicking = vi.fn(() => Promise.resolve({ movSaidaId: "S1" }));
+const pickMovPicking = vi.fn((_args: unknown) =>
+  Promise.resolve({ movSaidaId: "S1" }),
+);
 vi.mock("@/lib/wms/separacao/pick-mov", () => ({
   pickMovPicking: (args: unknown) => pickMovPicking(args),
 }));
@@ -166,6 +168,65 @@ describe("bipar-checklist · match por substituto", () => {
 
     const res = await POST(req({ sku: "INEXISTENTE", pedido_ids: ["P1"] }));
     expect(res.status).toBe(404);
+    expect(pickMovPicking).not.toHaveBeenCalled();
+  });
+
+  it("continua bipando item normal quando outro item levou o pedido a validacao_oc", async () => {
+    const item = {
+      id: 2,
+      pedido_id: "P2",
+      sku: "FRM012",
+      gtin: null,
+      compra_status: null,
+    };
+    state.porSku = [item];
+    state.pedidos = [
+      {
+        id: "P2",
+        numero: "FULL-2",
+        empresa_origem_id: "e1",
+        separacao_galpao_id: "g1",
+        status_separacao: "validacao_oc",
+      },
+    ];
+    state.itemsFull = [
+      {
+        id: 2,
+        pedido_id: "P2",
+        produto_id: 928922691,
+        sku: "FRM012",
+        quantidade_pedida: 70,
+        quantidade_pega: 0,
+        separacao_parcial: false,
+        mov_saida_id: null,
+        produto_wms_substituto_id: null,
+      },
+    ];
+
+    const res = await POST(req({ sku: "FRM012", pedido_ids: ["P2"] }));
+
+    expect(res.status).toBe(200);
+    expect(pickMovPicking).toHaveBeenCalledTimes(1);
+    expect(rec.itemUpdates.some((u) => u.updates.separacao_marcado === true)).toBe(true);
+  });
+
+  it("não deixa o scanner comum pular Encontrei/Esgotado do item OC", async () => {
+    state.porSku = [
+      {
+        id: 3,
+        pedido_id: "P3",
+        sku: "TEC001",
+        gtin: null,
+        compra_status: "oc_pendente",
+      },
+    ];
+
+    const res = await POST(req({ sku: "TEC001", pedido_ids: ["P3"] }));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      error: "validacao_oc_requer_decisao",
+    });
     expect(pickMovPicking).not.toHaveBeenCalled();
   });
 });

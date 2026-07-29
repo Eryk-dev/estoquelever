@@ -1,14 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { use } from "react";
+import { use, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { sisoFetch, useAuth, usePermissoes } from "@/lib/auth-context";
 import { PageHeader, StatusBadge, Modal, Field, Icon } from "@/components/wms/ui/wms-ui";
 import { ProdutoCombo } from "@/components/wms/ui/modals";
 import type { Produto } from "@/lib/wms/types";
-import { formatRelativeTime, getMarketplaceName } from "@/lib/domain-helpers";
+import { getMarketplaceName } from "@/lib/domain-helpers";
+import {
+  classificarVendaItem,
+  quantidadeProcessadaVenda,
+  resumirItensVenda,
+} from "@/lib/wms/vendas-trace";
 
 interface PedidoDetalhe {
   id: string;
@@ -18,6 +22,7 @@ interface PedidoDetalhe {
   cliente_nome: string;
   cliente_cpf_cnpj: string | null;
   nome_ecommerce: string | null;
+  id_pedido_ecommerce: string | null;
   status: string;
   status_separacao: string | null;
   vendedor_id: string | null;
@@ -28,15 +33,58 @@ interface PedidoDetalhe {
   marcadores: string[];
   separacao_full: boolean;
   fechado_em: string | null;
+  processado_em: string | null;
+  embalagem_concluida_em: string | null;
+  separacao_iniciada_em: string | null;
+  separacao_concluida_em: string | null;
+}
+
+interface ItemMovimento {
+  id: string;
+  tipo: string;
+  quantidade: number;
+  tipo_link: string | null;
+  origem_tipo: string;
+  localizacao_codigo: string | null;
+  localizacao_tipo: string | null;
+  galpao_nome: string | null;
+  operador_nome: string | null;
+  criado_em: string;
+  estornado: boolean;
+  motivo: string | null;
 }
 
 interface ItemDetalhe {
-  id: string;
+  id: string | number;
   sku: string;
   descricao: string;
+  imagem_url: string | null;
+  gtin: string | null;
   quantidade_pedida: number;
+  quantidade_pega: number | null;
   quantidade_bipada: number;
+  quantidade_encaixotada: number;
+  quantidade_baixada_movimentos?: number;
   bipado_completo: boolean;
+  bipado_em: string | null;
+  bipado_por_nome: string | null;
+  separacao_marcado: boolean;
+  separacao_marcado_em: string | null;
+  separacao_parcial: boolean;
+  parcial_motivo: string | null;
+  parcial_em: string | null;
+  parcial_por_nome: string | null;
+  estoque_saida_lancada: boolean;
+  mov_saida_id: string | null;
+  compra_status: string | null;
+  compra_quantidade_solicitada: number | null;
+  compra_quantidade_recebida: number | null;
+  comprado_em: string | null;
+  recebido_em: string | null;
+  ordem_full: number | null;
+  linha: number | null;
+  movimentos: ItemMovimento[];
+  movimentos_compartilhados_produto?: ItemMovimento[];
 }
 
 interface HistEvento {
@@ -73,7 +121,7 @@ export default function VendaDetalhePage({
   // Cancelar venda requer permissão de operações de armazém (qualquer perm
   // de operacoes.* ou inventario.executar/supervisionar — alinhado com
   // requireWarehouseAccess no backend).
-  const podeCancelar = canAny(
+  const podeCancelarOperacional = canAny(
     "operacoes.transferir",
     "operacoes.replenishment",
     "operacoes.devolucoes",
@@ -90,8 +138,11 @@ export default function VendaDetalhePage({
   const [addProduto, setAddProduto] = useState<Produto | null>(null);
   const [addQty, setAddQty] = useState(1);
   const [editBusy, setEditBusy] = useState(false);
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
-  const { data, isLoading, refetch } = useQuery<DetalheResponse>({
+  const { data, isLoading, isError, refetch } = useQuery<DetalheResponse>({
     queryKey: ["venda-detalhe", id],
     queryFn: async () => {
       const r = await sisoFetch(`/api/wms/vendas/${encodeURIComponent(id)}`);
@@ -124,7 +175,22 @@ export default function VendaDetalhePage({
         toast.error(j.error ?? `Erro HTTP ${r.status}`);
         return;
       }
-      toast.success(data?.pedido.separacao_full ? "Full cancelado" : "Venda cancelada");
+      const result = (await r.json().catch(() => ({}))) as {
+        itens_para_devolver_manual?: unknown[];
+      };
+      const devolucoes = result.itens_para_devolver_manual?.length ?? 0;
+      if (devolucoes > 0) {
+        toast.warning(
+          `Venda cancelada. ${devolucoes} ${
+            devolucoes === 1 ? "item precisa" : "itens precisam"
+          } voltar ao estoque pela fila de devoluções.`,
+          { duration: 10000 },
+        );
+      } else {
+        toast.success(
+          data?.pedido.separacao_full ? "Full cancelado" : "Venda cancelada",
+        );
+      }
       setCancelarOpen(false);
       setCancelarMotivo("");
       refetch();
@@ -166,21 +232,50 @@ export default function VendaDetalhePage({
       setAddQty(1);
     }
   };
-  const removeItemFull = (itemId: string) => editFull("DELETE", `/itens/${itemId}`, undefined, "Item removido");
-  const setQtyFull = (itemId: string, quantidade: number) =>
+  const removeItemFull = (itemId: string | number) => editFull("DELETE", `/itens/${itemId}`, undefined, "Item removido");
+  const setQtyFull = (itemId: string | number, quantidade: number) =>
     editFull("PATCH", `/itens/${itemId}`, { quantidade }, "Quantidade atualizada");
 
   if (isLoading) {
-    return <div className="p-6 text-xs text-zinc-500">Carregando…</div>;
+    return (
+      <div className="wms-sales-detail-loading" aria-label="Carregando pedido">
+        <span />
+        <span />
+        <span />
+      </div>
+    );
   }
-  if (!data) {
-    return <div className="p-6 text-xs text-red-600">Pedido não encontrado.</div>;
+  if (isError || !data) {
+    return (
+      <div className="wms-sales-state">
+        <span className="wms-sales-state-icon is-error">
+          <Icon name="alert" size={18} />
+        </span>
+        <strong>Não foi possível abrir este pedido</strong>
+        <p>A consulta falhou ou o pedido não está mais disponível.</p>
+        <button
+          type="button"
+          className="wms-btn wms-btn-primary"
+          onClick={() => refetch()}
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
   }
 
   const { pedido, itens, historico } = data;
   // Editor de itens: só num Full aberto (não fechado, não cancelado) e com perm.
   const fullEditavel =
-    pedido.separacao_full && !pedido.fechado_em && pedido.status !== "cancelado" && podeCancelar;
+    pedido.separacao_full &&
+    !pedido.fechado_em &&
+    pedido.status !== "cancelado" &&
+    podeCancelarOperacional;
+  const podeCancelarPedido =
+    podeCancelarOperacional ||
+    (!pedido.separacao_full &&
+      !!user?.id &&
+      pedido.vendedor_id === user.id);
   const podeCancelarStatus = pedido.status !== "cancelado";
   const statusSeparacaoAtivo = ["em_separacao", "separado", "embalado", "conferido"].includes(
     pedido.status_separacao ?? "",
@@ -189,17 +284,44 @@ export default function VendaDetalhePage({
     pedido.origem_pedido === "manual"
       ? "Manual"
       : (getMarketplaceName(pedido.nome_ecommerce ?? "") || pedido.nome_ecommerce || "—");
+  const resumo = resumirItensVenda(itens);
+  const progresso =
+    resumo.unidades_total > 0
+      ? Math.round(
+          (resumo.unidades_processadas / resumo.unidades_total) * 100,
+        )
+      : 0;
+  const toggleItemTrace = (itemId: string | number) => {
+    const key = String(itemId);
+    setExpandedItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="wms-sales-detail">
       <PageHeader
         title={`#${pedido.numero}`}
-        subtitle={`${pedido.cliente_nome} · ${origemLabel} · ${formatRelativeTime(pedido.criado_em)}`}
+        subtitle={
+          pedido.separacao_full
+            ? "Envio de estoque ao Mercado Livre Full"
+            : `${pedido.cliente_nome} · ${origemLabel}`
+        }
         backHref="/wms/vendas"
-        backLabel="Voltar para vendas"
+        backLabel="Vendas diretas"
       >
+        <span
+          className={`wms-sales-origin ${
+            pedido.separacao_full ? "is-full" : ""
+          }`}
+        >
+          {pedido.separacao_full ? "FULL" : origemLabel}
+        </span>
         <StatusBadge status={pedido.status_separacao ?? pedido.status} />
-        {podeCancelarStatus && podeCancelar && (
+        {podeCancelarStatus && podeCancelarPedido && (
           <button
             type="button"
             className="wms-btn wms-btn-danger"
@@ -208,143 +330,441 @@ export default function VendaDetalhePage({
               setCancelarOpen(true);
             }}
             title={
-              pedido.separacao_full
-                ? "Cancelar Full · estorna picks (S→E) e libera reservas"
-                : statusSeparacaoAtivo
-                  ? "Em separação ativa — backend exigirá voltar etapa antes (400 esperado)"
-                  : "Cancelar venda · libera reservas e/ou estorna movs"
+              statusSeparacaoAtivo
+                ? "Itens já separados serão reconciliados ou enviados para devolução"
+                : `Cancelar ${pedido.separacao_full ? "envio Full" : "venda"}`
             }
           >
             <Icon name="x" size={11} />
-            {pedido.separacao_full ? "Cancelar Full" : "Cancelar venda"}
+            Cancelar
           </button>
         )}
       </PageHeader>
 
-      <div className="flex-1 overflow-auto p-4 space-y-4">
-        {/* Info row */}
-        <div
-          className="grid gap-3"
-          style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}
-        >
-          <InfoCell label="Vendedor">
-            <div className="flex items-center gap-2">
-              <span>{pedido.vendedor_nome ?? <span className="text-zinc-400">— atribuir</span>}</span>
-              {canReassign && (
-                <button className="wms-btn-link" onClick={() => setReassignOpen(true)}>
-                  <Icon name="edit" size={10} /> Editar
-                </button>
-              )}
+      <div className="wms-sales-detail-scroll">
+        <section className="wms-sales-detail-hero">
+          <div className="wms-sales-detail-progress">
+            <div>
+              <span>Progresso dos itens</span>
+              <strong>
+                {resumo.unidades_processadas.toLocaleString("pt-BR")} de{" "}
+                {resumo.unidades_total.toLocaleString("pt-BR")} unidades
+              </strong>
             </div>
-          </InfoCell>
-          <InfoCell label="Canal">{pedido.canal_venda ?? "—"}</InfoCell>
-          <InfoCell label="Galpão">{pedido.filial_origem ?? "—"}</InfoCell>
-          <InfoCell label="CPF/CNPJ">{pedido.cliente_cpf_cnpj ?? "—"}</InfoCell>
-        </div>
-
-        {/* Items */}
-        <div>
-          <div className="flex items-center justify-between">
-            <strong style={{ fontSize: 12 }}>Itens ({itens.length})</strong>
-            {pedido.separacao_full && pedido.fechado_em && (
-              <span className="text-[11px] text-zinc-400">
-                Full fechado — reabra na Separação Full pra editar
-              </span>
-            )}
+            <b>{progresso}%</b>
+            <span className="wms-sales-progress-track">
+              <i style={{ width: `${Math.min(100, progresso)}%` }} />
+            </span>
           </div>
-          <table className="mt-2 w-full border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-zinc-200 text-left text-zinc-500 dark:border-zinc-800">
-                <th className="py-2 pr-3 font-medium">SKU</th>
-                <th className="py-2 pr-3 font-medium">Descrição</th>
-                <th className="py-2 pr-3 font-medium text-right">Qty pedida</th>
-                <th className="py-2 pr-3 font-medium text-right">Qty bipada</th>
-                {fullEditavel && <th className="py-2 font-medium text-right">Ações</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {itens.map((it) => (
-                <tr key={it.id} className="border-b border-zinc-100 dark:border-zinc-900">
-                  <td className="py-2 pr-3 font-mono">{it.sku}</td>
-                  <td className="py-2 pr-3">{it.descricao}</td>
-                  <td className="py-2 pr-3 text-right">
-                    {fullEditavel ? (
-                      <FullItemQtyCell
-                        value={it.quantidade_pedida}
-                        disabled={editBusy}
-                        onCommit={(q) => setQtyFull(it.id, q)}
-                      />
-                    ) : (
-                      it.quantidade_pedida
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-right">
-                    {it.bipado_completo ? (
-                      <span className="text-emerald-600">{it.quantidade_bipada}</span>
-                    ) : (
-                      it.quantidade_bipada
-                    )}
-                  </td>
-                  {fullEditavel && (
-                    <td className="py-2 text-right">
+          <div className="wms-sales-detail-kpis">
+            <div>
+              <span>Itens</span>
+              <strong>{resumo.itens_total}</strong>
+              <small>{resumo.itens_processados} concluídos</small>
+            </div>
+            <div>
+              <span>Com atenção</span>
+              <strong
+                className={
+                  resumo.itens_com_excecao > 0 ? "is-warning" : undefined
+                }
+              >
+                {resumo.itens_com_excecao}
+              </strong>
+              <small>parcial ou compra</small>
+            </div>
+            <div>
+              <span>Criado em</span>
+              <strong>{formatDateTimeFull(pedido.criado_em, "date")}</strong>
+              <small>{formatDateTimeFull(pedido.criado_em, "time")}</small>
+            </div>
+            <div>
+              <span>Galpão</span>
+              <strong>{pedido.filial_origem ?? "—"}</strong>
+              <small>{pedido.separacao_full ? "origem do Full" : "separação"}</small>
+            </div>
+          </div>
+        </section>
+
+        <div className="wms-sales-detail-grid">
+          <main className="wms-sales-items-panel">
+            <header className="wms-sales-panel-head">
+              <div>
+                <span>Rastreabilidade item a item</span>
+                <h2>{pedido.separacao_full ? "Linhas do envio Full" : "Itens do pedido"}</h2>
+              </div>
+              {pedido.separacao_full && pedido.fechado_em && (
+                <span className="wms-sales-closed-note">
+                  Full fechado · reabra na Separação Full para editar
+                </span>
+              )}
+            </header>
+
+            <div className="wms-sales-item-list">
+              {itens.map((item, index) => {
+                const stage = classificarVendaItem(item);
+                const processada = quantidadeProcessadaVenda(item);
+                const itemProgress =
+                  item.quantidade_pedida > 0
+                    ? Math.round((processada / item.quantidade_pedida) * 100)
+                    : 0;
+                const expanded = expandedItemIds.has(String(item.id));
+                const latestLocation = [...item.movimentos]
+                  .reverse()
+                  .find((movimento) => movimento.localizacao_codigo);
+                const sharedMovimentos =
+                  item.movimentos_compartilhados_produto ?? [];
+
+                return (
+                  <article
+                    key={item.id}
+                    className={`wms-sales-item ${
+                      stage.tone === "warn" ? "has-warning" : ""
+                    }`}
+                  >
+                    <div className="wms-sales-item-main">
+                      <span className="wms-sales-item-order">
+                        {pedido.separacao_full
+                          ? String(item.ordem_full ?? index + 1).padStart(2, "0")
+                          : String(index + 1).padStart(2, "0")}
+                      </span>
+                      <div className="wms-sales-item-image">
+                        {item.imagem_url ? (
+                          // Catálogo aceita hosts externos heterogêneos; o
+                          // proxy do next/image não tem allowlist segura aqui.
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={item.imagem_url} alt={item.descricao} />
+                        ) : (
+                          <Icon name="box" size={18} />
+                        )}
+                      </div>
+                      <div className="wms-sales-item-product">
+                        <div>
+                          <code>{item.sku}</code>
+                          <span
+                            className={`wms-sales-item-stage is-${stage.tone}`}
+                          >
+                            {stage.label}
+                          </span>
+                        </div>
+                        <strong>{item.descricao}</strong>
+                        <small>
+                          {item.gtin ? `GTIN ${item.gtin}` : "GTIN não informado"}
+                          {latestLocation?.localizacao_codigo
+                            ? ` · última loc ${latestLocation.localizacao_codigo}`
+                            : ""}
+                        </small>
+                      </div>
+                      <div className="wms-sales-item-qty">
+                        <span>Processado</span>
+                        <strong>
+                          {processada.toLocaleString("pt-BR")} /{" "}
+                          {Number(item.quantidade_pedida).toLocaleString("pt-BR")}
+                        </strong>
+                        <span className="wms-sales-progress-track">
+                          <i
+                            style={{ width: `${Math.min(100, itemProgress)}%` }}
+                          />
+                        </span>
+                      </div>
+                      {fullEditavel && (
+                        <div className="wms-sales-item-edit">
+                          <FullItemQtyCell
+                            value={item.quantidade_pedida}
+                            disabled={editBusy}
+                            onCommit={(value) => setQtyFull(item.id, value)}
+                          />
+                          <button
+                            type="button"
+                            className="wms-btn-icon"
+                            disabled={editBusy}
+                            onClick={() => removeItemFull(item.id)}
+                            aria-label={`Remover ${item.sku}`}
+                            title="Remover item e reconciliar estoque"
+                          >
+                            <Icon name="trash" size={12} />
+                          </button>
+                        </div>
+                      )}
                       <button
                         type="button"
-                        className="wms-btn-icon"
-                        disabled={editBusy}
-                        onClick={() => removeItemFull(it.id)}
-                        aria-label="Remover item"
-                        title="Remover item (estorna estoque já baixado)"
+                        className="wms-sales-item-expand"
+                        onClick={() => toggleItemTrace(item.id)}
+                        aria-expanded={expanded}
                       >
-                        <Icon name="trash" size={12} />
+                        {expanded ? "Ocultar trilha" : "Ver trilha"}
+                        <Icon
+                          name={expanded ? "chevron-u" : "chevron-d"}
+                          size={11}
+                        />
                       </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </div>
 
-          {fullEditavel && (
-            <div className="mt-3 flex items-end gap-2" style={{ maxWidth: 560 }}>
-              <div style={{ flex: 1 }}>
-                <ProdutoCombo value={addProduto} onChange={setAddProduto} />
-              </div>
-              <input
-                type="number"
-                min={1}
-                value={addQty}
-                onChange={(e) => setAddQty(parseInt(e.target.value, 10) || 0)}
-                className="wms-input"
-                style={{ width: 80 }}
-                placeholder="Qty"
-              />
-              <button
-                type="button"
-                className="wms-btn wms-btn-primary wms-btn-sm"
-                disabled={editBusy || !addProduto || addQty <= 0}
-                onClick={addItemFull}
-              >
-                <Icon name="plus" size={11} /> Adicionar
-              </button>
+                    {stage.tone === "warn" && (
+                      <div className="wms-sales-item-alert">
+                        <Icon name="alert" size={12} />
+                        <span>
+                          {item.separacao_parcial
+                            ? item.parcial_motivo ||
+                              `${processada} de ${item.quantidade_pedida} unidades separadas`
+                            : `Item aguardando compra${
+                                item.compra_quantidade_solicitada
+                                  ? ` de ${item.compra_quantidade_solicitada} unidades`
+                                  : ""
+                              }`}
+                        </span>
+                      </div>
+                    )}
+
+                    {expanded && (
+                      <div className="wms-sales-item-trace">
+                        <div className="wms-sales-item-facts">
+                          <span>
+                            <small>Pedido</small>
+                            <strong>
+                              {Number(item.quantidade_pedida).toLocaleString("pt-BR")} un.
+                            </strong>
+                          </span>
+                          <span>
+                            <small>Processado</small>
+                            <strong>
+                              {processada.toLocaleString("pt-BR")} un.
+                            </strong>
+                          </span>
+                          <span>
+                            <small>Conferido</small>
+                            <strong>
+                              {Number(item.quantidade_bipada ?? 0).toLocaleString("pt-BR")} un.
+                            </strong>
+                          </span>
+                          <span>
+                            <small>Encaixotado</small>
+                            <strong>
+                              {Number(item.quantidade_encaixotada ?? 0).toLocaleString("pt-BR")} un.
+                            </strong>
+                          </span>
+                        </div>
+
+                        {item.movimentos.length > 0 ? (
+                          <ol className="wms-sales-movement-list">
+                            {item.movimentos.map((movimento) => (
+                              <li
+                                key={movimento.id}
+                                className={movimento.estornado ? "is-reversed" : ""}
+                              >
+                                <span
+                                  className={`wms-sales-movement-type is-${movimento.tipo.toLowerCase()}`}
+                                >
+                                  {movimento.tipo}
+                                </span>
+                                <div>
+                                  <strong>{movementLabel(movimento)}</strong>
+                                  <span>
+                                    {movimento.quantidade.toLocaleString("pt-BR")} un.
+                                    {movimento.localizacao_codigo
+                                      ? ` · ${movimento.localizacao_codigo}`
+                                      : ""}
+                                    {movimento.galpao_nome
+                                      ? ` · ${movimento.galpao_nome}`
+                                      : ""}
+                                  </span>
+                                </div>
+                                <time
+                                  dateTime={movimento.criado_em}
+                                  title={formatDateTimeFull(movimento.criado_em)}
+                                >
+                                  {formatDateTimeFull(movimento.criado_em)}
+                                  {movimento.operador_nome && (
+                                    <small>{movimento.operador_nome}</small>
+                                  )}
+                                </time>
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <div className="wms-sales-trace-empty">
+                            <Icon name="history" size={14} />
+                            Ainda não há movimentação de estoque para este item.
+                          </div>
+                        )}
+
+                        {sharedMovimentos.length > 0 && (
+                          <>
+                            <div className="wms-sales-trace-empty">
+                              <Icon name="alert" size={14} />
+                              Reserva ou movimentação compartilhada entre linhas
+                              deste SKU — sem rateio individual presumido.
+                            </div>
+                            <ol className="wms-sales-movement-list">
+                              {sharedMovimentos.map(
+                                (movimento) => (
+                                  <li
+                                    key={`shared-${movimento.id}`}
+                                    className={
+                                      movimento.estornado ? "is-reversed" : ""
+                                    }
+                                  >
+                                    <span
+                                      className={`wms-sales-movement-type is-${movimento.tipo.toLowerCase()}`}
+                                    >
+                                      {movimento.tipo}
+                                    </span>
+                                    <div>
+                                      <strong>
+                                        {movementLabel(movimento)} · compartilhada
+                                      </strong>
+                                      <span>
+                                        {movimento.quantidade.toLocaleString(
+                                          "pt-BR",
+                                        )}{" "}
+                                        un.
+                                        {movimento.localizacao_codigo
+                                          ? ` · ${movimento.localizacao_codigo}`
+                                          : ""}
+                                        {movimento.galpao_nome
+                                          ? ` · ${movimento.galpao_nome}`
+                                          : ""}
+                                      </span>
+                                    </div>
+                                    <time
+                                      dateTime={movimento.criado_em}
+                                      title={formatDateTimeFull(
+                                        movimento.criado_em,
+                                      )}
+                                    >
+                                      {formatDateTimeFull(movimento.criado_em)}
+                                      {movimento.operador_nome && (
+                                        <small>
+                                          {movimento.operador_nome}
+                                        </small>
+                                      )}
+                                    </time>
+                                  </li>
+                                ),
+                              )}
+                            </ol>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
             </div>
-          )}
-        </div>
 
-        {/* Histórico */}
-        <div>
-          <strong style={{ fontSize: 12 }}>Histórico</strong>
-          <ul className="mt-2 space-y-1.5 text-xs">
-            {historico.map((h) => (
-              <li key={h.id} className="flex gap-2 text-zinc-600 dark:text-zinc-400">
-                <span className="text-zinc-400">{formatRelativeTime(h.criado_em)}</span>
-                <span className="font-medium">{h.evento}</span>
-                {h.usuario_nome && <span className="text-zinc-500">por {h.usuario_nome}</span>}
-              </li>
-            ))}
-            {historico.length === 0 && (
-              <li className="text-zinc-400">Sem eventos registrados.</li>
+            {fullEditavel && (
+              <div className="wms-sales-add-full-item">
+                <div>
+                  <span>Adicionar linha ao Full</span>
+                  <strong>O estoque será reservado ao incluir o item.</strong>
+                </div>
+                <div className="wms-sales-add-full-fields">
+                  <ProdutoCombo value={addProduto} onChange={setAddProduto} />
+                  <input
+                    type="number"
+                    min={1}
+                    value={addQty}
+                    onChange={(event) =>
+                      setAddQty(parseInt(event.target.value, 10) || 0)
+                    }
+                    className="wms-input"
+                    aria-label="Quantidade"
+                  />
+                  <button
+                    type="button"
+                    className="wms-btn wms-btn-primary"
+                    disabled={editBusy || !addProduto || addQty <= 0}
+                    onClick={addItemFull}
+                  >
+                    <Icon name="plus" size={11} />
+                    Adicionar
+                  </button>
+                </div>
+              </div>
             )}
-          </ul>
+          </main>
+
+          <aside className="wms-sales-detail-aside">
+            <section className="wms-sales-aside-card">
+              <header>
+                <span>Pedido</span>
+                <h2>Dados e responsabilidade</h2>
+              </header>
+              <dl className="wms-sales-order-facts">
+                <div>
+                  <dt>Vendedor</dt>
+                  <dd>
+                    {pedido.vendedor_nome ?? "Não atribuído"}
+                    {canReassign && (
+                      <button
+                        type="button"
+                        className="wms-btn-link"
+                        onClick={() => setReassignOpen(true)}
+                      >
+                        <Icon name="edit" size={10} />
+                        Editar
+                      </button>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Cliente / destino</dt>
+                  <dd>
+                    {pedido.separacao_full
+                      ? "Mercado Livre Full"
+                      : pedido.cliente_nome || "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Canal</dt>
+                  <dd>{pedido.canal_venda ?? origemLabel}</dd>
+                </div>
+                <div>
+                  <dt>CPF / CNPJ</dt>
+                  <dd>{pedido.cliente_cpf_cnpj ?? "—"}</dd>
+                </div>
+                {pedido.id_pedido_ecommerce && (
+                  <div>
+                    <dt>ID marketplace</dt>
+                    <dd className="wms-mono">{pedido.id_pedido_ecommerce}</dd>
+                  </div>
+                )}
+                <div>
+                  <dt>Criação</dt>
+                  <dd>{formatDateTimeFull(pedido.criado_em)}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section className="wms-sales-aside-card">
+              <header>
+                <span>Histórico</span>
+                <h2>Linha do tempo do pedido</h2>
+              </header>
+              {historico.length > 0 ? (
+                <ol className="wms-sales-history">
+                  {historico.map((evento) => (
+                    <li key={evento.id}>
+                      <i />
+                      <div>
+                        <strong>{historyLabel(evento.evento)}</strong>
+                        <span>
+                          {formatDateTimeFull(evento.criado_em)}
+                          {evento.usuario_nome
+                            ? ` · ${evento.usuario_nome}`
+                            : ""}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="wms-sales-aside-empty">
+                  Nenhum evento registrado.
+                </p>
+              )}
+            </section>
+          </aside>
         </div>
       </div>
 
@@ -363,8 +783,10 @@ export default function VendaDetalhePage({
 
       {cancelarOpen && (
         <Modal
-          title="Cancelar venda"
-          subtitle={`#${pedido.numero} · ${pedido.cliente_nome}`}
+          title={pedido.separacao_full ? "Cancelar envio Full" : "Cancelar venda"}
+          subtitle={`#${pedido.numero} · ${
+            pedido.separacao_full ? "Mercado Livre Full" : pedido.cliente_nome
+          }`}
           width={520}
           onClose={() => !cancelando && setCancelarOpen(false)}
           footer={
@@ -384,70 +806,38 @@ export default function VendaDetalhePage({
                 onClick={submitCancelar}
               >
                 <Icon name="x" size={11} />
-                {cancelando ? "Cancelando…" : "Cancelar venda"}
+                {cancelando ? "Cancelando…" : "Confirmar cancelamento"}
               </button>
             </div>
           }
         >
           {statusSeparacaoAtivo && (
-            <div
-              style={{
-                background: "var(--wms-c-warn-bg, #fff4d6)",
-                border: "1px solid var(--wms-c-warn, #b8860b)",
-                borderRadius: "var(--wms-r-2)",
-                padding: "10px 12px",
-                marginBottom: 12,
-                fontSize: 12.5,
-              }}
-            >
-              <Icon name="alert" size={11} /> Pedido está em separação ativa
-              (<strong>{pedido.status_separacao}</strong>). O backend vai
-              recusar com 400 — operador precisa primeiro <em>voltar etapa</em>
-              {" "}pra preservar auditoria dos picks.
+            <div className="wms-sales-cancel-warning">
+              <Icon name="alert" size={13} />
+              <div>
+                <strong>Este pedido já entrou na operação.</strong>
+                <span>
+                  {pedido.separacao_full
+                    ? "As saídas já feitas serão estornadas e as reservas abertas serão liberadas."
+                    : "Itens já retirados irão para a fila de devoluções; reservas ainda abertas serão liberadas."}
+                </span>
+              </div>
             </div>
           )}
-          <p style={{ fontSize: 13, marginBottom: 10 }}>
-            Cancela essa venda. Conforme o status atual:
+          <p className="wms-sales-cancel-copy">
+            O cancelamento mantém toda a trilha do pedido e reconcilia o
+            estoque conforme o que já foi processado.
           </p>
-          <ul
-            style={{
-              fontSize: 12.5,
-              lineHeight: 1.55,
-              paddingLeft: 18,
-              marginBottom: 12,
-            }}
-          >
-            <li>
-              <strong>aguardando_separacao/compra</strong> — libera reservas R
-              (idempotente).
-            </li>
-            <li>
-              <strong>concluido</strong> com movs venda_manual — estorna cada
-              mov S (idempotente por estorno_de).
-            </li>
-            <li>
-              <strong>em_separacao/separado/embalado</strong> — 400. Voltar
-              etapa antes.
-            </li>
-            <li>
-              <strong>cancelado</strong> — no-op (idempotente, 200 com 0/0).
-            </li>
-          </ul>
-          <label
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              display: "block",
-              marginBottom: 6,
-            }}
-          >
-            Motivo do cancelamento (≥3 chars)
+          <label className="wms-field-lbl" htmlFor="venda-cancelar-motivo">
+            Motivo do cancelamento
+            <span className="wms-req">*</span>
           </label>
           <textarea
+            id="venda-cancelar-motivo"
             className="wms-textarea"
             value={cancelarMotivo}
             onChange={(e) => setCancelarMotivo(e.target.value)}
-            placeholder="Ex.: cliente desistiu, troca solicitada, pedido duplicado"
+            placeholder="Ex.: cliente desistiu, pedido duplicado ou envio incorreto"
             rows={3}
             autoFocus
             disabled={cancelando}
@@ -458,13 +848,70 @@ export default function VendaDetalhePage({
   );
 }
 
-function InfoCell({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border border-zinc-200 px-3 py-2 dark:border-zinc-800">
-      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
-      <div className="text-xs text-zinc-900 dark:text-zinc-100">{children}</div>
-    </div>
-  );
+function formatDateTimeFull(
+  iso: string | null,
+  part?: "date" | "time",
+): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  if (part === "date") {
+    return new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(date);
+  }
+  if (part === "time") {
+    return new Intl.DateTimeFormat("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function movementLabel(movimento: ItemMovimento): string {
+  const byLink: Record<string, string> = {
+    saida: "Saída confirmada no estoque",
+    liberacao_reserva: "Reserva consumida no pick",
+    ajuste_loc_zerou: "Ajuste de localização esgotada",
+  };
+  const byType: Record<string, string> = {
+    R: "Estoque reservado",
+    L: "Reserva liberada",
+    S: "Saída registrada",
+    E: "Entrada registrada",
+  };
+  const label =
+    (movimento.tipo_link ? byLink[movimento.tipo_link] : undefined) ??
+    byType[movimento.tipo] ??
+    "Movimentação de estoque";
+  return movimento.estornado ? `${label} · estornada` : label;
+}
+
+function historyLabel(evento: string): string {
+  const labels: Record<string, string> = {
+    venda_criada_manual: "Venda criada",
+    full_criado: "Envio Full criado",
+    separacao_iniciada: "Separação iniciada",
+    separacao_concluida: "Separação concluída",
+    parcial_loc_zerou: "Localização marcada como esgotada",
+    realocacao_sem_cobertura_galpao: "Sem cobertura no galpão",
+    enviado_validacao_oc_pos_zerou: "Item enviado para validação de compra",
+    oc_item_desfazer_encontrado: "Validação de item desfeita",
+    full_editado: "Envio Full alterado",
+    cancelado: "Pedido cancelado",
+  };
+  if (labels[evento]) return labels[evento];
+  const sentence = evento.replaceAll("_", " ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
 
 // Qty editável do item Full — commita no blur/Enter só quando muda pra valor

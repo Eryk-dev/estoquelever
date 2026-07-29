@@ -25,9 +25,18 @@ vi.mock("@/lib/sku-fornecedor", () => ({
 vi.mock("@/lib/historico-service", () => ({
   registrarEvento: vi.fn(async () => undefined),
 }));
+const { estornarMovSpy } = vi.hoisted(() => ({
+  estornarMovSpy: vi.fn(async () => undefined),
+}));
+const { rpcSpy } = vi.hoisted(() => ({
+  rpcSpy: vi.fn(async () => ({ data: null, error: null })),
+}));
 vi.mock("@/lib/wms/ledger", () => ({
-  estornarMovimentacao: vi.fn(),
+  estornarMovimentacao: estornarMovSpy,
   inserirMovimentacao: vi.fn(),
+}));
+vi.mock("@/lib/wms/reservas-picking", () => ({
+  estornarLiberacaoReserva: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/separacao/wms-mapping", () => ({
   resolverProdutoWms: vi.fn(async () => "prod-uuid"),
@@ -83,6 +92,30 @@ function dataFor(table: string, nth: number, single: boolean): unknown {
     // produto tem loc com saldo → caminho normal (sem "encontrei sem cadastro")
     return [{ localizacao_id: "loc1" }];
   }
+  if (table === "siso_movimentacoes") {
+    return single
+      ? { id: "mov-s1", origem_detalhes: {} }
+      : [];
+  }
+  if (table === "siso_pedido_item_mov_links") {
+    if (nth === 1) {
+      return [
+        {
+          id: "link-new",
+          mov_id: "mov-s1",
+          qty: 1,
+          criado_em: "2026-07-28T20:00:00Z",
+        },
+        {
+          id: "link-old",
+          mov_id: "mov-s-parcial",
+          qty: 5,
+          criado_em: "2026-07-28T19:00:00Z",
+        },
+      ];
+    }
+    return [{ mov_id: "mov-s-parcial" }];
+  }
   return [];
 }
 
@@ -92,7 +125,17 @@ vi.mock("@/lib/supabase-server", () => ({
       let op = "select";
       let single = false;
       const chain: Record<string, unknown> = {};
-      for (const m of ["select", "in", "eq", "neq", "not", "delete", "gt", "limit"]) {
+      for (const m of [
+        "select",
+        "in",
+        "eq",
+        "neq",
+        "not",
+        "delete",
+        "gt",
+        "limit",
+        "order",
+      ]) {
         chain[m] = () => {
           if (m === "delete") op = m;
           return chain;
@@ -119,6 +162,7 @@ vi.mock("@/lib/supabase-server", () => ({
       };
       return chain;
     },
+    rpc: rpcSpy,
   }),
 }));
 
@@ -183,5 +227,240 @@ describe("validar-oc-item encontrei — não pré-marca bip de embalagem", () =>
       bipado_completo: false,
       quantidade_bipada: 0,
     });
+  });
+
+  it("baixa somente o residual quando o item já teve pick parcial", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "oc_pendente",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+    tables.itensFull = [
+      {
+        ...tables.itensFull[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "encontrei" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(pickMovSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ item_id: 1, qty: 1 }),
+    );
+    expect(
+      updates.some(
+        (u) =>
+          u.table === "siso_pedido_itens" &&
+          u.payload.mov_saida_id === "mov-s1" &&
+          u.payload.quantidade_pega === 6,
+      ),
+    ).toBe(true);
+  });
+
+  it("bloqueia Encontrei stale em item comprado parcial", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "comprado",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "encontrei" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("estado_oc_invalido");
+    expect(pickMovSpy).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("trata retry de Encontrei já concluído como no-op", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 6,
+        compra_status: null,
+        mov_saida_id: "mov-s1",
+      },
+    ];
+    tables.itensFull = [
+      {
+        ...tables.itensFull[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        mov_saida_id: "mov-s1",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "encontrei" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.itens_atualizados).toBe(0);
+    expect(pickMovSpy).not.toHaveBeenCalled();
+    expect(
+      updates.some((u) => u.table === "siso_pedido_itens"),
+    ).toBe(false);
+  });
+
+  it("bloqueia Esgotado stale em item já comprado", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "comprado",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "esgotado" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("estado_oc_invalido");
+    expect(updates).toHaveLength(0);
+  });
+
+  it("trata retry de Esgotado já confirmado como no-op", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "aguardando_compra",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "esgotado" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.itens_atualizados).toBe(0);
+    expect(
+      updates.some((u) => u.table === "siso_pedido_itens"),
+    ).toBe(false);
+  });
+
+  it("não deixa desfazer enquanto o item ainda aguarda a decisão OC", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "oc_pendente",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "desfazer_encontrei" }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(estornarMovSpy).not.toHaveBeenCalled();
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("não deixa desfazer item que já foi enviado para compras", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 5,
+        compra_status: "aguardando_compra",
+        mov_saida_id: "mov-s-parcial",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "desfazer_encontrei" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("encontrei_nao_confirmado");
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("falha orientando reparo quando Encontrei não tem movimento vinculado", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 6,
+        compra_status: null,
+        mov_saida_id: null,
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "desfazer_encontrei" }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.error).toBe("movimento_encontrei_ausente");
+    expect(body.message).toContain("reparo");
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("ao desfazer, estorna só o residual e preserva o pick parcial anterior", async () => {
+    tables.itens = [
+      {
+        ...tables.itens[0] as Record<string, unknown>,
+        quantidade_pedida: 6,
+        quantidade_pega: 6,
+        compra_status: null,
+        mov_saida_id: "mov-s1",
+      },
+    ];
+
+    const res = await POST(
+      makeReq({ item_ids: ["1"], acao: "desfazer_encontrei" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(rpcSpy).toHaveBeenCalledWith(
+      "wms_desmarcar_item_atomico",
+      expect.objectContaining({
+        p_mov_s_id: "mov-s1",
+        p_qty_link: 1,
+        p_pedido_item_id: 1,
+      }),
+    );
+    expect(estornarMovSpy).not.toHaveBeenCalled();
+    expect(
+      updates.some(
+        (u) =>
+          u.table === "siso_pedido_itens" &&
+          u.payload.compra_status === "oc_pendente" &&
+          u.payload.compra_quantidade_solicitada === 1 &&
+          u.payload.mov_saida_id === "mov-s-parcial" &&
+          u.payload.quantidade_pega === 5 &&
+          u.payload.separacao_parcial === true,
+      ),
+    ).toBe(true);
   });
 });

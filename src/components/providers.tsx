@@ -19,9 +19,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
             // default retry:3 (≈1+2+4s backoff) feel like a multi-second hang.
             retry: 1,
             retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
-            // Operational lists are kept fresh by realtime + per-query polling;
-            // refiring every query on tab-focus just re-pays the auth tax.
-            refetchOnWindowFocus: false,
+            // Realtime não reproduz eventos perdidos enquanto a aba esteve
+            // suspensa. Ao voltar, revalida só queries ativas que já venceram
+            // o staleTime acima — cliques rápidos entre abas não refazem tudo.
+            refetchOnWindowFocus: true,
           },
           mutations: {
             retry: 0,

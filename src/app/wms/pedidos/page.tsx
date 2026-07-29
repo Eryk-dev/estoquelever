@@ -15,6 +15,7 @@ import {
   Icon,
   Pagination,
   StatusBadge,
+  fmtDateTime,
 } from "@/components/wms/ui/wms-ui";
 import { PedidoCardWms } from "@/components/wms/vendas/pedido-card-wms";
 import {
@@ -858,6 +859,7 @@ function TabExpedidos({
               <th>Decisão</th>
               <th>Separação</th>
               <th>Etiqueta</th>
+              <th className="wms-tar">Criado em</th>
               <th className="wms-tar">Embalado</th>
               <th style={{ width: 130 }}></th>
             </tr>
@@ -915,6 +917,13 @@ function TabExpedidos({
                     <span className="wms-td-mute">—</span>
                   )}
                 </td>
+                <td
+                  className="wms-tar wms-td-mute"
+                  style={{ fontSize: 12 }}
+                  title={p.criado_em}
+                >
+                  {fmtDateTime(p.criado_em)}
+                </td>
                 <td className="wms-tar wms-td-mute" style={{ fontSize: 12 }}>
                   {p.embalagem_concluida_em
                     ? formatRelativeTime(p.embalagem_concluida_em)
@@ -958,4 +967,3 @@ function TabExpedidos({
     </>
   );
 }
-

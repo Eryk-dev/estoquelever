@@ -159,7 +159,7 @@ async function processarParcialItem(
     const { data: itemsRaw, error: itemsErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_marcado, separacao_parcial, produto_wms_substituto_id",
+        "id, pedido_id, produto_id, sku, quantidade_pedida, quantidade_pega, separacao_marcado, separacao_parcial, produto_wms_substituto_id, compra_status",
       )
       .in("id", pedido_item_ids)
       .order("id", { ascending: true });
@@ -172,6 +172,19 @@ async function processarParcialItem(
       return NextResponse.json(
         { error: "alguns item_ids não foram encontrados" },
         { status: 404 },
+      );
+    }
+
+    const itemOcPendente = itemsRaw.find(
+      (item) => item.compra_status === "oc_pendente",
+    );
+    if (itemOcPendente) {
+      return NextResponse.json(
+        {
+          error: "validacao_oc_requer_decisao",
+          message: `Use Encontrei ou Esgotado para validar o item OC ${itemOcPendente.sku}.`,
+        },
+        { status: 409 },
       );
     }
 
@@ -231,7 +244,13 @@ async function processarParcialItem(
       return NextResponse.json({ error: "pedido(s) não encontrado(s)" }, { status: 404 });
     }
 
-    const naoEmSeparacao = pedidos.find((p) => p.status_separacao !== "em_separacao");
+    // `validacao_oc` também vale: o cascade de um item sem cobertura demove o
+    // pedido inteiro no meio da wave e os outros itens seguem pickáveis
+    // (espelha marcar-item/bipar-checklist).
+    const STATUS_PICKAVEL = ["em_separacao", "validacao_oc"];
+    const naoEmSeparacao = pedidos.find(
+      (p) => !STATUS_PICKAVEL.includes(p.status_separacao ?? ""),
+    );
     if (naoEmSeparacao) {
       return NextResponse.json(
         {

@@ -6,7 +6,7 @@ import { getFornecedorBySku } from "@/lib/sku-fornecedor";
 import { findOrCreateOcAberta } from "@/lib/compras-oc";
 import { registrarEvento } from "@/lib/historico-service";
 import { pickMovPicking } from "@/lib/wms/separacao/pick-mov";
-import { estornarMovimentacao, inserirMovimentacao } from "@/lib/wms/ledger";
+import { inserirMovimentacao } from "@/lib/wms/ledger";
 import { resolverLocalizacaoWms } from "@/lib/separacao/wms-mapping";
 import { resolverProdutoEfetivoComAutoSync } from "@/lib/wms/sync-tiny";
 import { registrarContagemInline, enfileirarLocParaContagem } from "@/lib/wms/contagem-inline";
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
     const { data: items, error: fetchErr } = await supabase
       .from("siso_pedido_itens")
       .select(
-        "id, pedido_id, sku, quantidade_pedida, quantidade_pega, compra_status, fornecedor_oc",
+        "id, pedido_id, sku, quantidade_pedida, quantidade_pega, compra_status, fornecedor_oc, mov_saida_id",
       )
       .in("id", normalizedIds);
 
@@ -100,6 +100,50 @@ export async function POST(request: NextRequest) {
         { error: "Nenhum item encontrado" },
         { status: 404 },
       );
+    }
+
+    if (acao === "encontrei") {
+      const estadoInvalido = items.find((item) => {
+        if (item.compra_status === "oc_pendente") return false;
+        const retryConcluido =
+          item.compra_status === null &&
+          !!item.mov_saida_id &&
+          Number(item.quantidade_pega ?? 0) >=
+            Number(item.quantidade_pedida ?? 0);
+        return !retryConcluido;
+      });
+      if (estadoInvalido) {
+        return NextResponse.json(
+          {
+            error: "estado_oc_invalido",
+            message:
+              "Encontrei só pode ser confirmado em item que aguarda validação OC.",
+            item_id: estadoInvalido.id,
+            compra_status: estadoInvalido.compra_status,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (acao === "esgotado") {
+      const estadoInvalido = items.find(
+        (item) =>
+          item.compra_status !== "oc_pendente" &&
+          item.compra_status !== "aguardando_compra",
+      );
+      if (estadoInvalido) {
+        return NextResponse.json(
+          {
+            error: "estado_oc_invalido",
+            message:
+              "Esgotado só pode ser confirmado em item que aguarda validação OC.",
+            item_id: estadoInvalido.id,
+            compra_status: estadoInvalido.compra_status,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     const now = new Date().toISOString();
@@ -175,7 +219,14 @@ export async function POST(request: NextRequest) {
           );
         }
         const itensAlocaveis = (itensFull ?? []).filter((it) => {
-          if (it.mov_saida_id) return false; // já picado (retry) — fora da alocação
+          const info = infoMap.get(String(it.id));
+          const pedida = Number(it.quantidade_pedida ?? 0);
+          const pega = Number(info?.quantidade_pega ?? 0);
+          const restante = Math.max(0, pedida - pega);
+          if (restante <= 0) return false; // já totalmente picado (retry)
+          // mov sem quantidade é um estado legado inconsistente. Não arrisca
+          // aplicar outra saída até o registro ser reparado.
+          if (it.mov_saida_id && pega <= 0) return false;
           const c = ctxMap.get(it.pedido_id as string);
           return Boolean(c && c.galpao && c.empresa);
         });
@@ -201,7 +252,11 @@ export async function POST(request: NextRequest) {
 
         const alocaveis = itensAlocaveis.map((it) => ({
           id: String(it.id),
-          qty: Number(it.quantidade_pedida ?? 0),
+          qty: Math.max(
+            0,
+            Number(it.quantidade_pedida ?? 0) -
+              Number(infoMap.get(String(it.id))?.quantidade_pega ?? 0),
+          ),
         }));
         planoContagem = alocarContagem(alocaveis, qtyContadaBody);
 
@@ -321,11 +376,38 @@ export async function POST(request: NextRequest) {
       }
 
       for (const item of itensFull ?? []) {
-        // Idempotência: item já picado anteriormente — pula pickMovPicking
-        // pra evitar dupla baixa em retry. O update abaixo é safe (mesmos
-        // campos, sem regredir estado).
-        const jaPicado = Boolean(item.mov_saida_id);
         const info = infoMap.get(String(item.id));
+        // Retry após Encontrei já concluído: estado e ledger já estão fechados.
+        // Mantém 200 idempotente sem duplicar saída, update ou histórico.
+        if (info?.compra_status === null) continue;
+        const qtyPedida = Number(item.quantidade_pedida ?? 0);
+        const qtyJaPegaAntes = Number(info?.quantidade_pega ?? 0);
+        const qtyRestante = Math.max(0, qtyPedida - qtyJaPegaAntes);
+        const temMovAnterior = Boolean(item.mov_saida_id);
+
+        // Um mov existente com quantidade_pega zerada não prova cobertura
+        // total: pode ser uma saída parcial antiga cujo estado foi perdido.
+        // Falha de forma explícita em vez de baixar o pedido uma segunda vez.
+        if (
+          temMovAnterior &&
+          qtyJaPegaAntes <= 0 &&
+          info?.compra_status === "oc_pendente"
+        ) {
+          itensNaoValidados.push({
+            item_id: String(item.id),
+            sku: (item.sku as string | null) ?? null,
+            motivo:
+              "item com saída anterior e quantidade pega inconsistente — requer reparo antes da validação",
+          });
+          continue;
+        }
+
+        // Idempotência: só considera totalmente picado quando a quantidade já
+        // cobre o pedido. A existência de mov_saida_id sozinha também ocorre
+        // no parcial (ex.: 5/6) e não pode pular a baixa do residual.
+        const jaPicado =
+          qtyRestante <= 0 ||
+          (temMovAnterior && info?.compra_status !== "oc_pendente");
 
         // Item parcial já resolvido (pick parcial + restante em compras):
         // replay/clique-duplo NÃO pode cair no update compartilhado — ele
@@ -335,12 +417,14 @@ export async function POST(request: NextRequest) {
         const ctx = ctxMap.get(item.pedido_id as string);
         let movSaidaId: string | null = null;
         if (!jaPicado && ctx && ctx.galpao && ctx.empresa) {
-          const qty = Number(item.quantidade_pedida ?? 0);
+          // A segunda validação OC resolve somente o residual. Usar a
+          // quantidade total aqui duplicava a saída já lançada no parcial.
+          const qty = qtyRestante;
           const produtoWmsId = await resolverProdutoEfetivoComAutoSync(ctx.empresa, item);
 
           if (qtyContadaBody !== null) {
             const plano = planoContagem?.get(String(item.id));
-            const jaPega = Number(info?.quantidade_pega ?? 0);
+            const jaPega = qtyJaPegaAntes;
 
             if (plano?.tipo === "parcial") {
               // ─── Contagem parcial: pega a sobra da contagem e manda o
@@ -760,7 +844,8 @@ export async function POST(request: NextRequest) {
           // do bip que completa o pedido) nunca saía sem reiniciar embalagem.
           bipado_completo: false,
           quantidade_bipada: 0,
-          quantidade_pega: Number(item.quantidade_pedida ?? 0),
+          quantidade_pega: qtyPedida,
+          separacao_parcial: false,
         };
         if (movSaidaId) updates.mov_saida_id = movSaidaId;
 
@@ -790,53 +875,281 @@ export async function POST(request: NextRequest) {
         });
       }
     } else if (acao === "desfazer_encontrei") {
-      // Fix-Final A T15 (#2.6): estorna a mov S do encontrei + limpa
-      // mov_saida_id/quantidade_pega/separacao_parcial. Antes desse fix,
-      // desfazer_encontrei restaurava o status pra oc_pendente sem reverter
-      // a saída do estoque, deixando o saldo permanentemente decrementado.
+      // Só compra_status=null representa um Encontrei confirmado. Qualquer
+      // estado de compra pode carregar uma saída PARCIAL anterior; usar
+      // "desfazer" nela apagaria estoque válido (foi o caso do TEC001 5/6).
+      const semEncontreiParaDesfazer = items.find(
+        (item) => item.compra_status !== null,
+      );
+      if (semEncontreiParaDesfazer) {
+        return NextResponse.json(
+          {
+            error: "encontrei_nao_confirmado",
+            message:
+              "Este item não possui uma confirmação Encontrei ativa para desfazer.",
+            item_id: semEncontreiParaDesfazer.id,
+          },
+          { status: 409 },
+        );
+      }
+
+      const semMovimentoEncontrei = items.find((item) => !item.mov_saida_id);
+      if (semMovimentoEncontrei) {
+        return NextResponse.json(
+          {
+            error: "movimento_encontrei_ausente",
+            message:
+              "A confirmação Encontrei não possui movimentação de saída vinculada. O item precisa de reparo antes de ser desfeito.",
+            item_id: semMovimentoEncontrei.id,
+          },
+          { status: 409 },
+        );
+      }
+
       for (const item of items) {
         const fornecedorInfo = getFornecedorBySku(item.sku);
-
-        // 1. Estorna a mov S registrada em mov_saida_id (se houver).
-        //    Se mov_saida_id é null, significa que o encontrei não chegou a
-        //    gerar mov (modo legacy ou WMS_AS_SOURCE off) — só limpa campos.
         const movSaidaId = (item as { mov_saida_id?: string | null }).mov_saida_id;
+        const quantidadePedida = Number(item.quantidade_pedida ?? 0);
+        const quantidadeAtual = Number(item.quantidade_pega ?? 0);
+        let quantidadeEstornada = 0;
+        let movAnteriorId: string | null = null;
+        let liberacaoId: string | null = null;
+
         if (movSaidaId) {
-          try {
-            await estornarMovimentacao({
-              mov_id: movSaidaId,
-              usuario_id: user.id,
-              motivo: `desfazer_encontrei OC (item ${item.id})`,
-            });
-          } catch (e) {
-            logger.logError({
-              error: e instanceof Error ? e : new Error(String(e)),
-              source: "validar-oc-item",
-              message: `Falha ao estornar mov_saida ${movSaidaId} em desfazer_encontrei`,
-              category: "business_logic",
-              metadata: { item_id: item.id, mov_saida_id: movSaidaId },
-            });
-            continue;
+          // Resolve a L pareada pela reserva gravada na própria S. A RPC de
+          // desmarcar recebe S+L e, na mesma transação, devolve o saldo ANTES
+          // de recriar a reserva (respeita reservado <= saldo).
+          const { data: movAtual, error: movAtualErr } = await supabase
+            .from("siso_movimentacoes")
+            .select("id, origem_detalhes")
+            .eq("id", movSaidaId)
+            .maybeSingle();
+          if (movAtualErr) {
+            return NextResponse.json(
+              { error: "falha_buscar_movimento", message: movAtualErr.message },
+              { status: 500 },
+            );
           }
+          const detalhes =
+            movAtual?.origem_detalhes &&
+            typeof movAtual.origem_detalhes === "object"
+              ? (movAtual.origem_detalhes as Record<string, unknown>)
+              : {};
+          const reservaOrigem =
+            typeof detalhes.reserva_origem === "string"
+              ? detalhes.reserva_origem
+              : null;
+          if (reservaOrigem) {
+            const { data: liberacao, error: liberacaoErr } = await supabase
+              .from("siso_movimentacoes")
+              .select("id")
+              .eq("tipo", "L")
+              .eq("estorno_de", reservaOrigem)
+              .maybeSingle();
+            if (liberacaoErr) {
+              return NextResponse.json(
+                {
+                  error: "falha_buscar_liberacao",
+                  message: liberacaoErr.message,
+                },
+                { status: 500 },
+              );
+            }
+            if (liberacao?.id) {
+              liberacaoId = String(liberacao.id);
+            }
+          }
+
+          // A S de uma wave pode ser compartilhada entre vários itens. Estorna
+          // somente a fração vinculada a ESTE item; jamais a movimentação
+          // global inteira quando existe tabela ponte.
+          const { data: linksSaida, error: linksSaidaErr } = await supabase
+            .from("siso_pedido_item_mov_links")
+            .select("id, mov_id, qty, criado_em")
+            .eq("pedido_item_id", item.id)
+            .eq("tipo_link", "saida");
+          if (linksSaidaErr) {
+            return NextResponse.json(
+              { error: "falha_buscar_links", message: linksSaidaErr.message },
+              { status: 500 },
+            );
+          }
+          const linksDoEncontrei = (linksSaida ?? []).filter(
+            (link) => String(link.mov_id) === String(movSaidaId),
+          );
+
+          if (linksDoEncontrei.length > 0) {
+            for (const link of linksDoEncontrei) {
+              const { error: estornoParcialErr } = await supabase.rpc(
+                "wms_desmarcar_item_atomico",
+                {
+                  p_mov_s_id: link.mov_id,
+                  p_mov_l_id: liberacaoId,
+                  p_pedido_id: String(item.pedido_id),
+                  p_usuario_id: user.id,
+                  p_motivo: `Desfazer Encontrei OC — item ${item.id}`,
+                  p_qty_link: Number(link.qty),
+                  p_pedido_item_id: Number(item.id),
+                },
+              );
+              if (estornoParcialErr) {
+                logger.logError({
+                  error: estornoParcialErr,
+                  source: "validar-oc-item",
+                  message: "Falha no desfazer atômico de Encontrei OC",
+                  category: "business_logic",
+                  metadata: {
+                    item_id: item.id,
+                    mov_saida_id: movSaidaId,
+                    qty: link.qty,
+                  },
+                });
+                return NextResponse.json(
+                  {
+                    error: "falha_desfazer_encontrei",
+                    message: estornoParcialErr.message,
+                  },
+                  { status: 409 },
+                );
+              }
+              quantidadeEstornada += Number(link.qty ?? 0);
+            }
+
+            const { error: deleteLinksErr } = await supabase
+              .from("siso_pedido_item_mov_links")
+              .delete()
+              .in(
+                "id",
+                linksDoEncontrei.map((link) => link.id),
+              );
+            if (deleteLinksErr) {
+              return NextResponse.json(
+                {
+                  error: "falha_remover_links_estornados",
+                  message: deleteLinksErr.message,
+                },
+                { status: 500 },
+              );
+            }
+          } else {
+            // Legado sem link: só permite estorno total quando a movimentação
+            // não está vinculada a outro item. Se estiver, requer reparo
+            // dirigido em vez de devolver estoque alheio.
+            const { data: outrosLinks, error: outrosLinksErr } = await supabase
+              .from("siso_pedido_item_mov_links")
+              .select("id")
+              .eq("mov_id", movSaidaId)
+              .neq("pedido_item_id", item.id)
+              .limit(1);
+            if (outrosLinksErr) {
+              return NextResponse.json(
+                { error: "falha_validar_movimento", message: outrosLinksErr.message },
+                { status: 500 },
+              );
+            }
+            if ((outrosLinks ?? []).length > 0) {
+              return NextResponse.json(
+                {
+                  error: "movimento_compartilhado_sem_link",
+                  message:
+                    "A saída é compartilhada com outro item e não pode ser desfeita automaticamente.",
+                },
+                { status: 409 },
+              );
+            }
+
+            const { error: legacyRpcErr } = await supabase.rpc(
+              "wms_desmarcar_item_atomico",
+              {
+                p_mov_s_id: movSaidaId,
+                p_mov_l_id: liberacaoId,
+                p_pedido_id: String(item.pedido_id),
+                p_usuario_id: user.id,
+                p_motivo: `Desfazer Encontrei OC (item ${item.id}, legado)`,
+              },
+            );
+            if (legacyRpcErr) {
+              logger.logError({
+                error: legacyRpcErr,
+                source: "validar-oc-item",
+                message: `Falha no desfazer atômico legado ${movSaidaId}`,
+                category: "business_logic",
+                metadata: { item_id: item.id, mov_saida_id: movSaidaId },
+              });
+              return NextResponse.json(
+                {
+                  error: "falha_estornar_saida",
+                  message: legacyRpcErr.message,
+                },
+                { status: 409 },
+              );
+            }
+            quantidadeEstornada = Math.min(
+              quantidadeAtual,
+              quantidadePedida,
+            );
+          }
+
+          if (liberacaoId) {
+            await supabase
+              .from("siso_pedido_item_mov_links")
+              .delete()
+              .eq("pedido_item_id", item.id)
+              .eq("mov_id", liberacaoId);
+          }
+
+          const { data: linksRestantes, error: linksRestantesErr } =
+            await supabase
+              .from("siso_pedido_item_mov_links")
+              .select("mov_id")
+              .eq("pedido_item_id", item.id)
+              .eq("tipo_link", "saida")
+              .order("criado_em", { ascending: false })
+              .limit(1);
+          if (linksRestantesErr) {
+            return NextResponse.json(
+              {
+                error: "falha_buscar_movimento_anterior",
+                message: linksRestantesErr.message,
+              },
+              { status: 500 },
+            );
+          }
+          movAnteriorId = linksRestantes?.[0]?.mov_id
+            ? String(linksRestantes[0].mov_id)
+            : null;
         }
 
-        // 2. Limpa todos os campos de pick + mov_saida_id + quantidade_pega
+        const quantidadeAnterior = Math.max(
+          0,
+          quantidadeAtual - quantidadeEstornada,
+        );
+        const quantidadeResidual = Math.max(
+          0,
+          quantidadePedida - quantidadeAnterior,
+        );
+        const updatesDesfazer: Record<string, unknown> = {
+          compra_status: "oc_pendente",
+          fornecedor_oc: fornecedorInfo.fornecedor,
+          compra_quantidade_solicitada: quantidadeResidual,
+          compra_solicitada_em: now,
+          ordem_compra_id: null,
+          separacao_marcado: false,
+          bipado_completo: false,
+          quantidade_bipada: 0,
+          mov_saida_id: movAnteriorId,
+          quantidade_pega: quantidadeAnterior,
+          separacao_parcial: quantidadeAnterior > 0,
+        };
+        if (quantidadeAnterior === 0) {
+          updatesDesfazer.parcial_motivo = null;
+          updatesDesfazer.parcial_em = null;
+        }
+
+        // Restaura a decisão OC preservando qualquer pick parcial anterior.
         const { error: updErr } = await supabase
           .from("siso_pedido_itens")
-          .update({
-            compra_status: "oc_pendente",
-            fornecedor_oc: fornecedorInfo.fornecedor,
-            compra_quantidade_solicitada: 0, // NOT NULL DEFAULT 0 — null viola a constraint
-            compra_solicitada_em: null,
-            ordem_compra_id: null,
-            separacao_marcado: false,
-            bipado_completo: false,
-            quantidade_bipada: 0,
-            mov_saida_id: null,
-            quantidade_pega: 0,
-            separacao_parcial: false,
-            parcial_motivo: null,
-          })
+          .update(updatesDesfazer)
           .eq("id", item.id);
 
         if (updErr) {
@@ -846,7 +1159,10 @@ export async function POST(request: NextRequest) {
             message: `Erro ao atualizar item ${item.id} (desfazer_encontrei)`,
             category: "database",
           });
-          continue;
+          return NextResponse.json(
+            { error: "falha_atualizar_item", message: updErr.message },
+            { status: 500 },
+          );
         }
         itensAtualizados++;
 
@@ -855,12 +1171,21 @@ export async function POST(request: NextRequest) {
           evento: "oc_item_desfazer_encontrado",
           usuarioId: user.id,
           usuarioNome: user.nome,
-          detalhes: { sku: item.sku, item_id: item.id, mov_estornada: movSaidaId },
+          detalhes: {
+            sku: item.sku,
+            item_id: item.id,
+            mov_estornada: movSaidaId,
+            quantidade_estornada: quantidadeEstornada,
+            quantidade_preservada: quantidadeAnterior,
+          },
         });
       }
     } else {
       // acao === "esgotado"
       for (const item of items) {
+        // Retry após Esgotado já confirmado: não regride OC nem duplica
+        // vínculo/histórico. A avaliação de transição abaixo continua rodando.
+        if (item.compra_status === "aguardando_compra") continue;
         const fornecedorInfo = getFornecedorBySku(item.sku);
 
         // Qty efetiva = pedida - já pegada (parcial). As realocações picadas JÁ

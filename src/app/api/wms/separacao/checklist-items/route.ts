@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { getSessionUser } from "@/lib/session";
 import { locsBloqueadasSet } from "@/lib/wms/loc-locks";
 import { escolherLocCobrindo } from "@/lib/separacao/wms-mapping";
+import { itemVisivelNoChecklistPorCompra } from "./visibility";
 
 /**
  * GET /api/separacao/checklist-items?pedidos=id1,id2,id3
@@ -157,11 +158,6 @@ export async function GET(request: NextRequest) {
         "id, empresa_origem_id, separacao_galpao_id, status_separacao, flag_saldo_apareceu, embalagem_operador_id, embalagem_concluida_em, embalado_real_por, embalado_real_em",
       )
       .in("id", pedido_ids);
-
-    const pedidoStatusMap = new Map<string, string | null>();
-    for (const pedido of pedidos ?? []) {
-      pedidoStatusMap.set(pedido.id, pedido.status_separacao ?? null);
-    }
 
     // Embalagem & etiqueta (painel DETALHES da aba embalados): quem embalou/
     // emitiu a etiqueta + impressora usada. Nomes via siso_usuarios; impressora
@@ -486,22 +482,11 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Shape response (empresa_origem_id = separating empresa for location updates)
-    // In pick-oc mode, show ALL items (including OC items) so the operator can pick them.
-    // In normal mode, hide OC items for aguardando_compra pedidos.
-    const visibleItems = (items ?? []).filter((item) => {
-      if (item.compra_status === "indisponivel" || item.compra_status === "cancelado") {
-        return false;
-      }
-
-      if (!isPickOC) {
-        const pedidoStatus = pedidoStatusMap.get(item.pedido_id);
-        if (pedidoStatus === "aguardando_compra") {
-          return item.compra_status == null;
-        }
-      }
-
-      return true;
-    });
+    // Fora do pick-OC, um item cuja decisão já virou compra precisa sair da
+    // validação imediatamente, mesmo se o pedido misto continuar validacao_oc.
+    const visibleItems = (items ?? []).filter((item) =>
+      itemVisivelNoChecklistPorCompra(item.compra_status, isPickOC),
+    );
 
     const result = visibleItems.map((item) => {
       const sepEmpresaId = pedidoSepEmpresaMap.get(item.pedido_id) ?? null;

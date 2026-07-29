@@ -10,7 +10,8 @@
  *
  * Query params:
  *   tab        = pendentes | em_separacao | baixados | concluidos (default pendentes)
- *   vendedor_id (string|"__todos__") — vendedor filter; "__todos__" desliga auto-filtro
+ *   vendedor_id (string|"__todos__") — filtro exclusivo de admin/operador;
+ *                                      outros perfis sempre usam o próprio id
  *   marketplace = "Mercado Livre" | "Shopee" | "manual" — filtro de origem
  *   galpao_id  — filtra por separacao_galpao_id
  *   data_de / data_ate (ISO date)
@@ -22,6 +23,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase-server";
 import { getSessionUser } from "@/lib/session";
 import { userCan } from "@/lib/permissions";
+import {
+  calcularSaidasVendaPorItem,
+  resumirItensVenda,
+  type VendaMovLinkTraceLike,
+  type VendaMovimentoTraceLike,
+} from "@/lib/wms/vendas-trace";
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
@@ -52,22 +59,23 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(sp.get("page_size") ?? String(PAGE_SIZE_DEFAULT), 10)),
   );
 
-  // Filtro de visibilidade (não auth). Proxy via permissões:
-  //   - isAdmin: tem sistema.usuarios (só admin no seed).
-  //   - isVendedor: tem vendas.criar mas NÃO é admin — preserva semântica
-  //     do cargo 'vendedor' (auto-filtro "Meus pedidos" + hide custo).
+  // Filtro de visibilidade. Só admin/operador pode escolher outro vendedor ou
+  // todos; qualquer outro perfil autenticado fica preso ao próprio user.id.
+  // Espelha a fronteira de autorização usada no detalhe da venda.
   const isAdmin = userCan(user, "sistema.usuarios");
-  const isVendedor = !isAdmin && userCan(user, "vendas.criar");
+  const isOperador = userCan(user, "separacao.executar");
+  const podeFiltrarVendedor = isAdmin || isOperador;
+  const isVendedor =
+    !podeFiltrarVendedor && userCan(user, "vendas.criar");
   const hideCusto = isVendedor && !isAdmin;
 
-  // Auto-filtro "Meus pedidos" — vendedor sem param explícito vê só os dele
-  let vendedorFilter: string | null = null;
-  if (vendedorParam === "__todos__") {
-    vendedorFilter = null; // explicitly all
-  } else if (vendedorParam) {
-    vendedorFilter = vendedorParam;
-  } else if (isVendedor) {
-    vendedorFilter = user.id;
+  let vendedorFilter: string | null = user.id;
+  if (podeFiltrarVendedor) {
+    if (vendedorParam === "__todos__") {
+      vendedorFilter = null;
+    } else {
+      vendedorFilter = vendedorParam || null;
+    }
   }
 
   const supabase = createServiceClient();
@@ -79,7 +87,8 @@ export async function GET(request: NextRequest) {
        nome_ecommerce, id_pedido_ecommerce, sugestao, sugestao_motivo, status, tipo_resolucao,
        decisao_final, separacao_galpao_id, status_separacao, marcadores, criado_em,
        processado_em, embalagem_concluida_em, etiqueta_url,
-       vendedor_id, vendedor_nome, origem_pedido, canal_venda`,
+       vendedor_id, vendedor_nome, origem_pedido, canal_venda,
+       separacao_full, fechado_em`,
       { count: "exact" },
     )
     .or("origem_pedido.eq.manual,nome_ecommerce.in.(\"Mercado Livre\",\"Shopee\")")
@@ -143,14 +152,144 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ erro: error.message }, { status: 500 });
   }
 
+  // A lista precisa mostrar progresso real do pedido, não só o status do
+  // cabeçalho. Busca os itens somente da página atual e agrega no servidor
+  // para manter o payload pequeno.
+  const pedidos = data ?? [];
+  const pedidoIds = pedidos.map((pedido) => String(pedido.id));
+  const resumoPorPedido = new Map<
+    string,
+    ReturnType<typeof resumirItensVenda>
+  >();
+
+  if (pedidoIds.length > 0) {
+    const { data: itens, error: itensError } = await supabase
+      .from("siso_pedido_itens")
+      .select(
+        `id, pedido_id, sku, quantidade_pedida, quantidade_pega, quantidade_bipada,
+         quantidade_encaixotada, separacao_marcado, separacao_parcial,
+         bipado_completo, estoque_saida_lancada, mov_saida_id, compra_status`,
+      )
+      .in("pedido_id", pedidoIds);
+
+    if (itensError) {
+      return NextResponse.json({ erro: itensError.message }, { status: 500 });
+    }
+
+    const itemRows = itens ?? [];
+    const itemIds = itemRows.map((item) => Number(item.id));
+    const [linksResult, pedidoMovsResult, legacyMovsResult] = await Promise.all([
+      itemIds.length > 0
+        ? supabase
+            .from("siso_pedido_item_mov_links")
+            .select("pedido_item_id, mov_id, qty, tipo_link")
+            .in("pedido_item_id", itemIds)
+        : Promise.resolve({ data: [], error: null }),
+      supabase
+        .from("siso_movimentacoes")
+        .select(
+          "id, pedido_id, tipo, quantidade, qty_estornada, estorno_de, origem_detalhes",
+        )
+        .in("pedido_id", pedidoIds),
+      // Cutover legado da baixa direta: as primeiras vendas gravavam o pedido
+      // somente dentro do JSON da movimentação.
+      supabase
+        .from("siso_movimentacoes")
+        .select(
+          "id, pedido_id, tipo, quantidade, qty_estornada, estorno_de, origem_detalhes",
+        )
+        .in("origem_detalhes->>pedido_id_manual", pedidoIds),
+    ]);
+
+    const traceError =
+      linksResult.error ?? pedidoMovsResult.error ?? legacyMovsResult.error;
+    if (traceError) {
+      return NextResponse.json({ erro: traceError.message }, { status: 500 });
+    }
+
+    const movimentosMap = new Map<string, VendaMovimentoTraceLike & {
+      pedido_id?: string | null;
+    }>();
+    for (const movimento of [
+      ...(pedidoMovsResult.data ?? []),
+      ...(legacyMovsResult.data ?? []),
+    ]) {
+      const origemDetalhes =
+        movimento.origem_detalhes &&
+        typeof movimento.origem_detalhes === "object" &&
+        !Array.isArray(movimento.origem_detalhes)
+          ? (movimento.origem_detalhes as Record<string, unknown>)
+          : {};
+      movimentosMap.set(String(movimento.id), {
+        ...movimento,
+        origem_detalhes: origemDetalhes,
+      });
+    }
+
+    const itensAgrupados = new Map<string, typeof itemRows>();
+    for (const item of itemRows) {
+      const pedidoId = String(item.pedido_id);
+      const grupo = itensAgrupados.get(pedidoId) ?? [];
+      grupo.push(item);
+      itensAgrupados.set(pedidoId, grupo);
+    }
+
+    const movimentosAgrupados = new Map<string, VendaMovimentoTraceLike[]>();
+    for (const movimento of movimentosMap.values()) {
+      const pedidoId = String(
+        movimento.pedido_id ??
+          movimento.origem_detalhes?.pedido_id_manual ??
+          "",
+      );
+      if (!pedidoId) continue;
+      const grupo = movimentosAgrupados.get(pedidoId) ?? [];
+      grupo.push(movimento);
+      movimentosAgrupados.set(pedidoId, grupo);
+    }
+
+    const linksPorItem = new Map<string, VendaMovLinkTraceLike[]>();
+    for (const link of linksResult.data ?? []) {
+      const itemId = String(link.pedido_item_id);
+      const grupo = linksPorItem.get(itemId) ?? [];
+      grupo.push(link);
+      linksPorItem.set(itemId, grupo);
+    }
+
+    for (const pedidoId of pedidoIds) {
+      const itensPedido = itensAgrupados.get(pedidoId) ?? [];
+      const linksPedido = itensPedido.flatMap(
+        (item) => linksPorItem.get(String(item.id)) ?? [],
+      );
+      const saidasPorItem = calcularSaidasVendaPorItem(
+        itensPedido,
+        movimentosAgrupados.get(pedidoId) ?? [],
+        linksPedido,
+      );
+      resumoPorPedido.set(
+        pedidoId,
+        resumirItensVenda(
+          itensPedido.map((item) => ({
+            ...item,
+            quantidade_baixada_movimentos:
+              saidasPorItem.get(String(item.id)) ?? 0,
+          })),
+        ),
+      );
+    }
+  }
+
   // Hide custo (defense in depth — pedido row doesn't expose custo direct, but
   // garantia futura). Por ora não filtra nada — só sinaliza no payload.
   return NextResponse.json({
-    pedidos: data ?? [],
+    pedidos: pedidos.map((pedido) => ({
+      ...pedido,
+      resumo_itens:
+        resumoPorPedido.get(String(pedido.id)) ?? resumirItensVenda([]),
+    })),
     total: count ?? 0,
     page,
     page_size: pageSize,
-    auto_filtro_meus: isVendedor && !vendedorParam,
+    auto_filtro_meus: !podeFiltrarVendedor,
     hide_custo: hideCusto,
   });
 }

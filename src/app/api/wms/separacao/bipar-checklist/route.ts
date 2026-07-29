@@ -95,9 +95,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    items = (items ?? []).filter((item) => item.compra_status !== "cancelado");
+    const encontrouOcPendente = (items ?? []).some(
+      (item) => item.compra_status === "oc_pendente",
+    );
+    items = (items ?? []).filter(
+      (item) =>
+        item.compra_status !== "cancelado" &&
+        item.compra_status !== "oc_pendente",
+    );
 
     if (!items || items.length === 0) {
+      if (encontrouOcPendente) {
+        return NextResponse.json(
+          {
+            error: "validacao_oc_requer_decisao",
+            message: "Use Encontrei ou Esgotado para validar este item OC.",
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         { error: "Nenhum item encontrado com este SKU/GTIN nos pedidos selecionados" },
         { status: 404 },
@@ -131,6 +147,7 @@ export async function POST(request: NextRequest) {
       "em_separacao",
       "aguardando_separacao",
       "aguardando_compra",
+      "validacao_oc",
       "pendente_realocacao",
     ];
     const permitidos = new Set<string>(

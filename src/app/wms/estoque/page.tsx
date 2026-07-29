@@ -375,6 +375,13 @@ export default function EstoquePage() {
       >
         <button
           className="wms-btn wms-btn-ghost"
+          onClick={() => router.push("/wms/estoque/sem-anuncio")}
+        >
+          <Icon name="search" size={12} />
+          Conferir anúncios ML
+        </button>
+        <button
+          className="wms-btn wms-btn-ghost"
           onClick={() => modals.open("ajuste")}
         >
           <Icon name="sliders" size={12} />

@@ -1,6 +1,7 @@
 import type { LiveStockEntry } from "@/lib/wms/live-stock";
 
 export type CrossStatus = "sugestao" | "confirmado" | "bloqueado";
+export type FiltroOrigemSugestao = "todas" | "manual" | "automatica";
 
 export interface CrossPar {
   id: number;
@@ -39,6 +40,22 @@ export function normalizarPar(a: string, b: string): { sku_a: string; sku_b: str
 /** Recusa ligar uma peça com ela mesma. */
 export function saoLigaveis(a: string, b: string): boolean {
   return a !== b;
+}
+
+export function origemSugestao(
+  fonte: string,
+): Exclude<FiltroOrigemSugestao, "todas"> {
+  return fonte.trim().toLowerCase().endsWith("_auto")
+    ? "automatica"
+    : "manual";
+}
+
+export function filtrarSugestoesPorOrigem<T extends { fonte: string }>(
+  itens: T[],
+  filtro: FiltroOrigemSugestao,
+): T[] {
+  if (filtro === "todas") return itens;
+  return itens.filter((item) => origemSugestao(item.fonte) === filtro);
 }
 
 export function outroLado(par: { sku_a: string; sku_b: string }, sku: string): string {

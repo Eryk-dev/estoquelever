@@ -1499,6 +1499,10 @@ Caminhos suportados:
 - Tries to find items by SKU within the given pedidos
 - If no SKU match, tries GTIN match
 - Filters out items with compra_status = "cancelado"
+- Pedidos que migraram para `validacao_oc` no meio da wave continuam aceitando
+  bip dos itens normais restantes. Itens `oc_pendente` não passam pelo scanner
+  comum: retornam **409** `validacao_oc_requer_decisao` e exigem a ação
+  **Encontrei/Esgotado**.
 - Marks all matching items as separacao_marcado = true
 - Returns updated items
 - **Fail-loud (2026-06-11):** item cujo pick falhou (ctx do pedido ausente, `pickMovPicking` null ou exceção) **NÃO é marcado** — fica pendente pro re-bipe e a resposta vira 422 com `nao_bipados`. Antes o item era marcado com `quantidade_pega=pedida` e `mov_saida_id=null` (peça saía sem S no ledger).
@@ -1565,8 +1569,14 @@ Caminhos suportados:
 
 **Business Logic:**
 - Fetches item from `siso_pedido_itens`
-- Validates parent pedido has status_separacao = "em_separacao", "aguardando_separacao" **ou `pendente_realocacao`** (fix-pack 2026-05-18 I7 — permite marcar item em pedido travado por realocação sem cobertura)
+- Validates parent pedido has status_separacao = `em_separacao`,
+  `aguardando_separacao`, `aguardando_compra`, `validacao_oc` ou
+  `pendente_realocacao`. `validacao_oc` mantém os itens **normais** restantes
+  pickáveis quando outro item do mesmo pedido cai no OC no meio da wave.
 - Blocks if `separacao_parcial = true` (must use `/api/wms/separacao/parcial` instead)
+- Blocks `compra_status='oc_pendente'` with **409**
+  `validacao_oc_requer_decisao`; esse item só pode seguir por
+  **Encontrei/Esgotado**.
 - Updates separacao_marcado and separacao_marcado_em (null if unmarked)
 - **On mark (Fase 1 — fail-loud):** chama a RPC atômica `wms_pick_item_atomico` (L libera a R viva + S `nf_venda`, numa transação). A loc vem da **R viva** do pedido (`buscarReservaPendentePorProduto`), não de heurística. **Se a baixa falhar (saldo insuficiente, R já liberada), retorna 409 e NÃO marca o item** — antes marcava com "graceful failure" (logava warn e seguia), o que deixava item marcado sem saída no ledger (invariante A violado). Item sem R viva (OC já comprado / R liberada) cai no fallback S-only na loc com maior saldo.
 - On unmark: estorna a S e **ressuscita a R** (ordem: S antes de L, pra preservar o invariante reservado≤saldo).
@@ -1721,7 +1731,7 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - Groups by pedido_id, checks if ALL items have separacao_marcado = true
 - Moves complete pedidos to status = "separado" with separacao_concluida_em
 - **Itens OC sem decisão (2026-06-10):** pedido com item `compra_status='oc_pendente'` (ninguém clicou Encontrei/Esgotado) NÃO vai mais pra `aguardando_compra` por arrasto — volta pra `validacao_oc` (bucket `validacaoOc` na resposta), resetando `separacao_operador_id`/`separacao_iniciada_em` e preservando o pick dos itens normais. Só esgotado explícito (ou o restante de uma contagem parcial no Encontrei) manda item pra compras.
-- Pedidos com itens já decididos pra compra (`aguardando_compra`/`comprado`) e normais todos marcados → `aguardandoCompra` (pausa pra compras, como antes)
+- Pedidos com itens já decididos pra compra (`aguardando_compra`/`comprado`) e normais todos marcados → `aguardandoCompra` (pausa pra compras). A transição aceita como origem `em_separacao` **ou** `validacao_oc`, confirma os IDs realmente atualizados e não responde sucesso falso em corrida de status.
 - Fire-and-forget: calls `preCriarAgrupamentosEmLote` (ensure agrupamentos exist)
 - Fire-and-forget: calls `recarregarEtiquetasFaltantes` (re-download ZPL for pedidos missing cached labels)
 
@@ -1880,9 +1890,15 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
 - Fetches pedido info (empresa_origem_id, separacao_galpao_id, status_separacao)
 - For each pedido, resolves the "separating empresa" (the empresa in separacao_galpao_id that will physically separate/ship)
 - Fetches localizacao and stock from siso_pedido_item_estoques (filtering by separating empresa)
-- Filters items based on pedido status:
-  - If status = "aguardando_compra": exclude items with compra_status = null (only show OC items)
-  - Otherwise: exclude items with compra_status = "indisponivel" or "cancelado"
+- Filtra os itens pelo modo do checklist:
+  - No checklist normal, mostra itens sem compra e `oc_pendente`; assim a
+    segunda decisão **Encontrei/Esgotado** permanece disponível.
+  - Depois de **Esgotado**, estados `aguardando_compra`, `comprado` e
+    `recebido` saem imediatamente da lista, inclusive em pedido misto que
+    continua com status global `validacao_oc`.
+  - No modo `pick-oc`, preserva os estados de compra porque essa fila existe
+    para separar o material já comprado.
+  - `indisponivel` e `cancelado` ficam ocultos nos dois modos.
 - Returns items with empresa_origem_id = separating empresa (for location updates)
 - Includes `realocacoes` for items with `separacao_parcial=true` — only rows with `status='aguardando_picking'`
 
@@ -2042,11 +2058,17 @@ O item **permanece não-marcado**. O front-end deve avisar o operador (saldo/pos
   - `realocacao_ja_picada` — race no `UPDATE … WHERE status='aguardando_picking'` (a realoc foi marcada como `picado`/`cancelado` por outra request entre o fetch e o UPDATE pessimista).
   - `race_item_ja_picado` — race no `UPDATE … WHERE separacao_marcado=false` (outro operador marcou o item entre o fetch e o UPDATE).
   - `posicao_reservada` — saldo reservado por **outros** pedidos não cobre a `quantidade_pega`. Gate compara `quantidade_pega` contra `saldo − reservado_de_outros` (= disponível + reserva viva do próprio lote nesta loc), **não** contra `disponivel` cru. A reserva do próprio pedido (R que o `aprovar` criou e que o passo 7a libera) não bloqueia — o pedido tem direito a ela. Fix 2026-06-01: antes usava `disponivel` cru e travava o pedido de pegar a própria reserva quando a loc estava 100% alocada entre vários pedidos (disponivel=0). Payload `{ error, saldo, reservado (de outros), disponivel (pra você), quantidade_pega }`.
+  - `validacao_oc_requer_decisao` — o item solicitado já é `oc_pendente`; use
+    `validar-oc-item` com ação Encontrei/Esgotado. Itens normais do mesmo pedido
+    continuam aceitos mesmo com o pedido em `validacao_oc`.
   - Item já processado / realocação não-`aguardando_picking` (versões anteriores ao fix-pack — agora coberto pelos códigos acima).
 
 **Side Effects (resumo):**
 - Inserts 1-2 rows in `siso_movimentacoes` (origem_tipo=`nf_venda` + optionally `ajuste_pick_zerou`). *(origem `emprestimo` removida em 2026-05-20.)* **Shape (fix 2026-05-21, commit `fe1a849`):** `origem_id=NULL` em todas as movs do endpoint (RPC `wms_inserir_movimentacao` exige uuid; antes vinha string `pedido:<tinyId>` causando 22P02 silencioso). Tiny pedido id viaja em `origem_detalhes.pedido_id_tiny` (jsonb); wave consolidado lista também `pedidos_cobertos` no jsonb.
 - Modo item: updates `siso_pedido_itens` (`separacao_parcial`, `quantidade_pega`, `parcial_em`, `parcial_por`, `parcial_motivo`, `mov_saida_id`, `mov_ajuste_loc_zerou_id`, `separacao_marcado=true`).
+- Quando o residual fica sem cobertura e vira `oc_pendente`, a transição limpa
+  `separacao_marcado`/`separacao_marcado_em` para abrir a segunda decisão OC,
+  mas preserva `quantidade_pega`; Esgotado compra somente o residual.
 - Modo realocação: updates `siso_pedido_item_realocacoes` da raiz (`status`, `quantidade_pega`, `parcial`, `parcial_motivo`, `parcial_em`, `parcial_por`, `mov_id`, `mov_ajuste_loc_zerou_id`); acumula `quantidade_pega` no `siso_pedido_itens` pai.
 - Inserts rows in `siso_pedido_item_realocacoes` (status=`aguardando_picking`, `parent_realocacao_id` setado no modo realocação).
 - May update `siso_pedidos.status_separacao = 'pendente_realocacao'` se modo item sem cobertura.
@@ -3019,12 +3041,18 @@ revertia). Now is paritário: re-iniciar embalagem é seguro.
 ```
 
 **Business Logic:**
-- **encontrei:** Clears all compra fields (compra_status, fornecedor_oc, compra_quantidade_solicitada, compra_solicitada_em, ordem_compra_id) and marks item as picked (separacao_marcado = true, quantidade_pega = quantidade_pedida). **O bip de EMBALAGEM fica pendente** (bipado_completo = false, quantidade_bipada = 0) — fix 2026-06-12: pré-marcar o bip fazia o pedido cair na aba Separados já "Bipado" e a etiqueta (disparada só no bip que completa o pedido) nunca saía. Exceção: o ramo parcial da contagem pré-preenche quantidade_bipada = pegaTotal (com bipado_completo = false) por design da embalagem direta OC. Três sub-caminhos mutuamente exclusivos:
+- **encontrei:** Resolve somente o residual (`quantidade_pedida - quantidade_pega`), sem repetir a S de um pick parcial anterior. Depois limpa os campos de compra e marca o item como pego por inteiro (separacao_marcado = true, quantidade_pega = quantidade_pedida). Estado legado com `mov_saida_id` e quantidade pega zerada falha explicitamente para reparo, em vez de arriscar dupla baixa. **O bip de EMBALAGEM fica pendente** (bipado_completo = false, quantidade_bipada = 0) — fix 2026-06-12: pré-marcar o bip fazia o pedido cair na aba Separados já "Bipado" e a etiqueta (disparada só no bip que completa o pedido) nunca saía. Exceção: o ramo parcial da contagem pré-preenche quantidade_bipada = pegaTotal (com bipado_completo = false) por design da embalagem direta OC. Três sub-caminhos mutuamente exclusivos:
   - **com `qty_contada`** (contagem inline, parcial permitida): reconcilia o saldo da loc-alvo (resolvida por `localizacao_id` ou `localizacao_codigo`) via `registrarContagemInline` UMA vez antes dos picks, depois aloca a contagem entre os itens (`alocarContagem` em `lib/wms/separacao/alocacao-contagem.ts`): cobertos inteiros → pick normal; sobra → pick parcial + restante pra compras; sem cobertura → compras (helper `enviarItemParaCompras`, mesma semântica do esgotado).
-  - **com `solicitar_contagem=true`** (Fase 4 — contagem diferida): gera mov E (`ajuste_manual`, origem_id `solicitar-contagem-{item_id}`) + mov S (pick) com `quantidade_pedida`, e enfileira a loc para contagem futura (`enfileirarLocParaContagem`, fire-and-forget). Saldo da loc fica temporariamente subcontado. Loc obrigatória (`localizacao_id` ou `localizacao_codigo`).
-  - **legado (sem ambos):** pick via `pickMovPicking`, que resolve a loc com maior saldo disponível no galpão. Se produto não tem saldo em nenhuma loc, exige `localizacao_id` (body) e gera mov E de `ajuste_manual` antes do pick.
+  - **com `solicitar_contagem=true`** (Fase 4 — contagem diferida): gera mov E (`ajuste_manual`, origem_id `solicitar-contagem-{item_id}`) + mov S (pick) com a quantidade residual, e enfileira a loc para contagem futura (`enfileirarLocParaContagem`, fire-and-forget). Saldo da loc fica temporariamente subcontado. Loc obrigatória (`localizacao_id` ou `localizacao_codigo`).
+  - **legado (sem ambos):** pick residual via `pickMovPicking`, que resolve a loc com maior saldo disponível no galpão. Se produto não tem saldo em nenhuma loc, exige `localizacao_id` (body) e gera mov E de `ajuste_manual` antes do pick.
 - **esgotado:** Sets compra_status = aguardando_compra, fills fornecedor_oc via getFornecedorBySku, sets compra_quantidade_solicitada and compra_solicitada_em. Auto-creates or finds existing OC (siso_ordens_compra) by fornecedor + galpao and links item.
-- **desfazer_encontrei:** Restores compra_status = oc_pendente, fills fornecedor_oc via getFornecedorBySku, clears separacao_marcado/bipado_completo/quantidade_bipada. Reverts decisao_final to "oc" if it was flipped to "propria".
+- **desfazer_encontrei:** É recusado enquanto o item ainda está
+  `oc_pendente` (não existe Encontrei confirmado para desfazer). Depois de
+  Encontrei, usa `wms_desmarcar_item_atomico` com `link.qty` para estornar
+  somente a nova fração S, recriar a reserva na mesma transação e preservar
+  quantidade/movimento do pick parcial anterior. Restaura
+  `compra_status=oc_pendente`, fornecedor e quantidade residual; reverte
+  decisao_final para "oc" se havia sido alterada para "propria".
 - **Auto-transition FR-9:** When all OC items resolved and none have compra_status (all found), sets decisao_final = propria. If pedido in validacao_oc, transitions to aguardando_separacao.
 - **Auto-transition FR-8:** When all OC items resolved and ALL items have compra_status (100% OC pedido), transitions to aguardando_compra, clears separacao_operador_id and separacao_iniciada_em.
 
@@ -3322,7 +3350,9 @@ Etapa terminal "Fechar" (grava `fechado_em`/`fechado_por`, status segue `separad
 
 **Body:** `{ pedido_ids: string[], reabrir?: boolean }` · **Resposta 200:** `{ ok, atualizados, ja_no_estado }`
 
-> A **listagem** da lane Full reusa `GET /api/wms/separacao?full=1` (4 abas; `?fechado=0|1` split da aba Separado/Fechados). `GET /api/wms/separacao/checklist-items` inclui `ordem_full`.
+> A **listagem** da lane Full reusa `GET /api/wms/separacao?full=1` (5 abas,
+> incluindo **Compras**; `?fechado=0|1` separa Separados/Fechados).
+> `GET /api/wms/separacao/checklist-items` inclui `ordem_full`.
 
 ---
 
@@ -5207,7 +5237,7 @@ Camada de equivalência ÚNICA, em torno do caderno `siso_cross_equivalencias` (
 
 **Auth:** `vendas.aprovar_troca`
 
-**Response (200):** lista de pares `sugestao` com `{ id, sku_a, sku_b, ...dados das 2 peças (descricao, imagem_url) }`
+**Response (200):** lista de pares `sugestao` com `{ id, sku_a, sku_b, fonte, ...dados das 2 peças (descricao, imagem_url) }`. A UI permite alternar entre **Todas**, **Manuais** (fontes não automáticas) e **Automáticas** (`fonte` terminada em `_auto`, hoje `oem_auto`) para priorizar a curadoria manual.
 
 **Side Effects:** None
 
@@ -5622,6 +5652,110 @@ Saldos agregados por perspectiva (3D — refactor 2026-05-20).
 - `produto_id`, `galpao_id` — filtros opcionais. *`empresa_id` removido — não é mais coordenada de estoque.*
 
 **Response 200:** `{ rows: [{ chave, nome, saldo, reservado, disponivel, itens: [...] }] }` ordenado por saldo desc. Linhas trazem `custo_medio` global do produto (de `siso_custo_medio`) quando aplicável.
+
+### GET /api/wms/estoque/sem-anuncio
+
+Relatório de produtos com saldo físico (`saldo > 0`) sem anúncio ativo nas
+contas Mercado Livre. Acessível pela ação **Conferir anúncios ML** da página
+`/wms/estoque`.
+
+**Auth:** `requireAuth`.
+
+**Query params:** `galpao_id` opcional — restringe o saldo ao galpão ativo.
+
+**Business Logic:**
+- Lê o saldo autoritativo de `siso_estoque` via `saldosPorPerspectiva("produto")`.
+- Cruza o estoque com a última geração completa de cada conta ativa no índice
+  `siso_ml_anuncios_indice_completo`, publicada por
+  `siso_ml_anuncios_scan_state.ultima_geracao_concluida`.
+- O snapshot é considerado conclusivo somente quando **todas** as contas ativas
+  possuem uma geração completa com no máximo 30 horas. O worker inicia uma nova
+  varredura após 20 horas, mantendo a última geração concluída disponível
+  enquanto a próxima é construída.
+- Também une ao índice os anúncios ativos conhecidos no cache recente
+  `siso_ml_anuncios_cache` (TTL de 5 minutos), evitando falso negativo entre
+  duas varreduras completas.
+- Sem migration aplicada, durante a primeira varredura, com alguma conta sem
+  snapshot ou com snapshot vencido, a ausência **não** é tratada como prova:
+  as linhas retornam como `candidato`.
+- Com cobertura completa e vigente, a linha recebe
+  `sem_anuncio_no_snapshot_completo` e a ausência é conclusiva para o instante
+  da última varredura, não uma garantia em tempo real.
+- Compara SKU sem diferença de caixa/espaços laterais.
+
+**Response 200:**
+`{ rows: [{ produto_id, sku, descricao, imagem_url, saldo, reservado, disponivel, situacao: "candidato" | "sem_anuncio_no_snapshot_completo", galpoes }], produtos_com_saldo, contas_ativas, contas_indexadas, anuncios_ativos_indexados, indice_atualizado_em, indice_completo_disponivel, varredura_completa_em, snapshot_mais_antigo_em, indice_valido_ate, contas_indice, tipo_lista: "candidatos" | "sem_anuncio_no_snapshot_completo", ausencia_conclusiva, limitacao_busca_direta, gerado_em }`.
+
+**Side Effects:** None.
+
+### GET /api/wms/ml/anuncios-indexar
+
+Worker incremental que constrói o índice exaustivo de anúncios ativos do
+Mercado Livre. A migration
+`20260729022322_ml_anuncios_indice_completo.sql` cria as tabelas de índice e
+checkpoint e agenda o cron `wms_ml_anuncios_indice_completo` a cada minuto.
+
+**Auth:** header `X-Worker-Secret` igual a `WORKER_SECRET`; alternativamente,
+sessão autenticada com permissão `sistema.usuarios` para execução manual. O
+segredo não é aceito por query string.
+
+**Business Logic:**
+- Processa no máximo uma página de até 100 anúncios por conta ativa em cada
+  chamada, usando o scroll `search_type=scan` do Mercado Livre.
+- Persiste checkpoint, página pendente e lease por conta. Se a requisição cair
+  após buscar uma página, se o scroll expirar ou se o estado ficar ambíguo, a
+  geração em construção é reiniciada em vez de avançar com lacuna.
+- Não usa `paging.total` para decidir o fim: só publica depois que `results`
+  vier vazio ou `null`. Resposta 200 sem `results`/`scroll_id`, ou com tipo
+  inválido, falha fechada e não encerra a geração.
+- Baixa os detalhes em lotes de até 20 itens com
+  `include_attributes=all`; isso é necessário para indexar SKUs armazenados no
+  item e em `variations[]`, incluindo `seller_custom_field` e `SELLER_SKU`.
+- Um anúncio que deixou de estar ativo entre o scan e o multi-get é ignorado.
+  Se o multi-get, o upsert ou outro passo posterior ao checkpoint falhar, a
+  página pendente é preservada e repetida de forma idempotente. Um **429** no
+  fetch do scroll também mantém o cursor para nova tentativa. Erros incertos
+  antes de persistir a página reiniciam a geração; em nenhum caso uma geração
+  parcial é publicada.
+- A geração é publicada atomicamente apenas depois da última página, trocando
+  `ultima_geracao_concluida`. Até lá, o relatório continua lendo o snapshot
+  completo anterior. Leases evitam duas execuções simultâneas na mesma conta.
+- As contas são processadas em uma fila com no máximo duas em paralelo para
+  limitar o pico no rate limit compartilhado do Client ID sem acumular a
+  latência de todas as conexões em série.
+
+**Response 200:**
+`{ contas_ativas, processadas, concluidas, erros, retentativas, resultados: [{ conexao_id, status, itens?, error? }] }`, onde `status` pode ser `leased`,
+`fresh`, `page_processed`, `completed`, `retry_scheduled` ou `error`.
+
+**Side Effects:** cria/atualiza checkpoints em
+`siso_ml_anuncios_scan_state`, grava a geração em
+`siso_ml_anuncios_indice_completo` e remove gerações descartadas após publicar
+um snapshot completo. Não altera estoque nem ledger.
+
+### POST /api/wms/estoque/sem-anuncio/verificar
+
+Confere um SKU da fila diretamente em todas as contas Mercado Livre ativas.
+A UI limita a ação em lote a 10 SKUs por vez e duas consultas concorrentes.
+
+**Auth:** `requireAuth`.
+
+**Body:** `{ sku: string }`.
+
+**Business Logic:**
+- Força atualização da consulta por `sku` e `seller_sku`, sem aceitar erro
+  silencioso de nenhum dos dois caminhos.
+- Se ao menos um anúncio ativo for encontrado, retorna `com_anuncio` mesmo que
+  outra conta tenha falhado.
+- Resultado vazio nunca é rotulado como ausência confirmada: a busca direta do
+  Mercado Livre não encontra de forma exaustiva SKUs armazenados apenas em
+  `variations[]`, então retorna `inconclusivo_busca_direta`.
+- Falha parcial retorna **502** e nenhuma conclusão negativa é emitida.
+
+**Response 200:** `{ sku, situacao: "com_anuncio" | "inconclusivo_busca_direta", conclusivo, anuncios_ativos, contas_consultadas, contas_com_erro, limitacao }`.
+
+**Side Effects:** atualiza o cache de anúncios por SKU. Não altera estoque nem
+ledger.
 
 ### GET /api/wms/ledger
 

@@ -381,6 +381,14 @@ export default function EstoquePage() {
           Conferir anúncios ML
         </button>
         <button
+          type="button"
+          className="wms-btn wms-btn-ghost"
+          onClick={() => router.push("/wms/estoque/esgotados-com-anuncio")}
+          title="Ver anúncios ativos de SKUs esgotados"
+        >
+          <Icon name="alert" size={13} /> Esgotados com anúncio
+        </button>
+        <button
           className="wms-btn wms-btn-ghost"
           onClick={() => modals.open("ajuste")}
         >

@@ -69,6 +69,55 @@ export interface IndiceCompletoAnunciosAtivos {
   contas: ContaIndiceMl[];
 }
 
+export interface AnuncioAtivoIndexado {
+  sku_normalizado: string;
+  sku_original: string;
+  mlb_id: string;
+  conexao_id: string;
+  conta_nickname: string;
+}
+
+/** Detalha anúncios da última geração concluída de cada conta. */
+export async function listarAnunciosAtivosIndexadosPorSku(
+  skus: Iterable<string>,
+): Promise<AnuncioAtivoIndexado[]> {
+  const procurados = [...new Set([...skus].map(normalizarSkuAnuncio).filter(Boolean))];
+  if (procurados.length === 0) return [];
+  const conexoes = await listarConexoesMlAtivas();
+  if (conexoes.length === 0) return [];
+  const sb = createServiceClient();
+  const { data: states, error: stateError } = await sb
+    .from("siso_ml_anuncios_scan_state")
+    .select("conexao_id, ultima_geracao_concluida")
+    .in("conexao_id", conexoes.map((c) => c.id))
+    .not("ultima_geracao_concluida", "is", null);
+  if (stateError) throw stateError;
+  const geracaoPorConta = new Map(
+    (states ?? []).map((s) => [s.conexao_id, s.ultima_geracao_concluida as string]),
+  );
+  const nicknamePorConta = new Map(conexoes.map((c) => [c.id, c.nickname]));
+  const out: AnuncioAtivoIndexado[] = [];
+  for (let offset = 0; offset < procurados.length; offset += 200) {
+    const lote = procurados.slice(offset, offset + 200);
+    const { data, error } = await sb
+      .from("siso_ml_anuncios_indice_completo")
+      .select("conexao_id, scan_generation, sku_normalizado, sku_original, mlb_id")
+      .in("sku_normalizado", lote);
+    if (error) throw error;
+    for (const row of data ?? []) {
+      if (geracaoPorConta.get(row.conexao_id) !== row.scan_generation) continue;
+      out.push({
+        sku_normalizado: row.sku_normalizado,
+        sku_original: row.sku_original,
+        mlb_id: row.mlb_id,
+        conexao_id: row.conexao_id,
+        conta_nickname: nicknamePorConta.get(row.conexao_id) ?? "Conta ML",
+      });
+    }
+  }
+  return out;
+}
+
 export function extrairLinhasIndiceMl(
   conexaoId: string,
   scanGeneration: string,

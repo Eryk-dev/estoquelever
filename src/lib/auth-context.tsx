@@ -35,6 +35,8 @@ interface AuthContextValue {
   activeGalpaoId: string | null;
   /** Name of the active galpão (null when viewing all) */
   activeGalpaoNome: string | null;
+  /** Whether the user may mutate data in the selected warehouse. */
+  activeGalpaoPodeEditar: boolean;
   /** Set the active galpão for filtering. Pass null for "all". */
   setActiveGalpao: (galpaoId: string | null) => void;
   login: (nome: string, pin: string) => Promise<{ ok: boolean; erro?: string }>;
@@ -146,6 +148,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient, user]);
 
   const activeGalpaoNome = user?.galpoes?.find((g) => g.id === activeGalpaoId)?.nome ?? null;
+  const activeGalpaoPodeEditar = activeGalpaoId
+    ? user?.galpoes?.find((g) => g.id === activeGalpaoId)?.pode_editar !== false
+    : isAdmin(user?.cargos ?? []);
 
   const login = useCallback(async (nome: string, pin: string) => {
     const res = await fetch("/api/auth/login", {
@@ -274,6 +279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         activeGalpaoId,
         activeGalpaoNome,
+        activeGalpaoPodeEditar,
         setActiveGalpao,
         login,
         logout,

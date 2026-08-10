@@ -22,6 +22,7 @@ interface RoleAtiva {
 interface GalpaoRef {
   id: string;
   nome: string;
+  pode_editar?: boolean;
 }
 
 interface Funcionario {
@@ -749,6 +750,9 @@ function LinhaFuncionario({
   const [form, setForm] = useState({
     roleIds: initialRoleIds,
     galpaoIds: funcionario.galpoes.map((g) => g.id),
+    galpaoEditIds: funcionario.galpoes
+      .filter((g) => g.pode_editar !== false)
+      .map((g) => g.id),
   });
 
   // Re-sync quando roles ativas chegam após render inicial (a query roda em
@@ -776,7 +780,10 @@ function LinhaFuncionario({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: funcionario.id,
-          galpao_ids: form.galpaoIds,
+          galpoes: form.galpaoIds.map((id) => ({
+            id,
+            pode_editar: form.galpaoEditIds.includes(id),
+          })),
         }),
       });
     },
@@ -960,9 +967,26 @@ function LinhaFuncionario({
             <GalpaoTogglePills
               todos={galpoes}
               selecionados={form.galpaoIds}
-              onChange={(galpaoIds) => setForm((s) => ({ ...s, galpaoIds }))}
+              onChange={(galpaoIds) => setForm((s) => ({
+                ...s,
+                galpaoIds,
+                galpaoEditIds: s.galpaoEditIds.filter((id) => galpaoIds.includes(id)),
+              }))}
               disabled={salvar.isPending}
             />
+            {form.galpaoIds.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div className="wms-td-mute" style={{ fontSize: 11, fontWeight: 600, marginBottom: 6 }}>
+                  Pode editar (os demais ficam somente para visualização)
+                </div>
+                <GalpaoTogglePills
+                  todos={galpoes.filter((g) => form.galpaoIds.includes(g.id))}
+                  selecionados={form.galpaoEditIds}
+                  onChange={(galpaoEditIds) => setForm((s) => ({ ...s, galpaoEditIds }))}
+                  disabled={salvar.isPending}
+                />
+              </div>
+            )}
           </div>
         )}
 

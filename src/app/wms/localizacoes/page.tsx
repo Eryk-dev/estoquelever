@@ -64,9 +64,10 @@ const LOTE_DEFAULT: LoteForm = {
 
 export default function LocalizacoesPage() {
   const queryClient = useQueryClient();
-  const { activeGalpaoId } = useAuth();
+  const { activeGalpaoId, activeGalpaoPodeEditar } = useAuth();
   const { can } = usePermissoes();
-  const podeEditar = can("localizacoes.editar");
+  const podeEditar = can("localizacoes.editar") && activeGalpaoPodeEditar;
+  const podeImprimir = can("operacoes.imprimir");
   const galpaoId = activeGalpaoId ?? "";
   const [showForm, setShowForm] = useState(false);
   const [modo, setModo] = useState<Modo>("individual");
@@ -197,6 +198,17 @@ export default function LocalizacoesPage() {
       toast.error(e.message);
       setEditandoTipoId(null);
     },
+  });
+
+  const imprimirEndereco = useMutation({
+    mutationFn: ({ codigo, tipo }: { codigo: string; tipo: "pequena" | "grande" }) =>
+      wmsApi<{ ok: true; printerNome: string }>("/api/wms/etiquetas/endereco", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ galpao_id: galpaoId, codigos: [codigo], tipo }),
+      }),
+    onSuccess: (data) => toast.success(`Etiqueta enviada para ${data.printerNome || "a impressora"}`),
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const excluirSimples = useMutation({
@@ -870,6 +882,26 @@ export default function LocalizacoesPage() {
                                 )}
                               </td>
                               <td className="wms-td-actions">
+                                {podeImprimir && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="wms-btn-icon"
+                                      title="Imprimir etiqueta pequena"
+                                      onClick={() => imprimirEndereco.mutate({ codigo: l.codigo, tipo: "pequena" })}
+                                    >
+                                      <Icon name="printer" size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="wms-btn-icon"
+                                      title="Imprimir etiqueta grande 10×15"
+                                      onClick={() => imprimirEndereco.mutate({ codigo: l.codigo, tipo: "grande" })}
+                                    >
+                                      <span style={{ fontSize: 10, fontWeight: 700 }}>10×15</span>
+                                    </button>
+                                  </>
+                                )}
                                 <button
                                   type="button"
                                   className="wms-btn-icon"

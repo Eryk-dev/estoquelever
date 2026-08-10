@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { wmsApi } from "@/lib/wms/api-client";
+import { usePermissoes } from "@/lib/auth-context";
 import {
   Card,
   Icon,
@@ -95,6 +96,8 @@ export function ProdutoDrawer({
   const movsBefore = movsCursors[0] ?? "";
   const MOVS_PAGE_SIZE = 100;
   const modals = useWmsModals();
+  const { can } = usePermissoes();
+  const queryClient = useQueryClient();
 
   // ESC fecha
   useEffect(() => {
@@ -359,8 +362,15 @@ export function ProdutoDrawer({
               )}
               {tab === "estoque" && (
                 <EstoquePorLocal
+                  produtoId={produto.id}
                   linhas={linhas}
                   onAction={openAction}
+                  podeExcluir={can("produtos.editar")}
+                  onDeleted={() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: ["wms-produto-estoque", produtoId],
+                    });
+                  }}
                 />
               )}
               {tab === "movs" && (
@@ -596,12 +606,30 @@ function Overview({
 }
 
 function EstoquePorLocal({
+  produtoId,
   linhas,
   onAction,
+  podeExcluir,
+  onDeleted,
 }: {
+  produtoId: string;
   linhas: EstoqueLinhaItem[];
   onAction: (k: "ajuste" | "transferir") => void;
+  podeExcluir: boolean;
+  onDeleted: () => void;
 }) {
+  const excluir = useMutation({
+    mutationFn: (localizacaoId: string) =>
+      wmsApi<{ ok: true }>(
+        `/api/wms/produtos/${produtoId}/localizacoes/${localizacaoId}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      toast.success("Localização antiga removida do produto");
+      onDeleted();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   // Double sort: galpão asc → localização asc (natural/numérica via
   // localeCompare numeric pra ordenar B-02-03 antes de B-02-10 etc).
   const ordenadas = [...linhas].sort((a, b) => {
@@ -714,6 +742,27 @@ function EstoquePorLocal({
                 >
                   <Icon name="arrow-right" size={11} />
                 </button>
+                {podeExcluir &&
+                  Number(l.saldo) === 0 &&
+                  Number(l.reservado) === 0 && (
+                    <button
+                      className="wms-btn-icon"
+                      disabled={excluir.isPending}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `Remover a localização antiga ${l.localizacao.codigo} deste produto?`,
+                          )
+                        ) {
+                          excluir.mutate(l.localizacao.id);
+                        }
+                      }}
+                      title="Excluir localização antiga"
+                      aria-label={`Excluir localização antiga ${l.localizacao.codigo}`}
+                    >
+                      <Icon name="trash" size={11} />
+                    </button>
+                  )}
               </td>
             </tr>
           ))}

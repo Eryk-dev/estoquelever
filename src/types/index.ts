@@ -563,6 +563,7 @@ export const CARGO_LABELS: Record<Cargo, string> = {
 export interface UserGalpao {
   id: string;
   nome: string;
+  pode_editar: boolean;
 }
 
 export interface Usuario {

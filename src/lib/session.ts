@@ -10,6 +10,7 @@ export interface SessionUser {
   roles: Array<{ id: string; codigo: string; nome: string }>;
   permissoes: Set<string>;        // união das permissões das roles ativas
   galpaoId: string | null;
+  galpaoPodeEditar: boolean;
 }
 
 // ── Cache de sessão (in-memory, por instância serverless) ──────────────────
@@ -130,6 +131,16 @@ export async function getSessionUser(
   const galpaoId = galpaoIdHeader && loaded.galpao_valido
     ? galpaoIdHeader
     : (loaded.galpao_cargo_id ?? null);
+  let galpaoPodeEditar = galpaoId === null;
+  if (galpaoId) {
+    const { data: acesso } = await supabase
+      .from("siso_usuario_galpoes")
+      .select("pode_editar")
+      .eq("usuario_id", usuario.id)
+      .eq("galpao_id", galpaoId)
+      .maybeSingle();
+    galpaoPodeEditar = acesso?.pode_editar ?? loaded.galpao_cargo_id === galpaoId;
+  }
 
   const result: SessionUser = {
     id: usuario.id,
@@ -139,6 +150,7 @@ export async function getSessionUser(
     roles: rolesAtivas,
     permissoes: new Set(loaded.permissoes ?? []),
     galpaoId,
+    galpaoPodeEditar,
   };
   setCachedSession(cacheKey, result);
   return result;
@@ -186,7 +198,7 @@ async function loadSessionLegacy(
   if (galpaoIdHeader) {
     const { data: valid } = await supabase
       .from("siso_usuario_galpoes")
-      .select("galpao_id")
+      .select("galpao_id, pode_editar")
       .eq("usuario_id", usuario.id)
       .eq("galpao_id", galpaoIdHeader)
       .maybeSingle();
@@ -200,6 +212,7 @@ async function loadSessionLegacy(
         roles: rolesAtivas,
         permissoes: permissoesSet,
         galpaoId: galpaoIdHeader,
+        galpaoPodeEditar: valid.pode_editar ?? true,
       };
       setCachedSession(cacheKey, result);
       return result;
@@ -227,6 +240,7 @@ async function loadSessionLegacy(
     roles: rolesAtivas,
     permissoes: permissoesSet,
     galpaoId,
+    galpaoPodeEditar: true,
   };
   setCachedSession(cacheKey, result);
   return result;

@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
   // Galpões via siso_usuario_galpoes — fonte de verdade pro seletor.
   const { data: userGalpoes } = await supabase
     .from("siso_usuario_galpoes")
-    .select("galpao_id, siso_galpoes(id, nome, ativo)")
+    .select("galpao_id, pode_editar, siso_galpoes(id, nome, ativo)")
     .eq("usuario_id", usuario.id);
 
   const galpoes = (userGalpoes ?? [])
@@ -61,9 +61,9 @@ export async function GET(request: NextRequest) {
       } | null;
       // Filtra galpões desativados — operador não deve ver galpão off
       if (!g || !g.ativo) return null;
-      return { id: g.id, nome: g.nome };
+      return { id: g.id, nome: g.nome, pode_editar: ug.pode_editar ?? true };
     })
-    .filter((galpao): galpao is { id: string; nome: string } => galpao !== null)
+    .filter((galpao): galpao is { id: string; nome: string; pode_editar: boolean } => galpao !== null)
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   // Roles + permissões ativas (RBAC dinâmico — 2026-05-21)

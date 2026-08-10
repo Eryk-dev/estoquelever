@@ -23,6 +23,9 @@ export function GalpaoSelector() {
       <div className="flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1">
         <span className={cn("h-2 w-2 rounded-full shrink-0", accent.dot)} />
         <span className="text-xs font-semibold text-ink">{galpoes[0].nome}</span>
+        {!galpoes[0].pode_editar && (
+          <span className="text-[10px] text-ink-muted">somente leitura</span>
+        )}
       </div>
     );
   }
@@ -60,7 +63,7 @@ export function GalpaoSelector() {
                 : "text-ink-muted hover:text-ink hover:bg-paper",
             )}
           >
-            {g.nome}
+            {g.nome}{!g.pode_editar ? " · leitura" : ""}
           </button>
         );
       })}

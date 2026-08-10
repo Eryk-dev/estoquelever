@@ -34,22 +34,28 @@ describe("filtro de origem da fila", () => {
     { id: 1, fonte: "manual" },
     { id: 2, fonte: "oem_auto" },
     { id: 3, fonte: "importacao_auto" },
+    { id: 4, fonte: "planilha_csv" },
   ];
 
-  it("classifica fontes *_auto como automáticas e as demais como manuais", () => {
+  it("distingue inserção manual, importação por planilha e automação", () => {
     expect(origemSugestao("manual")).toBe("manual");
     expect(origemSugestao("MANUAL")).toBe("manual");
     expect(origemSugestao("oem_auto")).toBe("automatica");
+    expect(origemSugestao("importacao_auto")).toBe("planilha");
+    expect(origemSugestao("planilha_csv")).toBe("planilha");
     expect(origemSugestao("curadoria_legada")).toBe("manual");
   });
 
-  it("separa manuais e automáticas sem alterar a fila original", () => {
+  it("separa as três origens sem alterar a fila original", () => {
     expect(filtrarSugestoesPorOrigem(itens, "manual").map((i) => i.id)).toEqual([
       1,
     ]);
     expect(
       filtrarSugestoesPorOrigem(itens, "automatica").map((i) => i.id),
-    ).toEqual([2, 3]);
+    ).toEqual([2]);
+    expect(
+      filtrarSugestoesPorOrigem(itens, "planilha").map((i) => i.id),
+    ).toEqual([3, 4]);
     expect(filtrarSugestoesPorOrigem(itens, "todas")).toEqual(itens);
   });
 });

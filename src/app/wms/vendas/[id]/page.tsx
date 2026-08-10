@@ -33,6 +33,8 @@ interface PedidoDetalhe {
   marcadores: string[];
   separacao_full: boolean;
   fechado_em: string | null;
+  full_etiqueta_total: number | null;
+  full_etiqueta_anexada_em: string | null;
   processado_em: string | null;
   embalagem_concluida_em: string | null;
   separacao_iniciada_em: string | null;
@@ -138,6 +140,9 @@ export default function VendaDetalhePage({
   const [addProduto, setAddProduto] = useState<Produto | null>(null);
   const [addQty, setAddQty] = useState(1);
   const [editBusy, setEditBusy] = useState(false);
+  const [fullZplFile, setFullZplFile] = useState<File | null>(null);
+  const [fullZplConfirmado, setFullZplConfirmado] = useState(false);
+  const [fullZplBusy, setFullZplBusy] = useState(false);
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -152,6 +157,41 @@ export default function VendaDetalhePage({
   });
 
   const [cancelando, setCancelando] = useState(false);
+
+  const anexarEReordenarZpl = async () => {
+    if (!fullZplFile || !fullZplConfirmado) return;
+    setFullZplBusy(true);
+    try {
+      const zpl = await fullZplFile.text();
+      const r = await sisoFetch(`/api/wms/full/${encodeURIComponent(id)}/etiqueta-zpl`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zpl, confirmar_mesma_ordem: true }),
+      });
+      const body = (await r.json().catch(() => ({}))) as {
+        error?: string;
+        zpl?: string;
+        total?: number;
+      };
+      if (!r.ok || !body.zpl) {
+        toast.error(body.error ?? `Erro HTTP ${r.status}`);
+        return;
+      }
+      const blob = new Blob([body.zpl], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `FULL-${pedido?.numero ?? id}-ordenado.zpl`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${body.total} etiquetas conferidas, reordenadas e anexadas`);
+      setFullZplFile(null);
+      setFullZplConfirmado(false);
+      await refetch();
+    } finally {
+      setFullZplBusy(false);
+    }
+  };
   const submitCancelar = async () => {
     const motivo = cancelarMotivo.trim();
     if (motivo.length < 3) {
@@ -385,6 +425,54 @@ export default function VendaDetalhePage({
             </div>
           </div>
         </section>
+
+        {pedido.separacao_full && (
+          <section className="wms-card" style={{ padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16 }}>Etiqueta Mercado Livre do Full</h2>
+                <p className="wms-td-mute" style={{ margin: "4px 0 0" }}>
+                  Anexe o ZPL completo. O sistema exige a mesma quantidade de unidades e reordena os blocos pela localização do estoque.
+                </p>
+                {pedido.full_etiqueta_anexada_em && (
+                  <small className="wms-td-mute">
+                    Último arquivo: {pedido.full_etiqueta_total ?? 0} etiquetas · {new Date(pedido.full_etiqueta_anexada_em).toLocaleString("pt-BR")}
+                  </small>
+                )}
+              </div>
+              <input
+                type="file"
+                accept=".zpl,.txt,application/octet-stream,text/plain"
+                onChange={(e) => {
+                  setFullZplFile(e.target.files?.[0] ?? null);
+                  setFullZplConfirmado(false);
+                }}
+              />
+            </div>
+            {fullZplFile && (
+              <div className="wms-hint-card wms-hint-danger" style={{ marginTop: 12 }}>
+                <Icon name="alert" />
+                <label style={{ cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={fullZplConfirmado}
+                    onChange={(e) => setFullZplConfirmado(e.target.checked)}
+                    style={{ marginRight: 8 }}
+                  />
+                  Tenho certeza de que coloquei os itens no WMS na mesma ordem em que as etiquetas aparecem neste arquivo do Full.
+                </label>
+                <button
+                  type="button"
+                  className="wms-btn wms-btn-primary"
+                  disabled={!fullZplConfirmado || fullZplBusy}
+                  onClick={() => void anexarEReordenarZpl()}
+                >
+                  {fullZplBusy ? "Conferindo…" : "Confirmar, reordenar e baixar"}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
 
         <div className="wms-sales-detail-grid">
           <main className="wms-sales-items-panel">

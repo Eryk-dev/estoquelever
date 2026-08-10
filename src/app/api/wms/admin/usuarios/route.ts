@@ -29,15 +29,19 @@ export async function GET(request: NextRequest) {
   // Fetch galpão associations for all users
   const { data: allGalpoes } = await supabase
     .from("siso_usuario_galpoes")
-    .select("usuario_id, galpao_id, siso_galpoes(id, nome)");
+    .select("usuario_id, galpao_id, pode_editar, siso_galpoes(id, nome)");
 
   // Build a map of usuario_id → galpões
-  const galpaoMap = new Map<string, { id: string; nome: string }[]>();
+  const galpaoMap = new Map<string, { id: string; nome: string; pode_editar: boolean }[]>();
   for (const ug of allGalpoes ?? []) {
     const g = ug.siso_galpoes as unknown as { id: string; nome: string } | null;
     if (!g) continue;
     if (!galpaoMap.has(ug.usuario_id)) galpaoMap.set(ug.usuario_id, []);
-    galpaoMap.get(ug.usuario_id)!.push({ id: g.id, nome: g.nome });
+    galpaoMap.get(ug.usuario_id)!.push({
+      id: g.id,
+      nome: g.nome,
+      pode_editar: ug.pode_editar ?? true,
+    });
   }
 
   // Ensure cargos is always populated (backward compat for rows not yet migrated)
@@ -136,6 +140,7 @@ export async function PUT(request: NextRequest) {
     cargos?: string[];
     ativo?: boolean;
     galpao_ids?: string[];
+    galpoes?: Array<{ id: string; pode_editar: boolean }>;
     printnode_printer_id?: number | null;
     printnode_printer_nome?: string | null;
     printnode_account_id?: string | null;
@@ -153,7 +158,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ erro: "JSON inválido" }, { status: 400 });
   }
 
-  const { id, cargos: rawCargos, cargo: rawCargo, galpao_ids, ...rest } = body;
+  const { id, cargos: rawCargos, cargo: rawCargo, galpao_ids, galpoes, ...rest } = body;
   if (!id) {
     return NextResponse.json({ erro: "id é obrigatório" }, { status: 400 });
   }
@@ -228,12 +233,17 @@ export async function PUT(request: NextRequest) {
   }
 
   // Replace galpão associations if provided
-  if (galpao_ids !== undefined) {
+  if (galpao_ids !== undefined || galpoes !== undefined) {
     // Delete existing
     await supabase.from("siso_usuario_galpoes").delete().eq("usuario_id", id);
     // Insert new
-    if (galpao_ids.length > 0) {
-      const rows = galpao_ids.map((gid) => ({ usuario_id: id, galpao_id: gid }));
+    const acessos = galpoes ?? (galpao_ids ?? []).map((gid) => ({ id: gid, pode_editar: true }));
+    if (acessos.length > 0) {
+      const rows = acessos.map((acesso) => ({
+        usuario_id: id,
+        galpao_id: acesso.id,
+        pode_editar: acesso.pode_editar !== false,
+      }));
       await supabase.from("siso_usuario_galpoes").insert(rows);
     }
   }

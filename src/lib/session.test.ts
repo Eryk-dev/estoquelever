@@ -16,6 +16,7 @@ function makeUser(galpaoId: string | null = null): SessionUser {
     roles: [{ id: "r1", codigo: "admin", nome: "Admin" }],
     permissoes: new Set(["sistema.usuarios"]),
     galpaoId,
+    galpaoPodeEditar: true,
   };
 }
 

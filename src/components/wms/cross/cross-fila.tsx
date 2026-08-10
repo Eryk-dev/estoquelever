@@ -92,7 +92,10 @@ export function CrossFila() {
   const totalManuais = todosItens.filter(
     (item) => origemSugestao(item.fonte) === "manual",
   ).length;
-  const totalAutomaticas = todosItens.length - totalManuais;
+  const totalPlanilha = todosItens.filter(
+    (item) => origemSugestao(item.fonte) === "planilha",
+  ).length;
+  const totalAutomaticas = todosItens.length - totalManuais - totalPlanilha;
 
   const decidir = useMutation({
     mutationFn: async (acao: "confirmar" | "bloquear") => {
@@ -159,7 +162,8 @@ export function CrossFila() {
         {(
           [
             ["todas", "Todas", todosItens.length],
-            ["manual", "Manuais", totalManuais],
+            ["planilha", "Planilha", totalPlanilha],
+            ["manual", "Inseridas manualmente", totalManuais],
             ["automatica", "Automáticas", totalAutomaticas],
           ] as const
         ).map(([valor, label, total]) => (
@@ -184,7 +188,11 @@ export function CrossFila() {
           {todosItens.length === 0
             ? "Fila vazia — nada pra validar."
             : `Nenhuma sugestão ${
-                filtroOrigem === "manual" ? "manual" : "automática"
+                filtroOrigem === "manual"
+                  ? "inserida manualmente"
+                  : filtroOrigem === "planilha"
+                    ? "importada por planilha"
+                    : "automática"
               } aguardando validação.`}
         </div>
       ) : (
@@ -200,8 +208,10 @@ export function CrossFila() {
               origem:{" "}
               <strong>
                 {origemSugestao(atual.fonte) === "manual"
-                  ? "manual"
-                  : "automática"}
+                  ? "inserida manualmente"
+                  : origemSugestao(atual.fonte) === "planilha"
+                    ? "importada por planilha"
+                    : "automática"}
               </strong>
             </span>
           </div>

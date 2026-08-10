@@ -84,6 +84,13 @@ export async function requireWarehouseAccess(
       response: forbidden("requer admin ou operador de galpão"),
     };
   }
+  const method = req.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && !user.galpaoPodeEditar) {
+    return {
+      ok: false,
+      response: forbidden("galpão disponível somente para visualização"),
+    };
+  }
   return { ok: true, user };
 }
 

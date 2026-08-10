@@ -56,15 +56,15 @@ export async function POST(request: NextRequest) {
   // Fetch user's allowed galpões from siso_usuario_galpoes
   const { data: userGalpoes } = await supabase
     .from("siso_usuario_galpoes")
-    .select("galpao_id, siso_galpoes(id, nome)")
+    .select("galpao_id, pode_editar, siso_galpoes(id, nome)")
     .eq("usuario_id", usuario.id);
 
   const galpoes = (userGalpoes ?? [])
     .map((ug) => {
       const g = ug.siso_galpoes as unknown as { id: string; nome: string } | null;
-      return g ? { id: g.id, nome: g.nome } : null;
+      return g ? { id: g.id, nome: g.nome, pode_editar: ug.pode_editar ?? true } : null;
     })
-    .filter((galpao): galpao is { id: string; nome: string } => galpao !== null)
+    .filter((galpao): galpao is { id: string; nome: string; pode_editar: boolean } => galpao !== null)
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   // Create server-side session

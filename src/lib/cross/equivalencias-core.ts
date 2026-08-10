@@ -1,7 +1,11 @@
 import type { LiveStockEntry } from "@/lib/wms/live-stock";
 
 export type CrossStatus = "sugestao" | "confirmado" | "bloqueado";
-export type FiltroOrigemSugestao = "todas" | "manual" | "automatica";
+export type FiltroOrigemSugestao =
+  | "todas"
+  | "manual"
+  | "planilha"
+  | "automatica";
 
 export interface CrossPar {
   id: number;
@@ -45,9 +49,16 @@ export function saoLigaveis(a: string, b: string): boolean {
 export function origemSugestao(
   fonte: string,
 ): Exclude<FiltroOrigemSugestao, "todas"> {
-  return fonte.trim().toLowerCase().endsWith("_auto")
-    ? "automatica"
-    : "manual";
+  const normalizada = fonte.trim().toLowerCase();
+  if (
+    normalizada.includes("planilha") ||
+    normalizada.includes("import") ||
+    normalizada.includes("csv") ||
+    normalizada.includes("xlsx")
+  ) {
+    return "planilha";
+  }
+  return normalizada.endsWith("_auto") ? "automatica" : "manual";
 }
 
 export function filtrarSugestoesPorOrigem<T extends { fonte: string }>(

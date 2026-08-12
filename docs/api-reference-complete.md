@@ -1252,7 +1252,7 @@ Caminhos suportados:
 - For each pedido, computes:
   - total_itens, itens_marcados, itens_bipados (from siso_pedido_itens)
   - compra_stats for OC orders (aggregate compra_status counters and items)
-- Fetches distinct origin empresas visible in the current separation context
+- Fetches all active empresas directly from `siso_empresas`, keeping the filter options stable and independent of the Data API row limit on `siso_pedidos`
 - Returns pedidos sorted by data (ascending) unless status = "embalado" (descending by embalagem_concluida_em)
 
 **Side Effects:** None (read-only)

@@ -244,16 +244,13 @@ export async function GET(request: NextRequest) {
           p_separacao_full: full,
         });
 
-    // 1b. Fetch distinct origin empresas inside the current separation context
-    let empresasPromise = supabase
-      .from("siso_pedidos")
-      .select("empresa_origem_id, siso_empresas(id, nome)")
-      .not("status_separacao", "is", null)
-      .eq("separacao_futura", futura).eq("separacao_full", full);
-
-    if (activeGalpaoId) {
-      empresasPromise = empresasPromise.eq("separacao_galpao_id", activeGalpaoId);
-    }
+    // 1b. Fetch active empresas directly so the dropdown is not truncated by
+    // the Data API row limit when there are thousands of separation orders.
+    const empresasPromise = supabase
+      .from("siso_empresas")
+      .select("id, nome")
+      .eq("ativo", true)
+      .order("nome");
 
     // 2. Pedidos query
     let pedidosQuery = supabase
@@ -683,23 +680,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Build empresas dropdown from pedidos visible to the active separation galpão
-    const empresasMap = new Map<string, string>();
-    for (const row of empresasList ?? []) {
-      const empresaId = row.empresa_origem_id;
-      const empresa = row.siso_empresas as unknown as
-        | { id: string; nome: string }
-        | { id: string; nome: string }[]
-        | null;
-      const resolvedEmpresa = Array.isArray(empresa) ? (empresa[0] ?? null) : empresa;
-
-      if (empresaId && resolvedEmpresa?.nome) {
-        empresasMap.set(empresaId, resolvedEmpresa.nome);
-      }
-    }
-    const empresas = Array.from(empresasMap.entries())
-      .map(([id, nome]) => ({ id, nome }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    const empresas = empresasList ?? [];
 
     // Dias de prazo disponíveis (facet do multi-select), agrupados no fuso SP.
     const prazoDiasDisponiveis = agruparPedidosPorDiaSp(

@@ -20,6 +20,27 @@
 #   notes: observacoes adicionais (opcional)
 
 erros:
+  - id: separacao-dropdown-empresas-limite-postgrest
+    date: "2026-08-12"
+    source: separacao-list
+    category: database
+    message: >
+      Empresa nova com pedidos na separação não aparece no filtro "Todas empresas"
+      (Bellator tinha 12 pedidos em CWB, mas não era exibida).
+    cause: >
+      GET /api/wms/separacao montava o dropdown consultando siso_pedidos e
+      deduplicando as empresas em memória. O Data API limita selects comuns a
+      1000 linhas; como Bellator não estava nesse primeiro lote de pedidos, ela
+      era descartada mesmo tendo pedidos válidos no contexto da separação.
+    fix: >
+      O dropdown agora consulta diretamente todas as empresas ativas em
+      siso_empresas, ordenadas por nome. A lista deixa de depender da quantidade
+      e da ordem dos pedidos sem alterar o filtro empresa_origem_id por UUID.
+    files:
+      - src/app/api/wms/separacao/route.ts
+      - docs/api-reference-complete.md
+    tags: [wms, separacao, empresas, dropdown, bellator, postgrest, max-rows, 1000]
+
   - id: etiqueta-ml-direto-so-disparava-em-nf-ja-expedida
     date: "2026-06-30"
     source: etiqueta-service

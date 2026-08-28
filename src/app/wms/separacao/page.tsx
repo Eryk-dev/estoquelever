@@ -47,6 +47,7 @@ import {
 } from "@/components/wms/vendas/tabs-status-separacao";
 import { DecisaoLabel } from "@/components/wms/vendas/estoque-por-galpao-bar";
 import { PRAZO_DIA_SEM, diaSpDePrazo } from "@/lib/wms/prazo-dias";
+import { getMarketplaceFilterOptions } from "@/lib/wms/marketplace-filter";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -211,11 +212,7 @@ const ORIGEM_CANCEL_LABEL: Record<string, string> = {
   sistema: "Cancelado pelo sistema",
 };
 
-const MARKETPLACE_OPTS = [
-  { value: "", label: "Todos marketplaces" },
-  { value: "Mercado Livre", label: "Mercado Livre" },
-  { value: "Shopee", label: "Shopee" },
-];
+const MARKETPLACE_OPTS = getMarketplaceFilterOptions();
 
 const SORT_OPTS = [
   { value: "data_pedido", label: "Ordenar: data" },

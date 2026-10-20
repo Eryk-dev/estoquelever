@@ -95,7 +95,7 @@ export interface MlScanItemsDetails {
 
 // ─── Fetch genérico com auto-refresh em 401 ─────────────────────────
 
-async function mlFetch<T>(
+export async function mlFetch<T>(
   connectionId: string,
   path: string,
   init?: RequestInit & { retried?: boolean },

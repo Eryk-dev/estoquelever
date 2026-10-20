@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
 
 // ─── Core logic per pedido ──────────────────────────────────────────────────
 
-export async function encaminharPedido(
+async function encaminharPedido(
   supabase: ReturnType<typeof createServiceClient>,
   pedidoId: string,
   galpaoDestino: { id: string; nome: string },

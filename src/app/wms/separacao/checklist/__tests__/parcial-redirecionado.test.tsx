@@ -27,7 +27,7 @@ vi.mock("@/hooks/use-realtime-separacao", () => ({ useRealtimeSeparacao: () => {
 vi.mock("@/hooks/use-presenca-wms", () => ({ useTrackPresencaWms: () => {} }));
 vi.mock("@/components/wms/separacao/parcial-modal", () => ({ ParcialModal: () => null }));
 
-import { consolidar, ordenar, itemRedirecionadoSemPick } from "../page";
+import { consolidar, ordenar, itemRedirecionadoSemPick } from "../checklist-page";
 
 type Item = Parameters<typeof itemRedirecionadoSemPick>[0];
 

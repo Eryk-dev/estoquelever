@@ -9,7 +9,7 @@ vi.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: null }), sisoFetc
 vi.mock("@/hooks/use-realtime-separacao", () => ({ useRealtimeSeparacao: () => {} }));
 vi.mock("@/hooks/use-presenca-wms", () => ({ useTrackPresencaWms: () => {} }));
 
-import { ordenar, consolidar } from "../page";
+import { ordenar, consolidar } from "../checklist-page";
 
 type Row = Parameters<typeof ordenar>[0][number];
 type Item = Parameters<typeof consolidar>[0][number];

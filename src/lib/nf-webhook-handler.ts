@@ -15,6 +15,7 @@ import { registrarEvento } from "./historico-service";
 import { criarAgrupamentoFase1 } from "./agrupamento-service";
 import { dispararCutoverSePronto } from "./wms/cutover";
 import { statusPosAutorizacaoNf } from "./wms/separacao-futura";
+import { recuperarPedidoPorNf } from "./recuperacao-nf-pedido";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,8 @@ export async function handleNfWebhook(
   opts?: { aguardarFase1?: boolean },
 ): Promise<void> {
   const supabase = createServiceClient();
-  const { idNotaFiscalTiny, urlDanfe, chaveAcesso } = payload.dados;
+  const { idNotaFiscalTiny, urlDanfe } = payload.dados;
+  let { chaveAcesso } = payload.dados;
 
   // Step 0 — Dedup defensivo composto (nota_fiscal_id + chave_acesso) [#P6-6.33]
   // O dedup_key generated cobre tiny_pedido_id+tipo+codigo_situacao. Pra NF, Tiny
@@ -240,11 +242,14 @@ export async function handleNfWebhook(
   // Step 2 — Fast-path match: pedido already has nota_fiscal_id saved
   const { data: pedidoFastPath } = await supabase
     .from("siso_pedidos")
-    .select("id, status_separacao")
+    .select("id, status_separacao, payload_original")
     .eq("nota_fiscal_id", idNotaFiscalTiny)
     .single();
 
   let pedidoId: string | null = pedidoFastPath?.id ?? null;
+  // Se o intake falhou depois de gravar o cabeçalho, concluir itens/reservas
+  // antes de liberar agrupamento e separação. O lease da recuperação serializa retries.
+  if (pedidoFastPath?.payload_original?.recuperacao_nf_pendente) pedidoId = null;
 
   // Step 3 — Fallback match: call Tiny API to resolve NF → pedido
   if (!pedidoId) {
@@ -308,13 +313,17 @@ export async function handleNfWebhook(
       if (nf.origem?.id) {
         const { data: pedidoByOrigem } = await supabase
           .from("siso_pedidos")
-          .select("id, status_separacao")
+          .select("id, status_separacao, payload_original")
           .eq("id", nf.origem.id)
           .single();
 
-        if (pedidoByOrigem) {
+        if (pedidoByOrigem && !pedidoByOrigem.payload_original?.recuperacao_nf_pendente) {
           pedidoId = pedidoByOrigem.id;
         }
+      }
+
+      if (!pedidoId) {
+        pedidoId = await recuperarPedidoPorNf({ empresaId, cnpj: payload.cnpj, nf, urlDanfe });
       }
     } catch (err) {
       logger.warn("nf-webhook", "Fallback NF lookup failed", {
@@ -337,6 +346,8 @@ export async function handleNfWebhook(
       .eq("id", webhookLogId);
     return;
   }
+
+  chaveAcesso = nfFetched?.chaveAcesso ?? chaveAcesso;
 
   // Step 4.5 — Gate de AUTORIZAÇÃO: só salva chave + transiciona se a NF estiver
   // autorizada (situacao 6=Autorizada / 7=Emitida Danfe). Uma NF rejeitada (5)/

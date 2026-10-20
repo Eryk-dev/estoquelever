@@ -589,6 +589,27 @@ interface MlShipmentDetail {
   substatus?: string | null;
 }
 
+export interface MlShipmentRecuperacao extends MlShipmentDetail {
+  id: number;
+  sender_id?: number;
+  logistic_type?: string;
+  logistic?: { type?: string };
+  status_history?: Record<string, string | null>;
+}
+
+/** Leitura estrita para recuperação: falhas nunca significam "ainda não enviado". */
+export async function getMlShipmentRecuperacao(
+  connectionId: string,
+  orderId: string,
+): Promise<MlShipmentRecuperacao | null> {
+  if (isMlDisabled()) return null;
+  const shipmentId = await resolverShipmentId(connectionId, orderId);
+  if (!shipmentId) return null;
+  const envio = await mlFetch<MlShipmentRecuperacao>(connectionId, `/shipments/${shipmentId}`);
+  if (envio.id !== shipmentId) throw new Error("Shipment retornado pelo ML diverge da venda");
+  return envio;
+}
+
 export interface MlShipmentStatusResult {
   shipmentId: number;
   status: string | null;

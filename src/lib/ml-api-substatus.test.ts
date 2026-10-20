@@ -29,7 +29,7 @@ vi.mock("./logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { getMlShipmentStatus } from "./ml-api";
+import { getMlShipmentStatus, getMlShipmentRecuperacao } from "./ml-api";
 
 function jsonRes(body: unknown, status = 200) {
   return {
@@ -45,6 +45,29 @@ vi.stubGlobal("fetch", fetchMock);
 
 beforeEach(() => {
   fetchMock.mockReset();
+});
+
+describe("getMlShipmentRecuperacao", () => {
+  it("mantém remetente, logística e histórico para a validação de despacho", async () => {
+    const shipment = {
+      id: 333, sender_id: 421259712, status: "ready_to_ship", substatus: "printed",
+      logistic_type: "cross_docking", status_history: { date_shipped: null },
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/orders/PACK1")) return jsonRes({}, 404);
+      if (url.endsWith("/packs/PACK1")) return jsonRes({ shipment: { id: 333 } });
+      if (url.endsWith("/shipments/333")) return jsonRes(shipment);
+      throw new Error(`unexpected url ${url}`);
+    });
+    expect(await getMlShipmentRecuperacao("conn", "PACK1")).toEqual(shipment);
+  });
+  it("erro ao ler envio impede que o chamador importe às cegas", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/orders/X")) return jsonRes({ shipping: { id: 333 } });
+      return jsonRes({ error: "rate_limit" }, 429);
+    });
+    await expect(getMlShipmentRecuperacao("conn", "X")).rejects.toThrow("429");
+  });
 });
 
 describe("getMlShipmentStatus", () => {

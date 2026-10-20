@@ -34,6 +34,8 @@ const state = {
   job: null as { id: string } | null,
   // checagem pré-insert (status pendente/executando)
   jobExistentePendente: null as { id: string } | null,
+  recuperacaoInseriu: true,
+  jobError: null as { message: string } | null,
 };
 
 const rec = {
@@ -60,7 +62,7 @@ function makeBuilder(table: string) {
     if (table === "siso_pedidos") {
       if (has("upsert")) {
         rec.pedidoUpserts.push(opArg("upsert") as Record<string, unknown>);
-        return { data: null, error: null };
+        return { data: has("select") && state.recuperacaoInseriu ? { id: PEDIDO.id } : null, error: null };
       }
       if (has("update")) {
         rec.pedidoUpdates.push(opArg("update") as Record<string, unknown>);
@@ -74,7 +76,7 @@ function makeBuilder(table: string) {
     if (table === "siso_fila_execucao") {
       if (has("insert")) {
         rec.jobInserts.push(opArg("insert") as Record<string, unknown>);
-        return { data: null, error: null };
+        return { data: null, error: state.jobError };
       }
       // checagem pré-insert tem filtro .in("status", [...]); a guarda 4b não.
       if (has("in")) return { data: state.jobExistentePendente, error: null };
@@ -93,7 +95,7 @@ function makeBuilder(table: string) {
 
   for (const m of [
     "select", "insert", "upsert", "update", "delete",
-    "eq", "neq", "in", "not", "or", "gte", "lt", "order", "limit",
+    "eq", "neq", "in", "is", "not", "or", "gte", "lt", "order", "limit",
   ]) {
     builder[m] = (...args: unknown[]) => {
       ops.push({ m, args });
@@ -209,9 +211,41 @@ beforeEach(() => {
   state.sysUser = null;
   state.job = null;
   state.jobExistentePendente = null;
+  state.recuperacaoInseriu = true;
+  state.jobError = null;
   // clearAllMocks não reseta mockResolvedValue — re-arma os defaults do ML.
   mlConnMock.mockResolvedValue(null);
   mlStatusMock.mockResolvedValue(null);
+});
+
+describe("recuperação de venda faturada", () => {
+  const recuperacaoNf = {
+    id: "1048457233", chaveAcesso: "1".repeat(44), shipmentId: "123", retomar: false,
+  };
+  it("persiste a NF existente antes do job e só libera o intake completo", async () => {
+    await processWebhookWms({ ...input(), recuperacaoNf });
+    expect(rec.pedidoUpserts[0]).toMatchObject({
+      nota_fiscal_id: recuperacaoNf.id, chave_acesso_nf: recuperacaoNf.chaveAcesso,
+      ml_shipment_id: "123", estoque_lancado: false, nf_estoque_lancado: false,
+      status_separacao: null,
+      payload_original: expect.objectContaining({ recuperacao_nf_pendente: recuperacaoNf.id }),
+    });
+    expect(rec.jobInserts).toHaveLength(1);
+    expect(rec.pedidoUpdates.at(-1)).toMatchObject({ payload_original: PEDIDO });
+  });
+  it("corrida com outro intake não cria reserva nem job adicional", async () => {
+    state.recuperacaoInseriu = false;
+    const result = await processWebhookWms({ ...input(), recuperacaoNf });
+    expect(result.status).toBe("duplicado");
+    expect(reservarMock).not.toHaveBeenCalled();
+    expect(rec.jobInserts).toHaveLength(0);
+  });
+  it("falha ao enfileirar mantém marcador para retry, sem declarar concluído", async () => {
+    state.jobError = { message: "fila indisponível" };
+    await expect(processWebhookWms({ ...input(), recuperacaoNf })).rejects.toMatchObject(state.jobError);
+    expect(rec.pedidoUpdates).toHaveLength(0);
+    expect(rec.webhookUpdates.some((r) => r.status === "concluido")).toBe(false);
+  });
 });
 
 // Etiqueta liberou no ML (substatus != buffered, shipment ativo): arma a

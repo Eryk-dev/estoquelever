@@ -65,6 +65,14 @@ interface ProcessWebhookWmsInput {
   galpaoOrigemNome: string;
   /** Separação futura (ML buffered): reserva + separa sem gerar NF. Default false. */
   separacaoFutura?: boolean;
+  /** NF já autorizada, validada contra o envio ML antes de recuperar a venda. */
+  recuperacaoNf?: {
+    id: string;
+    chaveAcesso: string;
+    urlDanfe?: string;
+    shipmentId: string;
+    retomar: boolean;
+  };
 }
 
 interface ResolvedItem {
@@ -646,6 +654,30 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   const sb = createServiceClient();
   const { webhookLogId, pedido, empresaOrigemId, galpaoOrigemId, galpaoOrigemNome } = input;
   let separacaoFutura = input.separacaoFutura === true;
+  const nfRecuperada = input.recuperacaoNf;
+  if (!nfRecuperada) {
+    const { data: emRecuperacao, error } = await sb.from("siso_pedidos")
+      .select("payload_original").eq("id", pedido.id).maybeSingle();
+    if (error) throw error;
+    if (emRecuperacao?.payload_original?.recuperacao_nf_pendente) {
+      // O retry da NF possui o contexto fiscal e concluirá o intake parcial.
+      return { ok: true, pedidoId: pedido.id, status: "recuperacao_nf_pendente", sugestao: "propria" };
+    }
+  }
+  const concluirRecuperacao = async (prepararSeparacao: boolean) => {
+    if (!nfRecuperada) return;
+    if (prepararSeparacao) {
+      const { error } = await sb.from("siso_pedidos")
+        .update({ status_separacao: "aguardando_nf" })
+        .eq("id", pedido.id).eq("empresa_origem_id", empresaOrigemId)
+        .is("status_separacao", null);
+      if (error) throw error;
+    }
+    const { error } = await sb.from("siso_pedidos")
+      .update({ payload_original: pedido })
+      .eq("id", pedido.id).eq("empresa_origem_id", empresaOrigemId);
+    if (error) throw error;
+  };
 
   // 0. Classificação de SEPARAÇÃO FUTURA no intake. O webhook do Tiny chega com
   //    separacaoFutura=false (o poll-futura já passa true). Pra um pedido ML cuja
@@ -659,7 +691,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // flag: uma falha transitória do ML promoveria um pedido ainda buffered).
   let substatusIntake: string | null = null;
   let statusIntakeMl: string | null = null;
-  if (!separacaoFutura && isMercadoLivre(pedido.nomeEcommerce) && pedido.idPedidoEcommerce) {
+  if (!nfRecuperada && !separacaoFutura && isMercadoLivre(pedido.nomeEcommerce) && pedido.idPedidoEcommerce) {
     try {
       const connId = await getActiveMlConnectionForEmpresa(empresaOrigemId);
       if (connId) {
@@ -891,6 +923,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
     existente?.estoque_lancado === true ||
     (!!jobComprometido && existente?.separacao_futura !== true);
   if (comprometidoBloqueia) {
+    if (nfRecuperada?.retomar) await concluirRecuperacao(existente?.decisao_final === "propria");
     logger.info("processor.wms", "pedido já comprometido — skip idempotente (re-entrega de webhook)", {
       pedidoId: pedido.id,
       motivo: existente?.estoque_lancado === true ? "estoque_lancado" : "job_lancar_estoque_existe",
@@ -1026,8 +1059,7 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
   // 5. Grava siso_pedidos — resetar flags de estoque pra permitir reprocessamento
   //    em staging (re-run do seed:cenarios). Em prod o early-return acima
   //    pega o caso de duplicado antes de chegar aqui.
-  const { error: pedidoErr } = await sb.from("siso_pedidos").upsert(
-    {
+  const pedidoParaGravar = {
       id: pedido.id,
       estoque_lancado: false,
       nf_estoque_lancado: false,
@@ -1056,7 +1088,8 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       //  - normal propria → aguardando_nf.
       //  - OC (futura ou normal) → NULL: o worker (executarMarcadoresOnly) seta
       //    validacao_oc; setar aguardando_nf dispararia enriquecerDadosNf cedo.
-      status_separacao: futuraSeparaDireto
+      // Recuperação parcial fica fora da fila até itens/reservas/job concluírem.
+      status_separacao: nfRecuperada ? null : futuraSeparaDireto
         ? "aguardando_separacao"
         : (isAuto ? "aguardando_nf" : null),
       prazo_envio: pedido.dataEnvio ? parseTinyDateTime(pedido.dataEnvio) : null,
@@ -1070,14 +1103,35 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
             return separacaoFutura ? [...base, MARCADOR_FUTURA] : base;
           })(),
       ...(separacaoFutura ? { separacao_tags: [TAG_FUTURA] } : {}),
-      payload_original: pedido,
+      payload_original: nfRecuperada
+        ? { ...pedido, recuperacao_nf_pendente: nfRecuperada.id }
+        : pedido,
+      ...(nfRecuperada ? {
+        nota_fiscal_id: nfRecuperada.id,
+        chave_acesso_nf: nfRecuperada.chaveAcesso,
+        url_danfe: nfRecuperada.urlDanfe ?? null,
+        ml_shipment_id: nfRecuperada.shipmentId,
+      } : {}),
       vendedor_id: vendedorIdFinal,
       vendedor_nome: vendedorNomeFinal,
       origem_pedido: "webhook",
-    },
-    { onConflict: "id" },
-  );
+    };
+  // Uma aprovação concorrente pode ter gravado o pedido durante as leituras.
+  // A recuperação de pedido ausente não sobrescreve essa gravação.
+  const gravacao = sb.from("siso_pedidos").upsert(pedidoParaGravar, {
+    onConflict: "id",
+    ...(nfRecuperada && !nfRecuperada.retomar ? { ignoreDuplicates: true } : {}),
+  });
+  const { data: gravado, error: pedidoErr } = nfRecuperada && !nfRecuperada.retomar
+    ? await gravacao.select("id").maybeSingle()
+    : await gravacao;
   if (pedidoErr) throw pedidoErr;
+  if (nfRecuperada && !nfRecuperada.retomar && !gravado) {
+    await sb.from("siso_webhook_logs").update({
+      status: "duplicado", processado_em: new Date().toISOString(),
+    }).eq("id", webhookLogId);
+    return { ok: true, pedidoId: pedido.id, status: "duplicado", sugestao };
+  }
 
   // 5b. Tag "WMS" no pedido Tiny assim que ele ENTRA no sistema (pedido novo).
   //     Fire-and-forget: falha não bloqueia o intake; 400 do Tiny = marcador
@@ -1283,13 +1337,14 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
         .maybeSingle();
 
       if (!jobExistente) {
-        await sb.from("siso_fila_execucao").insert({
+        const { error: jobError } = await sb.from("siso_fila_execucao").insert({
           pedido_id: pedido.id,
           tipo: "lancar_estoque",
           filial_execucao: galpaoOrigemNome,
           empresa_id: empresaOrigemId,
           decisao: isAuto ? "propria" : "oc",
         });
+        if (jobError) throw jobError;
       }
 
       kickWorker().catch((err) => {
@@ -1300,6 +1355,8 @@ export async function processWebhookWms(input: ProcessWebhookWmsInput): Promise<
       });
     }
   }
+
+  await concluirRecuperacao(isAuto);
 
   await sb
     .from("siso_webhook_logs")

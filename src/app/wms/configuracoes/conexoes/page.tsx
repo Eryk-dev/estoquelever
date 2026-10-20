@@ -18,6 +18,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { useAuth, sisoFetch } from "@/lib/auth-context";
 import { Icon, PageHeader, Card } from "@/components/wms/ui/wms-ui";
+import { RecuperarVendas } from "@/components/wms/recuperar-vendas";
 import type {
   TinyConnection,
   DepositoOption,
@@ -162,6 +163,8 @@ function ConexoesContent() {
         />
 
         <MercadoLivreCard />
+
+        <RecuperarVendas empresas={empresas} />
 
         <PrintNodeCard
           galpoes={galpoes}

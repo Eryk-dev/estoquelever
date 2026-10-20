@@ -59,7 +59,7 @@ function prepararAusente() {
   mocks.results.push(ok(null), ok({ id: "conn", ml_user_id: 123456 }));
 }
 describe("elegibilidade de recuperação fiscal", () => {
-  it.each(["ready_to_print", "printed", "invoice_pending"])("permite venda aguardando despacho: %s", (substatus) => {
+  it.each(["ready_to_print", "printed", "invoice_pending", "ready_for_pickup", "ready_for_dropoff", "in_pickup_list", "ready_for_pkl_creation"])("permite venda aguardando despacho: %s", (substatus) => {
     expect(envioPermiteRecuperacao({ ...ENVIO, substatus }, 123456)).toBe(true);
   });
   it.each(["picked_up", "authorized_by_carrier", "in_hub", "buffered", null, "desconhecido"])(

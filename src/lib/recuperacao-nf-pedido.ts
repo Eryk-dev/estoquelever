@@ -23,8 +23,11 @@ export function envioPermiteRecuperacao(
   if (!["cross_docking", "xd_drop_off", "drop_off", "self_service"].includes(logistica ?? "")) return false;
   if (["date_shipped", "date_delivered", "date_not_delivered", "date_returned", "date_cancelled"]
     .some((campo) => envio.status_history?.[campo])) return false;
-  return envio.status === "ready_to_ship" &&
-    ["ready_to_print", "printed", "invoice_pending"].includes(envio.substatus ?? "");
+  return envio.status === "ready_to_ship" && [
+    "ready_to_print", "printed", "invoice_pending",
+    // ML: etiqueta impressa / pacote aguardando a coleta, ainda sem despacho.
+    "ready_for_pickup", "ready_for_dropoff", "in_pickup_list", "ready_for_pkl_creation",
+  ].includes(envio.substatus ?? "");
 }
 
 export interface NfRecuperacaoInput {

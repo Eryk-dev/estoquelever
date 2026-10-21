@@ -38,8 +38,9 @@ export async function reconcileMlOrders(options: {
     };
     const claimed: ReconciliationSnapshot[][] = [];
     try {
-      // Separate quotas keep old conferidos from starving today's picking/dispatch.
-      for (const lane of ["early", "dispatch", "archive"]) {
+      // Separate quotas keep old conferidos from starving today's dispatch.
+      // No early lane: ML cannot see picking/packing, so those stages are never touched.
+      for (const lane of ["dispatch", "archive"]) {
         const { data, error } = await sb.rpc("siso_ml_reconciliacao_claim", {
           p_empresa_id: connection.empresa_id, p_run_id: runId, p_lane: lane,
           p_limit: lane === "archive" ? Math.min(limit, 20) : limit,

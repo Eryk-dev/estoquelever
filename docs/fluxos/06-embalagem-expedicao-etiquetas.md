@@ -455,6 +455,10 @@ Operações:
 
 Após expedir, chama `onUpdated()` que invalida queries da página `/separacao` para refrescar a lista.
 
+### 6.3 Expedição automática pelo Mercado Livre (2026-10-21)
+
+Cron de 5 min (`wms_ml_reconciliacao_automatica` → `/api/wms/ml/reconciliar`) marca `embalado|conferido → expedido` quando o ML confirma a coleta. Só isso: nunca move pedido em separação/embalagem — o `printed` do ML vem do download da etiqueta pelo Tiny (§3), não da impressão no WMS. Detalhes em `docs/architecture-and-flows.md` ("Expedição automática pelo Mercado Livre").
+
 ---
 
 ## 7. Reimpressão e retry

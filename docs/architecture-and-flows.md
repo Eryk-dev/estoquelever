@@ -319,6 +319,14 @@ separado → [checklist bipa PRODUTOS, imprime etiquetas] → embalado
 - `voltar-etapa` pra ≤`embalado` limpa conferência+divergência; pra ≤`separado` limpa também `embalado_real_*`.
 - Métricas em `/wms/relatorios/conferencia`: taxa de acerto por embalador (breakdown por tipo), % conferido, volume por conferente.
 
+### Expedição automática pelo Mercado Livre (2026-10-21)
+
+Cron `wms_ml_reconciliacao_automatica` (5 min) → `GET /api/wms/ml/reconciliar` → `lib/ml-reconciliation.ts`. Consulta `/shipments/{id}` + histórico no ML e faz **só** `embalado|conferido → expedido` quando o ML confirma coleta (`shipped`/`delivered` ou `ready_to_ship` com `picked_up`/`authorized_by_carrier`/`in_hub`/`dropped_off`, atual ou no histórico). Não mexe em estoque. Bellator excluída.
+
+- **Nunca** toca etapas de separação/embalagem (`aguardando_nf` … `separado`): o ML não enxerga trabalho físico. O substatus `printed` nasce quando o Tiny **baixa** a etiqueta (pré-download do agrupamento), não quando o WMS imprime.
+- Trava dupla: TS (`classifyMlReconciliation`) e SQL (`siso_ml_reconciliacao_claim` só reivindica embalado/conferido; `_finish` só autoriza `expedido` com coleta confirmada).
+- Desligar: `select cron.alter_job(job_id := (select jobid from cron.job where jobname='wms_ml_reconciliacao_automatica'), active := false);`
+
 ---
 
 ## Cross & Troca de Equivalência (redesign 2026-06-19)

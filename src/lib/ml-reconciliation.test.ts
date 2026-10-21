@@ -10,7 +10,7 @@ const companies = ["NetAir", "NetParts", "EasyPeasy", "EasyPeasy SP", "141AIR", 
 const connections = companies.map(e => ({ id: `conn-${e.id}`, empresa_id: e.id, ml_user_id: 300 }));
 const snapshots = companies.map(e => ({
   id: e.id, empresa_origem_id: e.id, id_pedido_ecommerce: "100", ml_shipment_id: "200",
-  status_separacao: "em_separacao", etiqueta_status: null, data: "2026-10-19",
+  status_separacao: "embalado", etiqueta_status: "impresso", data: "2026-10-19",
   decisao_final: "propria", impressao_em: null, atividade_em: "2026-10-20T10:00:00Z",
 }));
 
@@ -32,7 +32,7 @@ beforeEach(() => {
   });
   mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
     if (name.endsWith("_claim")) {
-      return { data: args.p_lane === "early" ? snapshots.filter(s => s.empresa_origem_id === args.p_empresa_id) : [] };
+      return { data: args.p_lane === "dispatch" ? snapshots.filter(s => s.empresa_origem_id === args.p_empresa_id) : [] };
     }
     return { data: { changed: true, conflict: false } };
   });
@@ -50,7 +50,7 @@ describe("varredura automática por empresa", () => {
   it("falha de API registra erro sem propor mudança de etapa", async () => {
     mocks.read.mockRejectedValue(new Error("ML API 429"));
     mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
-      if (name.endsWith("_claim")) return { data: args.p_lane === "early" ? [snapshots.find(s => s.id === args.p_empresa_id)] : [] };
+      if (name.endsWith("_claim")) return { data: args.p_lane === "dispatch" ? [snapshots.find(s => s.id === args.p_empresa_id)] : [] };
       return { data: { changed: false } };
     });
     const result = await reconcileMlOrders();
@@ -60,7 +60,7 @@ describe("varredura automática por empresa", () => {
   });
   it("não força novamente uma atualização que perdeu a corrida com a operação", async () => {
     mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
-      if (name.endsWith("_claim")) return { data: args.p_lane === "early" ? [snapshots.find(s => s.id === args.p_empresa_id)] : [] };
+      if (name.endsWith("_claim")) return { data: args.p_lane === "dispatch" ? [snapshots.find(s => s.id === args.p_empresa_id)] : [] };
       return { data: { changed: false, conflict: true } };
     });
     const result = await reconcileMlOrders({ dryRun: true });
@@ -73,7 +73,7 @@ describe("varredura automática por empresa", () => {
     mocks.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
       if (name.endsWith("_claim")) {
         const snapshot = snapshots.find(s => s.id === args.p_empresa_id)!;
-        return { data: args.p_lane === "early" ? [snapshot, { ...snapshot, id: `${snapshot.id}-2` }] : [] };
+        return { data: args.p_lane === "dispatch" ? [snapshot, { ...snapshot, id: `${snapshot.id}-2` }] : [] };
       }
       return { data: { changed: false } };
     });

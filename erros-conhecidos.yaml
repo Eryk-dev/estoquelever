@@ -7993,3 +7993,43 @@ erros:
     - src/app/wms/separacao/checklist/page.tsx
     - src/app/api/wms/separacao/concluir/validacao-oc.test.ts
   tags: [wms, separacao, concluir, idempotencia, race, toast, checklist]
+
+- id: ML-RECONCILIACAO-MEXE-EM-SEPARACAO
+  date: 2026-10-21
+  source: ml-reconciliation
+  category: business_logic
+  message: >
+    Embalagem: "SKU encontrado mas não disponível: #N: status 'embalado'" — pedido
+    nunca embalado/sem etiqueta aparecia em Embalados; operador voltava pra
+    separado e minutos depois voltava a embalado. Separação: pedido em wave voltava
+    pra "Pra separar"/validação OC com itens já marcados ("produto já separado").
+    Histórico: usuario_nome 'Conferência automática Mercado Livre', evento
+    status_revertido, motivos etiqueta_impressa / sem_impressao_sem_atividade_2h.
+  cause: >
+    Deploy de 2026-10-20 (9a8eb266) ligou a conferência automática ML com regras
+    sobre etapas físicas: (1) substatus/histórico "printed" no ML => embalado — mas
+    o ML marca printed quando o Tiny BAIXA a etiqueta (pré-download do
+    agrupamento), então quase todo pedido ML depois de aguardando_nf vira
+    "impresso"; (2) em_separacao/separado sem atividade 2h => aguardando_separacao/
+    validacao_oc — atividade_em não conta bip de item e separado esperando
+    embalagem é normal; (3) no_shipping >20 dias => embalado. Tudo via UPDATE cru
+    de status_separacao, sem reset de itens, cutover nem reservas. Em ~22h: 304
+    movimentos pra embalado, 250 reversões de separação, 17 pedidos nunca
+    separados marcados expedido.
+  fix: >
+    Robô agora só faz embalado|conferido -> expedido com coleta confirmada no ML
+    (TS: lane early removida + classifyMlReconciliation; SQL: _claim só reivindica
+    embalado/conferido e _finish só autoriza expedido com coleta). Dados: cron
+    pausado e 126 pedidos (robô foi o último a mexer, sem evento humano depois)
+    devolvidos à etapa anterior ao robô, com evento status_revertido
+    'Correção: desfaz conferência automática ML' (source
+    fix_ml_reconciliation_2026_10_21). Estoque não alterado.
+  files:
+    - src/lib/ml-reconciliation-policy.ts
+    - src/lib/ml-reconciliation-policy.test.ts
+    - src/lib/ml-reconciliation.ts
+    - src/lib/ml-reconciliation.test.ts
+    - supabase/migrations/20261021153545_ml_reconciliacao_so_expedicao.sql
+    - docs/architecture-and-flows.md
+    - docs/fluxos/06-embalagem-expedicao-etiquetas.md
+  tags: [wms, mercado-livre, reconciliacao, cron, embalado, etiqueta, printed, separacao, expedido, status_revertido]

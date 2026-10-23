@@ -319,7 +319,7 @@ export default function ContarPage({
     return registrarContagemPorSku(v, 1, "incremental");
   }
 
-  // Função genérica usada por: bipe (+1 incremental), Adicionar SKU manual (qty absoluto)
+  // Função genérica usada por: bipe (+1 incremental), Adicionar SKU manual (+qty incremental)
   async function registrarContagemPorSku(
     v: string,
     qty: number,
@@ -566,7 +566,7 @@ export default function ContarPage({
           }}
           finalizando={finalizarLoc.isPending}
           onAdicionarSku={(sku, qty) =>
-            registrarContagemPorSku(sku, qty, "absoluto")
+            registrarContagemPorSku(sku, qty, "incremental")
           }
           onDefinirQty={(c, q) => definirQtyAbsoluta(c, q)}
           onImageClick={(c) => {
@@ -1015,7 +1015,7 @@ function EditableQty({
   );
 }
 
-// Formulário inline pra adicionar SKU manualmente (define qty absoluta)
+// Formulário inline pra adicionar SKU manualmente (soma qty à contagem atual)
 function AddSkuManual({
   onAdicionar,
 }: {

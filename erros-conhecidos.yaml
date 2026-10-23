@@ -8033,3 +8033,23 @@ erros:
     - docs/architecture-and-flows.md
     - docs/fluxos/06-embalagem-expedicao-etiquetas.md
   tags: [wms, mercado-livre, reconciliacao, cron, embalado, etiqueta, printed, separacao, expedido, status_revertido]
+
+- id: INVENTARIO-ADICIONAR-MANUAL-SUBSTITUI-CONTAGEM
+  date: 2026-10-23
+  source: wms.inventario.contar.AddSkuManual
+  category: business_logic
+  message: >
+    Inventário (/wms/inventario/[id]/contar): ao digitar SKU + quantidade em
+    "Adicionar manualmente", a quantidade SUBSTITUÍA a contagem que já existia
+    do produto na loc em vez de somar (ex.: bipou 3, digitou 2 → ficava 2, não 5).
+  cause: >
+    O form chamava registrarContagemPorSku(sku, qty, "absoluto"); o backend
+    (registrarContagemSimples) em modo absoluto sobrescreve qty_contada da row
+    do operador na tripla.
+  fix: >
+    "Adicionar manualmente" passa a usar modo "incremental" (soma +qty, igual ao
+    bipe). Corrigir para um valor exato continua sendo pela edição inline da
+    linha (definirQtyAbsoluta, absoluto).
+  files:
+    - src/app/wms/inventario/[id]/contar/page.tsx
+  tags: [wms, inventario, contagem, adicionar-manual, incremental, absoluto]
